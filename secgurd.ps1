@@ -97,6 +97,7 @@ $script:Findings = [System.Collections.Generic.List[string]]::new()
 $script:CollectedCount = 0
 $script:ErrorCount = 0
 $script:SkippedCount = 0
+$script:ProceedWithRun = $false
 
 # Force UTF-8 output so box-drawing chars render correctly
 
@@ -279,7 +280,8 @@ function Show-ModuleMenu {
         Write-Host ""
         Write-Host (Ex "  ^16  Non-interactive session detected ^09 running all modules.") -ForegroundColor Yellow
         Write-Host ""
-        return $true
+        $script:ProceedWithRun = $true
+        return
     }
 
     $pendingMsg = $null
@@ -357,7 +359,8 @@ function Show-ModuleMenu {
             Write-Host ""
             Write-Host (Ex "   ^13 Sigurd sheathes the blade. Farewell. ^13") -ForegroundColor DarkRed
             Write-Host ""
-            return $false
+            $script:ProceedWithRun = $false
+            return
         }
 
         if ($cmd -eq '?' -or $cmd -eq 'h' -or $cmd -eq 'help') {
@@ -377,7 +380,8 @@ function Show-ModuleMenu {
                 Clear-Host; Show-secgurdBannerCompact
                 continue
             }
-            return $true
+            $script:ProceedWithRun = $true
+            return
         }
 
         if ($cmd -eq 'a' -or $cmd -eq 'all') {
@@ -459,7 +463,6 @@ function Show-secgurdBannerCompact {
 
 if ($Modules) {
     # CLI-specified module list overrides everything
-
     foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $false }
     foreach ($id in $Modules) {
         $key = if ($id -match '^\d+$') { '{0:D2}' -f [int]$id } else { $id }
@@ -467,10 +470,11 @@ if ($Modules) {
     }
 }
 elseif (-not $Auto) {
-    # Interactive menu (default)
-
-    $proceed = Show-ModuleMenu
-    if (-not $proceed) { return }
+    # Interactive menu (default). Use a script-scope flag so we never depend on
+    # capturing the function's output stream (Write-Host is safe, but this is bulletproof).
+    $script:ProceedWithRun = $false
+    Show-ModuleMenu | Out-Null
+    if (-not $script:ProceedWithRun) { return }
     Clear-Host
     Show-secgurdBannerCompact
 }
