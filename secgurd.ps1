@@ -1,4 +1,5 @@
 #Requires -Version 5.1
+
 <#
 .SYNOPSIS
     secgurd - Windows DFIR Triage Tool
@@ -45,11 +46,50 @@ param(
     [switch]$Help
 )
 
+# -- Glyph expander: source stays pure ASCII; real Unicode built at runtime --
+function Ex {
+    param([string]$s)
+    $map = @{
+        '~' = [char]0x2500
+        '=' = [char]0x2501
+        '#' = [char]0x2588
+        'D' = [char]0x2550
+        'B' = [char]0x2551
+        'J' = [char]0x255D
+        'K' = [char]0x2557
+        'L' = [char]0x2554
+        'M' = [char]0x255A
+        '@' = [char]0x2014
+        '*' = [char]0x00B7
+        'R' = [char]0x16B1
+        'T' = [char]0x16A6
+        'S' = [char]0x224B
+        'V' = [char]0x2713
+        'P' = [char]0x2560
+        'W' = [char]0x26A0
+        '>' = [char]0x2192
+        '\' = [char]0x2572
+        'Q' = [char]0x2563
+        'X' = [char]0x25B6
+        '/' = [char]0x2571
+        'Y' = [char]0x16CA
+        'x' = [char]0x2717
+        'F' = [char]0x2691
+        'Z' = [char]0x26A1
+        'C' = [char]0x2514
+        'H' = [char]0x2692
+    }
+    foreach ($k in $map.Keys) { $s = $s.Replace('^' + $k, $map[$k]) }
+    return $s
+}
+
 $script:secgurdVersion = 'v1.1'
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  SETUP
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 $ErrorActionPreference = 'SilentlyContinue'
 $script:RunStart = Get-Date
@@ -59,15 +99,19 @@ $script:ErrorCount = 0
 $script:SkippedCount = 0
 
 # Force UTF-8 output so box-drawing chars render correctly
+
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  secgurd BANNER
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 function Show-secgurdBanner {
     # Color palette
+
     $gold   = 'DarkYellow'
     $hilt   = 'White'
     $pommel = 'DarkYellow'
@@ -80,45 +124,52 @@ function Show-secgurdBanner {
     $cyan   = 'Cyan'
 
     Write-Host ""
-    Write-Host " ᚱ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ᚦ" -ForegroundColor $dim
+    Write-Host (Ex " ^R^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^T") -ForegroundColor $dim
     Write-Host ""
 
     # Row 0 - top of crossguard + title row 0
-    Write-Host "      ╔═╗ " -ForegroundColor $hilt -NoNewline
-    Write-Host "███████╗███████╗ ██████╗ ██████╗ ██╗   ██╗██████╗ ██████╗" -ForegroundColor $gold
+
+    Write-Host (Ex "      ^L^D^K ") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^#^#^#^#^#^#^#^K^#^#^#^#^#^#^#^K ^#^#^#^#^#^#^K ^#^#^#^#^#^#^K ^#^#^K   ^#^#^K^#^#^#^#^#^#^K ^#^#^#^#^#^#^K") -ForegroundColor $gold
 
     # Row 1 - upper guard + title row 1 + upper blade edge
-    Write-Host "      ║ ╠═" -ForegroundColor $hilt -NoNewline
-    Write-Host "██╔════╝██╔════╝██╔════╝██╔════╝ ██║   ██║██╔══██╗██╔══██╗" -ForegroundColor $gold -NoNewline
-    Write-Host "══════╲" -ForegroundColor $tip
+
+    Write-Host (Ex "      ^B ^P^D") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J ^#^#^B   ^#^#^B^#^#^L^D^D^#^#^K^#^#^L^D^D^#^#^K") -ForegroundColor $gold -NoNewline
+    Write-Host (Ex "^D^D^D^D^D^D^\") -ForegroundColor $tip
 
     # Row 2 - pommel + grip + guard slot + title row 2 + blade through middle + tip
+
     Write-Host "(" -ForegroundColor $hilt -NoNewline
     Write-Host "o" -ForegroundColor $pommel -NoNewline
-    Write-Host ")═══╣ ║ " -ForegroundColor $hilt -NoNewline
-    Write-Host "███████╗█████╗  ██║     ██║  ███╗██║   ██║██████╔╝██║  ██║" -ForegroundColor $gold -NoNewline
-    Write-Host "═══════▶" -ForegroundColor $tip
+    Write-Host (Ex ")^D^D^D^Q ^B ") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^#^#^#^#^#^#^#^K^#^#^#^#^#^K  ^#^#^B     ^#^#^B  ^#^#^#^K^#^#^B   ^#^#^B^#^#^#^#^#^#^L^J^#^#^B  ^#^#^B") -ForegroundColor $gold -NoNewline
+    Write-Host (Ex "^D^D^D^D^D^D^D^X") -ForegroundColor $tip
 
     # Row 3 - lower guard + title row 3 + lower blade edge
-    Write-Host "      ║ ╠═" -ForegroundColor $hilt -NoNewline
-    Write-Host "╚════██║██╔══╝  ██║     ██║   ██║██║   ██║██╔══██╗██║  ██║" -ForegroundColor $gold -NoNewline
-    Write-Host "══════╱" -ForegroundColor $tip
+
+    Write-Host (Ex "      ^B ^P^D") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^M^D^D^D^D^#^#^B^#^#^L^D^D^J  ^#^#^B     ^#^#^B   ^#^#^B^#^#^B   ^#^#^B^#^#^L^D^D^#^#^K^#^#^B  ^#^#^B") -ForegroundColor $gold -NoNewline
+    Write-Host (Ex "^D^D^D^D^D^D^/") -ForegroundColor $tip
 
     # Row 4 - bottom of crossguard + title row 4
-    Write-Host "      ╚═╝ " -ForegroundColor $hilt -NoNewline
-    Write-Host "███████║███████╗╚██████╗╚██████╔╝╚██████╔╝██║  ██║██████╔╝" -ForegroundColor $gold
+
+    Write-Host (Ex "      ^M^D^J ") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^#^#^#^#^#^#^#^B^#^#^#^#^#^#^#^K^M^#^#^#^#^#^#^K^M^#^#^#^#^#^#^L^J^M^#^#^#^#^#^#^L^J^#^#^B  ^#^#^B^#^#^#^#^#^#^L^J") -ForegroundColor $gold
 
     # Row 5 - title row 5
-    Write-Host "          ╚══════╝╚══════╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝" -ForegroundColor $gold
+
+    Write-Host (Ex "          ^M^D^D^D^D^D^D^J^M^D^D^D^D^D^D^J ^M^D^D^D^D^D^J ^M^D^D^D^D^D^J  ^M^D^D^D^D^D^J ^M^D^J  ^M^D^J^M^D^D^D^D^D^J") -ForegroundColor $gold
 
     Write-Host ""
-    Write-Host "                ≋ Slayer of threats. Keeper of truth. ≋" -ForegroundColor $rust
-    Write-Host "                    ᛊ  F O R E N S I C   T R I A G E  ᛊ" -ForegroundColor $dim
+    Write-Host (Ex "                ^S Slayer of threats. Keeper of truth. ^S") -ForegroundColor $rust
+    Write-Host (Ex "                    ^Y  F O R E N S I C   T R I A G E  ^Y") -ForegroundColor $dim
     Write-Host ""
-    Write-Host " ᚦ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ᚱ" -ForegroundColor $dim
+    Write-Host (Ex " ^T^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^R") -ForegroundColor $dim
     Write-Host ""
 
     # System info card
+
     $hostName  = $env:COMPUTERNAME
     $userName  = "$env:USERDOMAIN\$env:USERNAME"
     $isAdmin   = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -142,19 +193,19 @@ function Show-secgurdBanner {
     Write-Host $OutputPath -ForegroundColor $info
 
     Write-Host ""
-    Write-Host " ᚦ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ᚱ" -ForegroundColor $dim
+    Write-Host (Ex " ^T^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^R") -ForegroundColor $dim
     Write-Host ""
 
     if (-not $isAdmin) {
-        Write-Host "  ⚠  Running without admin privileges — some artifacts will be unavailable." -ForegroundColor $warn
+        Write-Host (Ex "  ^W  Running without admin privileges ^@ some artifacts will be unavailable.") -ForegroundColor $warn
         Write-Host ""
     }
 }
 
 function Show-Help {
     Write-Host ""
-    Write-Host "  secgurd $($script:secgurdVersion) — Windows DFIR Triage" -ForegroundColor Cyan
-    Write-Host "  ────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host (Ex "  secgurd $($script:secgurdVersion) ^@ Windows DFIR Triage") -ForegroundColor Cyan
+    Write-Host (Ex "  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  USAGE" -ForegroundColor White
     Write-Host "    .\secgurd.ps1 [options]" -ForegroundColor Gray
@@ -213,16 +264,20 @@ $script:Presets = @{
 $script:SelectedModules = @{}
 foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  INTERACTIVE MENU
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 function Show-ModuleMenu {
     # If we're not running interactively (e.g. piped via iex over remote shell with no TTY),
+
     # fall through and run everything. Prevents Read-Host deadlock.
+
     if (-not [Environment]::UserInteractive -or $Host.Name -eq 'ServerRemoteHost') {
         Write-Host ""
-        Write-Host "  ⚠  Non-interactive session detected — running all modules." -ForegroundColor Yellow
+        Write-Host (Ex "  ^W  Non-interactive session detected ^@ running all modules.") -ForegroundColor Yellow
         Write-Host ""
         return $true
     }
@@ -239,24 +294,24 @@ function Show-ModuleMenu {
         Write-Host "Select modules to run." -ForegroundColor White -NoNewline
         Write-Host "  [" -ForegroundColor DarkGray -NoNewline
         Write-Host " number " -ForegroundColor Yellow -NoNewline
-        Write-Host "] toggle  ·  [" -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] toggle  ^*  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " a " -ForegroundColor Yellow -NoNewline
-        Write-Host "] all  ·  [" -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] all  ^*  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " n " -ForegroundColor Yellow -NoNewline
-        Write-Host "] none  ·  [" -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] none  ^*  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " r " -ForegroundColor Green -NoNewline
-        Write-Host "] run  ·  [" -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] run  ^*  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " ? " -ForegroundColor Yellow -NoNewline
-        Write-Host "] help  ·  [" -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] help  ^*  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " q " -ForegroundColor Red -NoNewline
         Write-Host "] quit" -ForegroundColor DarkGray
         Write-Host ""
-        Write-Host "     ────────────────  collection modules  ────────────────" -ForegroundColor DarkGray
+        Write-Host (Ex "     ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~  collection modules  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
         Write-Host ""
 
         foreach ($m in $script:ModuleCatalogue) {
             $on = $script:SelectedModules[$m.Id]
-            $mark = if ($on) { '[✓]' } else { '[ ]' }
+            $mark = if ($on) { (Ex "[^V]") } else { '[ ]' }
             $markColor = if ($on) { 'Green' } else { 'DarkGray' }
             $nameColor = if ($on) { 'White' } else { 'DarkGray' }
             Write-Host "   " -NoNewline
@@ -268,7 +323,7 @@ function Show-ModuleMenu {
         }
 
         Write-Host ""
-        Write-Host "     ────────────────  presets  ─────────────────────────" -ForegroundColor DarkGray
+        Write-Host (Ex "     ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~  presets  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
         Write-Host ""
 
         foreach ($key in 'qa','net','ps') {
@@ -280,7 +335,7 @@ function Show-ModuleMenu {
         }
 
         Write-Host ""
-        Write-Host "     ─────────────────────────────────────────────────────" -ForegroundColor DarkGray
+        Write-Host (Ex "     ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
         Write-Host ""
 
         $count = ($script:SelectedModules.Values | Where-Object { $_ }).Count
@@ -288,7 +343,7 @@ function Show-ModuleMenu {
         $est = [int]($count * 3.2)
         Write-Host "   " -NoNewline
         Write-Host "$count / $total selected" -ForegroundColor White -NoNewline
-        Write-Host "   ·   " -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "   ^*   ") -ForegroundColor DarkGray -NoNewline
         Write-Host "est. runtime ~${est} sec" -ForegroundColor White
 
         Write-Host ""
@@ -300,7 +355,7 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'q' -or $cmd -eq 'quit' -or $cmd -eq 'exit') {
             Write-Host ""
-            Write-Host "   ≋ Sigurd sheathes the blade. Farewell. ≋" -ForegroundColor DarkRed
+            Write-Host (Ex "   ^S Sigurd sheathes the blade. Farewell. ^S") -ForegroundColor DarkRed
             Write-Host ""
             return $false
         }
@@ -318,7 +373,7 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'r' -or $cmd -eq 'run') {
             if ($count -eq 0) {
-                $pendingMsg = "⚠  No modules selected — pick at least one, or 'a' for all."
+                $pendingMsg = (Ex "^W  No modules selected ^@ pick at least one, or 'a' for all.")
                 Clear-Host; Show-secgurdBannerCompact
                 continue
             }
@@ -327,14 +382,14 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'a' -or $cmd -eq 'all') {
             foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
-            $pendingMsg = "✓ All modules selected."
+            $pendingMsg = (Ex "^V All modules selected.")
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
 
         if ($cmd -eq 'n' -or $cmd -eq 'none') {
             foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $false }
-            $pendingMsg = "✗ All modules deselected."
+            $pendingMsg = (Ex "^x All modules deselected.")
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -342,12 +397,13 @@ function Show-ModuleMenu {
         if ($script:Presets.ContainsKey($cmd)) {
             foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $false }
             foreach ($id in $script:Presets[$cmd].Modules) { $script:SelectedModules[$id] = $true }
-            $pendingMsg = "⚡ Preset applied: $($script:Presets[$cmd].Label) (modules $($script:Presets[$cmd].Modules -join ', '))"
+            $pendingMsg = (Ex "^Z Preset applied: $($script:Presets[$cmd].Label) (modules $($script:Presets[$cmd].Modules -join ', '))")
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
 
-        # parse module numbers — supports "03" or "3" or multiple "1 3 5"
+        # parse module numbers   supports "03" or "3" or multiple "1 3 5"
+
         $tokens = $cmd -split '[\s,]+' | Where-Object { $_ }
         $toggledAny = $false
         $unknown = @()
@@ -367,7 +423,7 @@ function Show-ModuleMenu {
             }
             Clear-Host; Show-secgurdBannerCompact
         } else {
-            $pendingMsg = "⚠  Unknown command: '$cmd'  —  type ? for help."
+            $pendingMsg = (Ex "^W  Unknown command: '$cmd'  ^@  type ? for help.")
             Clear-Host; Show-secgurdBannerCompact
         }
     }
@@ -375,32 +431,35 @@ function Show-ModuleMenu {
 
 function Show-secgurdBannerCompact {
     Write-Host ""
-    Write-Host " ᚱ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ᚦ" -ForegroundColor DarkGray
-    Write-Host "      ╔═╗ " -ForegroundColor White -NoNewline
-    Write-Host "███████╗███████╗ ██████╗ ██████╗ ██╗   ██╗██████╗ ██████╗" -ForegroundColor DarkYellow
-    Write-Host "      ║ ╠═" -ForegroundColor White -NoNewline
-    Write-Host "██╔════╝██╔════╝██╔════╝██╔════╝ ██║   ██║██╔══██╗██╔══██╗" -ForegroundColor DarkYellow -NoNewline
-    Write-Host "══════╲" -ForegroundColor Red
+    Write-Host (Ex " ^R^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^T") -ForegroundColor DarkGray
+    Write-Host (Ex "      ^L^D^K ") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^#^#^#^#^#^#^#^K^#^#^#^#^#^#^#^K ^#^#^#^#^#^#^K ^#^#^#^#^#^#^K ^#^#^K   ^#^#^K^#^#^#^#^#^#^K ^#^#^#^#^#^#^K") -ForegroundColor DarkYellow
+    Write-Host (Ex "      ^B ^P^D") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J ^#^#^B   ^#^#^B^#^#^L^D^D^#^#^K^#^#^L^D^D^#^#^K") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^D^D^D^D^D^D^\") -ForegroundColor Red
     Write-Host "(" -ForegroundColor White -NoNewline
     Write-Host "o" -ForegroundColor DarkYellow -NoNewline
-    Write-Host ")═══╣ ║ " -ForegroundColor White -NoNewline
-    Write-Host "███████╗█████╗  ██║     ██║  ███╗██║   ██║██████╔╝██║  ██║" -ForegroundColor DarkYellow -NoNewline
-    Write-Host "═══════▶" -ForegroundColor Red
-    Write-Host "      ║ ╠═" -ForegroundColor White -NoNewline
-    Write-Host "╚════██║██╔══╝  ██║     ██║   ██║██║   ██║██╔══██╗██║  ██║" -ForegroundColor DarkYellow -NoNewline
-    Write-Host "══════╱" -ForegroundColor Red
-    Write-Host "      ╚═╝ " -ForegroundColor White -NoNewline
-    Write-Host "███████║███████╗╚██████╗╚██████╔╝╚██████╔╝██║  ██║██████╔╝" -ForegroundColor DarkYellow
-    Write-Host "          ╚══════╝╚══════╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝" -ForegroundColor DarkYellow
-    Write-Host " ᚦ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ᚱ" -ForegroundColor DarkGray
+    Write-Host (Ex ")^D^D^D^Q ^B ") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^#^#^#^#^#^#^#^K^#^#^#^#^#^K  ^#^#^B     ^#^#^B  ^#^#^#^K^#^#^B   ^#^#^B^#^#^#^#^#^#^L^J^#^#^B  ^#^#^B") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^D^D^D^D^D^D^D^X") -ForegroundColor Red
+    Write-Host (Ex "      ^B ^P^D") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^M^D^D^D^D^#^#^B^#^#^L^D^D^J  ^#^#^B     ^#^#^B   ^#^#^B^#^#^B   ^#^#^B^#^#^L^D^D^#^#^K^#^#^B  ^#^#^B") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^D^D^D^D^D^D^/") -ForegroundColor Red
+    Write-Host (Ex "      ^M^D^J ") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^#^#^#^#^#^#^#^B^#^#^#^#^#^#^#^K^M^#^#^#^#^#^#^K^M^#^#^#^#^#^#^L^J^M^#^#^#^#^#^#^L^J^#^#^B  ^#^#^B^#^#^#^#^#^#^L^J") -ForegroundColor DarkYellow
+    Write-Host (Ex "          ^M^D^D^D^D^D^D^J^M^D^D^D^D^D^D^J ^M^D^D^D^D^D^J ^M^D^D^D^D^D^J  ^M^D^D^D^D^D^J ^M^D^J  ^M^D^J^M^D^D^D^D^D^J") -ForegroundColor DarkYellow
+    Write-Host (Ex " ^T^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^R") -ForegroundColor DarkGray
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  MODULE SELECTION DRIVER
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 if ($Modules) {
     # CLI-specified module list overrides everything
+
     foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $false }
     foreach ($id in $Modules) {
         $key = if ($id -match '^\d+$') { '{0:D2}' -f [int]$id } else { $id }
@@ -409,15 +468,18 @@ if ($Modules) {
 }
 elseif (-not $Auto) {
     # Interactive menu (default)
+
     $proceed = Show-ModuleMenu
     if (-not $proceed) { return }
     Clear-Host
     Show-secgurdBannerCompact
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  PRE-FLIGHT: verify output path is writable
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 try {
     $null = New-Item -ItemType Directory -Path $OutputPath -Force -ErrorAction Stop
@@ -426,7 +488,7 @@ try {
     Remove-Item $probe -Force -ErrorAction SilentlyContinue
 } catch {
     Write-Host ""
-    Write-Host "  ✗ ERROR: Cannot write to output path:" -ForegroundColor Red
+    Write-Host (Ex "  ^x ERROR: Cannot write to output path:") -ForegroundColor Red
     Write-Host "    $OutputPath" -ForegroundColor Red
     Write-Host "    $($_.Exception.Message)" -ForegroundColor DarkGray
     Write-Host ""
@@ -436,6 +498,7 @@ try {
 }
 
 # Count how many artifact blocks belong to selected modules (for progress display)
+
 $script:TotalArtifacts = 0
 $script:DoneArtifacts  = 0
 
@@ -448,24 +511,27 @@ function Write-Section {
 function Add-Finding {
     param([string]$Severity, [string]$Module, [string]$Message)
     # Severity: HIGH / MED / INFO
+
     $script:Findings.Add("[$Severity] ($Module) $Message")
     $color = switch ($Severity) {
         'HIGH' { 'Red' }
         'MED'  { 'Yellow' }
         default { 'DarkGray' }
     }
-    Write-Host "       └─ " -ForegroundColor DarkGray -NoNewline
+    Write-Host (Ex "       ^C^~ ") -ForegroundColor DarkGray -NoNewline
     Write-Host $Message -ForegroundColor $color
 }
 
 function Save-Output {
     param([string]$FileName, [scriptblock]$Block)
 
-    # Extract module ID from filename (e.g. "03_persistence_registry.txt" → "03")
+    # Extract module ID from filename (e.g. "03_persistence_registry.txt"   "03")
+
     $moduleId = if ($FileName -match '^(\d{2})_') { $matches[1] } else { $null }
     if ($moduleId -and -not $script:SelectedModules[$moduleId]) {
         $script:SkippedCount++
         return  # module not selected, skip silently
+
     }
 
     $script:DoneArtifacts++
@@ -479,7 +545,7 @@ function Save-Output {
         $sw.Stop()
         $secs = ('{0,5:N1}s' -f ($sw.ElapsedMilliseconds / 1000))
         Write-Host "  $progress " -ForegroundColor DarkGray -NoNewline
-        Write-Host "[✓] " -ForegroundColor Green -NoNewline
+        Write-Host (Ex "[^V] ") -ForegroundColor Green -NoNewline
         Write-Host ("{0,-42}" -f $FileName) -ForegroundColor Gray -NoNewline
         Write-Host $secs -ForegroundColor DarkGray
         $script:CollectedCount++
@@ -494,7 +560,9 @@ function Save-Output {
 }
 
 # Pre-count selected artifacts so the [n/total] progress is accurate.
+
 # We do this by counting Save-Output lines for selected modules in this very script.
+
 $script:TotalArtifacts = (
     $script:SelectedModules.GetEnumerator() | Where-Object { $_.Value } | ForEach-Object {
         $mid = $_.Key
@@ -507,12 +575,14 @@ $script:TotalArtifacts = (
 if (-not $script:TotalArtifacts) { $script:TotalArtifacts = 1 }
 
 Write-Host ""
-Write-Host "     ────────────────  running triage  ───────────────────" -ForegroundColor DarkGray
+Write-Host (Ex "     ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~  running triage  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
 Write-Host ""
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  1. SYSTEM INFO
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "01_system_info.txt" {
     Write-Section "SYSTEM INFORMATION"
@@ -527,9 +597,11 @@ Save-Output "01_env_variables.txt" {
     Get-ChildItem Env: | Sort-Object Name
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  2. USER & SESSION INFO
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "02_local_users.txt" {
     Write-Section "LOCAL USERS"
@@ -538,11 +610,12 @@ Save-Output "02_local_users.txt" {
         PasswordNeverExpires, Description | Format-Table -AutoSize
 
     # Flag users created in the last 14 days (PasswordLastSet is a decent proxy for creation)
+
     $recentUsers = $localUsers | Where-Object {
         $_.PasswordLastSet -and $_.PasswordLastSet -gt (Get-Date).AddDays(-14)
     }
     foreach ($u in $recentUsers) {
-        Add-Finding 'MED' '02' "Local user '$($u.Name)' password set <14d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) — possible new account"
+        Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <14d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^@ possible new account")
     }
 
     Write-Section "LOCAL GROUPS & MEMBERS"
@@ -552,6 +625,7 @@ Save-Output "02_local_users.txt" {
         $members = Get-LocalGroupMember -Group $g -ErrorAction SilentlyContinue
         $members | Select-Object Name, ObjectClass, PrincipalSource
         # Flag local (non-default) accounts in Administrators
+
         if ($g -eq 'Administrators') {
             foreach ($mem in $members) {
                 if ($mem.PrincipalSource -eq 'Local' -and $mem.Name -notmatch '\\(Administrator|Domain Admins)$') {
@@ -584,9 +658,11 @@ Save-Output "02_logon_history.txt" {
     Format-Table -AutoSize
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  3. PERSISTENCE
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "03_persistence_registry.txt" {
     $runKeys = @(
@@ -598,13 +674,16 @@ Save-Output "03_persistence_registry.txt" {
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce',
         'HKLM:\SYSTEM\CurrentControlSet\Services',  # services
+
         'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon',
         'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options',
         'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\BootExecute',
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders',
         'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders',
         'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows',  # AppInit_DLLs
+
         'HKCU:\SOFTWARE\Classes\mscfile\shell\open\command',           # Eventvwr bypass
+
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run',
         'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run'
     )
@@ -657,8 +736,10 @@ Save-Output "03_services.txt" {
 
     Write-Section "RECENTLY MODIFIED SERVICE BINARIES (last 30 days)"
     Get-WmiObject Win32_Service | ForEach-Object {
-        # Extract binary path — handles quoted "C:\Path with spaces\svc.exe -arg"
+        # Extract binary path   handles quoted "C:\Path with spaces\svc.exe -arg"
+
         # and unquoted C:\Windows\System32\svc.exe -k netsvcs
+
         $raw = $_.PathName
         $path = $null
         if ($raw -match '^"([^"]+)"') {
@@ -676,9 +757,9 @@ Save-Output "03_services.txt" {
                 $sig = (Get-AuthenticodeSignature $path -ErrorAction SilentlyContinue)
                 $signer = $sig.SignerCertificate.Subject
                 if ($sig.Status -ne 'Valid') {
-                    Add-Finding 'HIGH' '03' "Unsigned service binary modified <30d: $($_.Name) → $path"
+                    Add-Finding 'HIGH' '03' (Ex "Unsigned service binary modified <30d: $($_.Name) ^> $path")
                 } else {
-                    Add-Finding 'MED' '03' "Service binary modified <30d: $($_.Name) → $path"
+                    Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^> $path")
                 }
                 [PSCustomObject]@{
                     Service      = $_.Name
@@ -722,15 +803,18 @@ Save-Output "03_wmi_persistence.txt" {
     $bindings | Select-Object * | Format-List
 
     if ($bindings) {
-        Add-Finding 'HIGH' '03' "$($bindings.Count) WMI event consumer binding(s) present — classic fileless persistence, review carefully"
+        Add-Finding 'HIGH' '03' (Ex "$($bindings.Count) WMI event consumer binding(s) present ^@ classic fileless persistence, review carefully")
     }
 }
 
 Save-Output "03_com_hijacking_check.txt" {
     Write-Section "HKCU COM HIJACKS (CLSIDs shadowing HKLM\CLSID - actual hijack signal)"
     # Real COM hijack: an HKCU CLSID entry that ALSO exists under HKLM\CLSID
+
     # (HKCU shadows HKLM at runtime). Vanilla HKCU CLSIDs without HKLM counterparts
+
     # are usually app-specific user customizations, not malicious.
+
     if (Test-Path 'HKCU:\SOFTWARE\Classes\CLSID') {
         $hkcuClsids = Get-ChildItem 'HKCU:\SOFTWARE\Classes\CLSID' -ErrorAction SilentlyContinue
         $hijacks = foreach ($key in $hkcuClsids) {
@@ -738,6 +822,7 @@ Save-Output "03_com_hijacking_check.txt" {
             $hklmPath = "HKLM:\SOFTWARE\Classes\CLSID\$clsid"
             if (Test-Path $hklmPath) {
                 # Check if HKCU has InprocServer32 / LocalServer32 (the hijack vector)
+
                 $hkcuInproc  = Get-ItemProperty "HKCU:\SOFTWARE\Classes\CLSID\$clsid\InprocServer32" -ErrorAction SilentlyContinue
                 $hkcuLocal   = Get-ItemProperty "HKCU:\SOFTWARE\Classes\CLSID\$clsid\LocalServer32" -ErrorAction SilentlyContinue
                 if ($hkcuInproc -or $hkcuLocal) {
@@ -752,7 +837,7 @@ Save-Output "03_com_hijacking_check.txt" {
         if ($hijacks) {
             $hijacks | Format-Table -AutoSize
         } else {
-            "  (no HKCU CLSIDs shadow HKLM\CLSID — clean)"
+            (Ex "  (no HKCU CLSIDs shadow HKLM\CLSID ^@ clean)")
         }
     } else { "  (no HKCU CLSID hive)" }
 }
@@ -767,9 +852,11 @@ Save-Output "03_dll_search_order.txt" {
         Select-Object CWDIllegalInDllSearch | Format-List
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  4. POWERSHELL ARTIFACTS
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "04_ps_history.txt" {
     Write-Section "POWERSHELL HISTORY (ALL USERS)"
@@ -833,9 +920,11 @@ Save-Output "04_ps_event_log.txt" {
         Format-Table -AutoSize
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  5. NETWORK
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "05_network_connections.txt" {
     Write-Section "ACTIVE NETWORK CONNECTIONS"
@@ -892,13 +981,16 @@ Save-Output "05_firewall_rules.txt" {
         Format-Table -AutoSize
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  6. PROCESSES & LOADED MODULES
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "06_processes.txt" {
     Write-Section "RUNNING PROCESSES"
     # Pull Win32_Process once into a hashtable instead of querying per-process
+
     $cmdLineByPid = @{}
     Get-WmiObject Win32_Process | ForEach-Object { $cmdLineByPid[[int]$_.ProcessId] = $_.CommandLine }
 
@@ -916,6 +1008,7 @@ Save-Output "06_processes.txt" {
 Save-Output "06_process_tree.txt" {
     Write-Section "PROCESS PARENT-CHILD TREE"
     # Build dict once for fast lookups (fixes per-proc WMI query perf + parent-lookup bug)
+
     $procs = Get-WmiObject Win32_Process
     $byPid = @{}
     foreach ($p in $procs) { $byPid[[int]$p.ProcessId] = $p }
@@ -960,9 +1053,11 @@ Save-Output "06_loaded_dlls.txt" {
     } | Format-Table -AutoSize
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  7. FILE SYSTEM ARTIFACTS
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "07_recently_modified_system32.txt" {
     Write-Section "RECENTLY MODIFIED FILES IN SYSTEM32 (last 7 days)"
@@ -1006,7 +1101,8 @@ Save-Output "07_downloads_desktop.txt" {
 
 Save-Output "07_alternate_data_streams.txt" {
     Write-Section "ALTERNATE DATA STREAMS (suspicious - user content folders)"
-    # Scope to Desktop/Downloads/Documents only — full -Recurse on C:\Users takes 5-30 min.
+    # Scope to Desktop/Downloads/Documents only   full -Recurse on C:\Users takes 5-30 min.
+
     $scanFolders = @('Desktop', 'Downloads', 'Documents')
     $results = foreach ($userDir in (Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue)) {
         foreach ($sub in $scanFolders) {
@@ -1032,9 +1128,11 @@ Save-Output "07_alternate_data_streams.txt" {
     else { "  (no suspicious alternate data streams found in user content folders)" }
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  8. EVENT LOG ARTIFACTS
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "08_security_events.txt" {
     $eventIds = @{
@@ -1067,7 +1165,7 @@ Save-Output "08_cleared_logs.txt" {
     $sec1102 = Get-WinEvent -LogName Security -FilterXPath "*[System[EventID=1102]]" -MaxEvents 100 -ErrorAction SilentlyContinue
     $sys104  = Get-WinEvent -LogName System -FilterXPath "*[System[EventID=104]]" -MaxEvents 100 -ErrorAction SilentlyContinue
     if ($sec1102) {
-        Add-Finding 'HIGH' '08' "Security log was CLEARED ($($sec1102.Count) event(s) 1102) — possible anti-forensics"
+        Add-Finding 'HIGH' '08' (Ex "Security log was CLEARED ($($sec1102.Count) event(s) 1102) ^@ possible anti-forensics")
     }
     if ($sys104) {
         Add-Finding 'MED' '08' "A System/application log was cleared ($($sys104.Count) event(s) 104)"
@@ -1090,9 +1188,11 @@ Save-Output "08_event_log_status.txt" {
     } | Format-Table -AutoSize
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  9. INSTALLED SOFTWARE & PATCHES
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "09_installed_software.txt" {
     Write-Section "INSTALLED SOFTWARE (Add/Remove Programs)"
@@ -1113,9 +1213,11 @@ Save-Output "09_patches.txt" {
     Get-HotFix | Sort-Object InstalledOn -Descending | Format-Table -AutoSize
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  10. BROWSER & CREDENTIAL ARTIFACTS
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "10_browser_artifacts.txt" {
     Write-Section "BROWSER HISTORY FILE LOCATIONS"
@@ -1157,9 +1259,11 @@ Save-Output "10_credential_files.txt" {
     }
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  11. LOLBINS / LIVING OFF THE LAND
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "11_lolbin_usage.txt" {
     Write-Section "LOLBIN PROCESS EVENTS (Event 4688, last 500)"
@@ -1176,7 +1280,8 @@ Save-Output "11_lolbin_usage.txt" {
             $exe = if ($msg -match 'New Process Name:\s+(.+)') { $matches[1].Trim() } else { '' }
             $cmd = if ($msg -match 'Process Command Line:\s+(.+)') { $matches[1].Trim() } else { '' }
             $exe_lower = $exe.ToLower()
-            # Match leaf filename only — '\wmic.exe' won't match 'wmic_helper.exe' or paths containing 'wmic'.
+            # Match leaf filename only   '\wmic.exe' won't match 'wmic_helper.exe' or paths containing 'wmic'.
+
             $leaf = Split-Path -Leaf $exe_lower
             foreach ($bin in $lolbins) {
                 if ($leaf -eq "$bin.exe" -or $leaf -eq $bin) {
@@ -1197,9 +1302,11 @@ Save-Output "11_lolbin_usage.txt" {
     $lolHits | Format-Table -AutoSize
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  12. AMCACHE & SHIMCACHE (timeline)
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "12_amcache_shimcache.txt" {
     Write-Section "AMCACHE.HVE LOCATION"
@@ -1222,9 +1329,11 @@ Save-Output "12_amcache_shimcache.txt" {
     } else { "  ShimCache key not found." }
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  13. PREFETCH
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "13_prefetch.txt" {
     Write-Section "PREFETCH FILES (execution evidence)"
@@ -1239,9 +1348,11 @@ Save-Output "13_prefetch.txt" {
     }
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  14. NAMED PIPES & HANDLES (advanced)
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Save-Output "14_named_pipes.txt" {
     Write-Section "NAMED PIPES (suspicious names worth investigating)"
@@ -1252,6 +1363,7 @@ Save-Output "14_named_pipes.txt" {
             Format-Table -AutoSize
     } catch {
         # Fallback for older systems
+
         try {
             $pipes = [System.IO.Directory]::GetFiles('\\.\pipe\')
             $pipes | Sort-Object | ForEach-Object { Split-Path -Leaf $_ }
@@ -1261,9 +1373,11 @@ Save-Output "14_named_pipes.txt" {
     }
 }
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  WRITE INDEX + SUMMARY + FINDINGS
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 $runEnd  = Get-Date
 $elapsed = $runEnd - $script:RunStart
@@ -1271,9 +1385,10 @@ $elapsedStr = '{0:mm}m {0:ss}s' -f $elapsed
 $isAdminNow = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $selectedIds = ($script:SelectedModules.GetEnumerator() | Where-Object { $_.Value } | ForEach-Object { $_.Key } | Sort-Object) -join ', '
 
-# 00_INDEX.txt — human-readable map of every file in the folder
+# 00_INDEX.txt   human-readable map of every file in the folder
+
 $indexLines = @()
-$indexLines += "secgurd $($script:secgurdVersion) — Collection Index"
+$indexLines += (Ex "secgurd $($script:secgurdVersion) ^@ Collection Index")
 $indexLines += ("=" * 60)
 $indexLines += "Host        : $env:COMPUTERNAME"
 $indexLines += "User        : $env:USERDOMAIN\$env:USERNAME"
@@ -1292,20 +1407,21 @@ Get-ChildItem $OutputPath -Filter '*.txt' | Sort-Object Name | ForEach-Object {
 }
 $indexLines | Out-File (Join-Path $OutputPath '00_INDEX.txt') -Encoding UTF8 -Force
 
-# 00_SUMMARY.txt — findings + metadata, the first file an analyst should read
+# 00_SUMMARY.txt   findings + metadata, the first file an analyst should read
+
 $summaryLines = @()
-$summaryLines += "secgurd $($script:secgurdVersion) — Triage Summary"
+$summaryLines += (Ex "secgurd $($script:secgurdVersion) ^@ Triage Summary")
 $summaryLines += ("=" * 60)
 $summaryLines += "Host     : $env:COMPUTERNAME    User: $env:USERDOMAIN\$env:USERNAME"
 $summaryLines += "When     : $($script:RunStart.ToString('yyyy-MM-dd HH:mm:ss'))   Duration: $elapsedStr"
 $summaryLines += "Admin    : $isAdminNow"
 $summaryLines += "Collected: $($script:CollectedCount) files   Errors: $($script:ErrorCount)"
 $summaryLines += ""
-$summaryLines += "FINDINGS (auto-flagged — verify before acting)"
+$summaryLines += (Ex "FINDINGS (auto-flagged ^@ verify before acting)")
 $summaryLines += ("-" * 60)
 if ($script:Findings.Count -eq 0) {
     $summaryLines += "  No high-signal indicators auto-flagged."
-    $summaryLines += "  (Absence of flags is NOT proof of a clean host — review the raw files.)"
+    $summaryLines += (Ex "  (Absence of flags is NOT proof of a clean host ^@ review the raw files.)")
 } else {
     $script:Findings | Sort-Object | ForEach-Object { $summaryLines += "  $_" }
 }
@@ -1313,28 +1429,31 @@ $summaryLines += ""
 $summaryLines += "Generated by secgurd. Review raw artifact files for full detail."
 $summaryLines | Out-File (Join-Path $OutputPath '00_SUMMARY.txt') -Encoding UTF8 -Force
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
+
 #  BUNDLE INTO ZIP
-# ─────────────────────────────────────────────
+
+# ---------------------------------------------
 
 Write-Host ""
-Write-Host " ᚦ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ᚱ" -ForegroundColor DarkGray
+Write-Host (Ex " ^T^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^R") -ForegroundColor DarkGray
 Write-Host ""
 
 # Findings recap on screen
+
 if ($script:Findings.Count -gt 0) {
-    Write-Host "  ⚑ FINDINGS ($($script:Findings.Count))" -ForegroundColor Red
+    Write-Host (Ex "  ^F FINDINGS ($($script:Findings.Count))") -ForegroundColor Red
     foreach ($f in ($script:Findings | Sort-Object)) {
         $c = if ($f -like '`[HIGH`]*') { 'Red' } elseif ($f -like '`[MED`]*') { 'Yellow' } else { 'DarkGray' }
         Write-Host "    $f" -ForegroundColor $c
     }
     Write-Host ""
 } else {
-    Write-Host "  ⚑ No high-signal indicators auto-flagged (review raw files anyway)." -ForegroundColor DarkGray
+    Write-Host (Ex "  ^F No high-signal indicators auto-flagged (review raw files anyway).") -ForegroundColor DarkGray
     Write-Host ""
 }
 
-Write-Host "  ⚒  Compressing the hoard..." -ForegroundColor Cyan
+Write-Host (Ex "  ^H  Compressing the hoard...") -ForegroundColor Cyan
 $zipPath = "$OutputPath.zip"
 $zipOk = $false
 try {
@@ -1342,31 +1461,32 @@ try {
     $zipOk = $true
 } catch {
     Write-Host "  [!] Could not create zip: $($_.Exception.Message)" -ForegroundColor Yellow
-    Write-Host "      Raw folder is intact — collect it manually." -ForegroundColor DarkGray
+    Write-Host (Ex "      Raw folder is intact ^@ collect it manually.") -ForegroundColor DarkGray
 }
 
 Write-Host ""
-Write-Host "  ───────────────────────────────────────────────────────" -ForegroundColor DarkGray
+Write-Host (Ex "  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
 Write-Host "  Collected : " -ForegroundColor DarkGray -NoNewline
 Write-Host "$($script:CollectedCount) files" -ForegroundColor Green -NoNewline
 if ($script:ErrorCount -gt 0) {
-    Write-Host "   ·   " -ForegroundColor DarkGray -NoNewline
+    Write-Host (Ex "   ^*   ") -ForegroundColor DarkGray -NoNewline
     Write-Host "$($script:ErrorCount) errors" -ForegroundColor Yellow -NoNewline
 }
-Write-Host "   ·   " -ForegroundColor DarkGray -NoNewline
+Write-Host (Ex "   ^*   ") -ForegroundColor DarkGray -NoNewline
 Write-Host "$elapsedStr" -ForegroundColor White
 Write-Host ""
 if ($zipOk) {
-    Write-Host "  [✓] Archive : " -ForegroundColor Green -NoNewline
+    Write-Host (Ex "  [^V] Archive : ") -ForegroundColor Green -NoNewline
     Write-Host $zipPath -ForegroundColor White
 }
-Write-Host "  [✓] Raw     : " -ForegroundColor Green -NoNewline
+Write-Host (Ex "  [^V] Raw     : ") -ForegroundColor Green -NoNewline
 Write-Host $OutputPath -ForegroundColor White
-Write-Host "  [✓] Start   : " -ForegroundColor Green -NoNewline
-Write-Host "00_SUMMARY.txt (findings) · 00_INDEX.txt (file map)" -ForegroundColor White
+Write-Host (Ex "  [^V] Start   : ") -ForegroundColor Green -NoNewline
+Write-Host (Ex "00_SUMMARY.txt (findings) ^* 00_INDEX.txt (file map)") -ForegroundColor White
 Write-Host ""
 
 # Retrieval hint for remote sessions
+
 Write-Host "  To pull results back over a PSRemoting session:" -ForegroundColor DarkGray
 if ($zipOk) {
     Write-Host "    Copy-Item -FromSession `$s '$zipPath' -Destination .\" -ForegroundColor DarkGray
@@ -1375,17 +1495,19 @@ if ($zipOk) {
 }
 Write-Host ""
 
-Write-Host "  ≋ The dragon falls. Triage complete. ≋" -ForegroundColor DarkRed
+Write-Host (Ex "  ^S The dragon falls. Triage complete. ^S") -ForegroundColor DarkRed
 Write-Host ""
-Write-Host " ᚱ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ᚦ" -ForegroundColor DarkGray
+Write-Host (Ex " ^R^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^T") -ForegroundColor DarkGray
 Write-Host ""
 
 # Optionally open the output folder (interactive desktop only)
+
 if ($OpenWhenDone -and [Environment]::UserInteractive) {
     try { Invoke-Item $OutputPath } catch {}
 }
 
 # Return paths for caller use
+
 [PSCustomObject]@{
     OutputFolder   = $OutputPath
     ZipArchive     = if ($zipOk) { $zipPath } else { $null }
