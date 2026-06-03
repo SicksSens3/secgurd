@@ -50,34 +50,34 @@ param(
 function Ex {
     param([string]$s)
     $map = @{
-        '~' = [char]0x2500
-        '=' = [char]0x2501
-        '#' = [char]0x2588
-        'D' = [char]0x2550
-        'B' = [char]0x2551
-        'J' = [char]0x255D
-        'K' = [char]0x2557
-        'L' = [char]0x2554
-        'M' = [char]0x255A
-        '@' = [char]0x2014
-        '*' = [char]0x00B7
-        'R' = [char]0x16B1
-        'T' = [char]0x16A6
-        'S' = [char]0x224B
-        'V' = [char]0x2713
-        'P' = [char]0x2560
-        'W' = [char]0x26A0
-        '>' = [char]0x2192
-        '\' = [char]0x2572
-        'Q' = [char]0x2563
-        'X' = [char]0x25B6
-        '/' = [char]0x2571
-        'Y' = [char]0x16CA
-        'x' = [char]0x2717
-        'F' = [char]0x2691
-        'Z' = [char]0x26A1
-        'C' = [char]0x2514
-        'H' = [char]0x2692
+        '00' = [char]0x2500
+        '01' = [char]0x2501
+        '02' = [char]0x2588
+        '03' = [char]0x2550
+        '04' = [char]0x2551
+        '05' = [char]0x255D
+        '06' = [char]0x2557
+        '07' = [char]0x2554
+        '08' = [char]0x255A
+        '09' = [char]0x2014
+        '10' = [char]0x00B7
+        '11' = [char]0x16B1
+        '12' = [char]0x16A6
+        '13' = [char]0x224B
+        '14' = [char]0x2713
+        '15' = [char]0x2560
+        '16' = [char]0x26A0
+        '17' = [char]0x2192
+        '18' = [char]0x2572
+        '19' = [char]0x2563
+        '20' = [char]0x25B6
+        '21' = [char]0x2571
+        '22' = [char]0x16CA
+        '23' = [char]0x2717
+        '24' = [char]0x2691
+        '25' = [char]0x26A1
+        '26' = [char]0x2514
+        '27' = [char]0x2692
     }
     foreach ($k in $map.Keys) { $s = $s.Replace('^' + $k, $map[$k]) }
     return $s
@@ -124,48 +124,48 @@ function Show-secgurdBanner {
     $cyan   = 'Cyan'
 
     Write-Host ""
-    Write-Host (Ex " ^R^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^T") -ForegroundColor $dim
+    Write-Host (Ex " ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^12") -ForegroundColor $dim
     Write-Host ""
 
     # Row 0 - top of crossguard + title row 0
 
-    Write-Host (Ex "      ^L^D^K ") -ForegroundColor $hilt -NoNewline
-    Write-Host (Ex "^#^#^#^#^#^#^#^K^#^#^#^#^#^#^#^K ^#^#^#^#^#^#^K ^#^#^#^#^#^#^K ^#^#^K   ^#^#^K^#^#^#^#^#^#^K ^#^#^#^#^#^#^K") -ForegroundColor $gold
+    Write-Host (Ex "      ^07^03^06 ") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^06   ^02^02^06^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06") -ForegroundColor $gold
 
     # Row 1 - upper guard + title row 1 + upper blade edge
 
-    Write-Host (Ex "      ^B ^P^D") -ForegroundColor $hilt -NoNewline
-    Write-Host (Ex "^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J ^#^#^B   ^#^#^B^#^#^L^D^D^#^#^K^#^#^L^D^D^#^#^K") -ForegroundColor $gold -NoNewline
-    Write-Host (Ex "^D^D^D^D^D^D^\") -ForegroundColor $tip
+    Write-Host (Ex "      ^04 ^15^03") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05 ^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^07^03^03^02^02^06") -ForegroundColor $gold -NoNewline
+    Write-Host (Ex "^03^03^03^03^03^03^18") -ForegroundColor $tip
 
     # Row 2 - pommel + grip + guard slot + title row 2 + blade through middle + tip
 
     Write-Host "(" -ForegroundColor $hilt -NoNewline
     Write-Host "o" -ForegroundColor $pommel -NoNewline
-    Write-Host (Ex ")^D^D^D^Q ^B ") -ForegroundColor $hilt -NoNewline
-    Write-Host (Ex "^#^#^#^#^#^#^#^K^#^#^#^#^#^K  ^#^#^B     ^#^#^B  ^#^#^#^K^#^#^B   ^#^#^B^#^#^#^#^#^#^L^J^#^#^B  ^#^#^B") -ForegroundColor $gold -NoNewline
-    Write-Host (Ex "^D^D^D^D^D^D^D^X") -ForegroundColor $tip
+    Write-Host (Ex ")^03^03^03^19 ^04 ") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^06  ^02^02^04     ^02^02^04  ^02^02^02^06^02^02^04   ^02^02^04^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04") -ForegroundColor $gold -NoNewline
+    Write-Host (Ex "^03^03^03^03^03^03^03^20") -ForegroundColor $tip
 
     # Row 3 - lower guard + title row 3 + lower blade edge
 
-    Write-Host (Ex "      ^B ^P^D") -ForegroundColor $hilt -NoNewline
-    Write-Host (Ex "^M^D^D^D^D^#^#^B^#^#^L^D^D^J  ^#^#^B     ^#^#^B   ^#^#^B^#^#^B   ^#^#^B^#^#^L^D^D^#^#^K^#^#^B  ^#^#^B") -ForegroundColor $gold -NoNewline
-    Write-Host (Ex "^D^D^D^D^D^D^/") -ForegroundColor $tip
+    Write-Host (Ex "      ^04 ^15^03") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^08^03^03^03^03^02^02^04^02^02^07^03^03^05  ^02^02^04     ^02^02^04   ^02^02^04^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^04  ^02^02^04") -ForegroundColor $gold -NoNewline
+    Write-Host (Ex "^03^03^03^03^03^03^21") -ForegroundColor $tip
 
     # Row 4 - bottom of crossguard + title row 4
 
-    Write-Host (Ex "      ^M^D^J ") -ForegroundColor $hilt -NoNewline
-    Write-Host (Ex "^#^#^#^#^#^#^#^B^#^#^#^#^#^#^#^K^M^#^#^#^#^#^#^K^M^#^#^#^#^#^#^L^J^M^#^#^#^#^#^#^L^J^#^#^B  ^#^#^B^#^#^#^#^#^#^L^J") -ForegroundColor $gold
+    Write-Host (Ex "      ^08^03^05 ") -ForegroundColor $hilt -NoNewline
+    Write-Host (Ex "^02^02^02^02^02^02^02^04^02^02^02^02^02^02^02^06^08^02^02^02^02^02^02^06^08^02^02^02^02^02^02^07^05^08^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04^02^02^02^02^02^02^07^05") -ForegroundColor $gold
 
     # Row 5 - title row 5
 
-    Write-Host (Ex "          ^M^D^D^D^D^D^D^J^M^D^D^D^D^D^D^J ^M^D^D^D^D^D^J ^M^D^D^D^D^D^J  ^M^D^D^D^D^D^J ^M^D^J  ^M^D^J^M^D^D^D^D^D^J") -ForegroundColor $gold
+    Write-Host (Ex "          ^08^03^03^03^03^03^03^05^08^03^03^03^03^03^03^05 ^08^03^03^03^03^03^05 ^08^03^03^03^03^03^05  ^08^03^03^03^03^03^05 ^08^03^05  ^08^03^05^08^03^03^03^03^03^05") -ForegroundColor $gold
 
     Write-Host ""
-    Write-Host (Ex "                ^S Slayer of threats. Keeper of truth. ^S") -ForegroundColor $rust
-    Write-Host (Ex "                    ^Y  F O R E N S I C   T R I A G E  ^Y") -ForegroundColor $dim
+    Write-Host (Ex "                ^13 Slayer of threats. Keeper of truth. ^13") -ForegroundColor $rust
+    Write-Host (Ex "                    ^22  F O R E N S I C   T R I A G E  ^22") -ForegroundColor $dim
     Write-Host ""
-    Write-Host (Ex " ^T^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^R") -ForegroundColor $dim
+    Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor $dim
     Write-Host ""
 
     # System info card
@@ -193,19 +193,19 @@ function Show-secgurdBanner {
     Write-Host $OutputPath -ForegroundColor $info
 
     Write-Host ""
-    Write-Host (Ex " ^T^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^R") -ForegroundColor $dim
+    Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor $dim
     Write-Host ""
 
     if (-not $isAdmin) {
-        Write-Host (Ex "  ^W  Running without admin privileges ^@ some artifacts will be unavailable.") -ForegroundColor $warn
+        Write-Host (Ex "  ^16  Running without admin privileges ^09 some artifacts will be unavailable.") -ForegroundColor $warn
         Write-Host ""
     }
 }
 
 function Show-Help {
     Write-Host ""
-    Write-Host (Ex "  secgurd $($script:secgurdVersion) ^@ Windows DFIR Triage") -ForegroundColor Cyan
-    Write-Host (Ex "  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
+    Write-Host (Ex "  secgurd $($script:secgurdVersion) ^09 Windows DFIR Triage") -ForegroundColor Cyan
+    Write-Host (Ex "  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  USAGE" -ForegroundColor White
     Write-Host "    .\secgurd.ps1 [options]" -ForegroundColor Gray
@@ -277,7 +277,7 @@ function Show-ModuleMenu {
 
     if (-not [Environment]::UserInteractive -or $Host.Name -eq 'ServerRemoteHost') {
         Write-Host ""
-        Write-Host (Ex "  ^W  Non-interactive session detected ^@ running all modules.") -ForegroundColor Yellow
+        Write-Host (Ex "  ^16  Non-interactive session detected ^09 running all modules.") -ForegroundColor Yellow
         Write-Host ""
         return $true
     }
@@ -294,24 +294,24 @@ function Show-ModuleMenu {
         Write-Host "Select modules to run." -ForegroundColor White -NoNewline
         Write-Host "  [" -ForegroundColor DarkGray -NoNewline
         Write-Host " number " -ForegroundColor Yellow -NoNewline
-        Write-Host (Ex "] toggle  ^*  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] toggle  ^10  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " a " -ForegroundColor Yellow -NoNewline
-        Write-Host (Ex "] all  ^*  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] all  ^10  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " n " -ForegroundColor Yellow -NoNewline
-        Write-Host (Ex "] none  ^*  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] none  ^10  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " r " -ForegroundColor Green -NoNewline
-        Write-Host (Ex "] run  ^*  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] run  ^10  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " ? " -ForegroundColor Yellow -NoNewline
-        Write-Host (Ex "] help  ^*  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "] help  ^10  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " q " -ForegroundColor Red -NoNewline
         Write-Host "] quit" -ForegroundColor DarkGray
         Write-Host ""
-        Write-Host (Ex "     ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~  collection modules  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
+        Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  collection modules  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
 
         foreach ($m in $script:ModuleCatalogue) {
             $on = $script:SelectedModules[$m.Id]
-            $mark = if ($on) { (Ex "[^V]") } else { '[ ]' }
+            $mark = if ($on) { (Ex "[^14]") } else { '[ ]' }
             $markColor = if ($on) { 'Green' } else { 'DarkGray' }
             $nameColor = if ($on) { 'White' } else { 'DarkGray' }
             Write-Host "   " -NoNewline
@@ -323,7 +323,7 @@ function Show-ModuleMenu {
         }
 
         Write-Host ""
-        Write-Host (Ex "     ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~  presets  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
+        Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  presets  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
 
         foreach ($key in 'qa','net','ps') {
@@ -335,7 +335,7 @@ function Show-ModuleMenu {
         }
 
         Write-Host ""
-        Write-Host (Ex "     ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
+        Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
 
         $count = ($script:SelectedModules.Values | Where-Object { $_ }).Count
@@ -343,7 +343,7 @@ function Show-ModuleMenu {
         $est = [int]($count * 3.2)
         Write-Host "   " -NoNewline
         Write-Host "$count / $total selected" -ForegroundColor White -NoNewline
-        Write-Host (Ex "   ^*   ") -ForegroundColor DarkGray -NoNewline
+        Write-Host (Ex "   ^10   ") -ForegroundColor DarkGray -NoNewline
         Write-Host "est. runtime ~${est} sec" -ForegroundColor White
 
         Write-Host ""
@@ -355,7 +355,7 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'q' -or $cmd -eq 'quit' -or $cmd -eq 'exit') {
             Write-Host ""
-            Write-Host (Ex "   ^S Sigurd sheathes the blade. Farewell. ^S") -ForegroundColor DarkRed
+            Write-Host (Ex "   ^13 Sigurd sheathes the blade. Farewell. ^13") -ForegroundColor DarkRed
             Write-Host ""
             return $false
         }
@@ -373,7 +373,7 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'r' -or $cmd -eq 'run') {
             if ($count -eq 0) {
-                $pendingMsg = (Ex "^W  No modules selected ^@ pick at least one, or 'a' for all.")
+                $pendingMsg = (Ex "^16  No modules selected ^09 pick at least one, or 'a' for all.")
                 Clear-Host; Show-secgurdBannerCompact
                 continue
             }
@@ -382,14 +382,14 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'a' -or $cmd -eq 'all') {
             foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
-            $pendingMsg = (Ex "^V All modules selected.")
+            $pendingMsg = (Ex "^14 All modules selected.")
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
 
         if ($cmd -eq 'n' -or $cmd -eq 'none') {
             foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $false }
-            $pendingMsg = (Ex "^x All modules deselected.")
+            $pendingMsg = (Ex "^23 All modules deselected.")
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -397,7 +397,7 @@ function Show-ModuleMenu {
         if ($script:Presets.ContainsKey($cmd)) {
             foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $false }
             foreach ($id in $script:Presets[$cmd].Modules) { $script:SelectedModules[$id] = $true }
-            $pendingMsg = (Ex "^Z Preset applied: $($script:Presets[$cmd].Label) (modules $($script:Presets[$cmd].Modules -join ', '))")
+            $pendingMsg = (Ex "^25 Preset applied: $($script:Presets[$cmd].Label) (modules $($script:Presets[$cmd].Modules -join ', '))")
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -423,7 +423,7 @@ function Show-ModuleMenu {
             }
             Clear-Host; Show-secgurdBannerCompact
         } else {
-            $pendingMsg = (Ex "^W  Unknown command: '$cmd'  ^@  type ? for help.")
+            $pendingMsg = (Ex "^16  Unknown command: '$cmd'  ^09  type ? for help.")
             Clear-Host; Show-secgurdBannerCompact
         }
     }
@@ -431,24 +431,24 @@ function Show-ModuleMenu {
 
 function Show-secgurdBannerCompact {
     Write-Host ""
-    Write-Host (Ex " ^R^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^T") -ForegroundColor DarkGray
-    Write-Host (Ex "      ^L^D^K ") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^#^#^#^#^#^#^#^K^#^#^#^#^#^#^#^K ^#^#^#^#^#^#^K ^#^#^#^#^#^#^K ^#^#^K   ^#^#^K^#^#^#^#^#^#^K ^#^#^#^#^#^#^K") -ForegroundColor DarkYellow
-    Write-Host (Ex "      ^B ^P^D") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J^#^#^L^D^D^D^D^J ^#^#^B   ^#^#^B^#^#^L^D^D^#^#^K^#^#^L^D^D^#^#^K") -ForegroundColor DarkYellow -NoNewline
-    Write-Host (Ex "^D^D^D^D^D^D^\") -ForegroundColor Red
+    Write-Host (Ex " ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^12") -ForegroundColor DarkGray
+    Write-Host (Ex "      ^07^03^06 ") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^06   ^02^02^06^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06") -ForegroundColor DarkYellow
+    Write-Host (Ex "      ^04 ^15^03") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05 ^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^07^03^03^02^02^06") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^03^03^03^03^03^03^18") -ForegroundColor Red
     Write-Host "(" -ForegroundColor White -NoNewline
     Write-Host "o" -ForegroundColor DarkYellow -NoNewline
-    Write-Host (Ex ")^D^D^D^Q ^B ") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^#^#^#^#^#^#^#^K^#^#^#^#^#^K  ^#^#^B     ^#^#^B  ^#^#^#^K^#^#^B   ^#^#^B^#^#^#^#^#^#^L^J^#^#^B  ^#^#^B") -ForegroundColor DarkYellow -NoNewline
-    Write-Host (Ex "^D^D^D^D^D^D^D^X") -ForegroundColor Red
-    Write-Host (Ex "      ^B ^P^D") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^M^D^D^D^D^#^#^B^#^#^L^D^D^J  ^#^#^B     ^#^#^B   ^#^#^B^#^#^B   ^#^#^B^#^#^L^D^D^#^#^K^#^#^B  ^#^#^B") -ForegroundColor DarkYellow -NoNewline
-    Write-Host (Ex "^D^D^D^D^D^D^/") -ForegroundColor Red
-    Write-Host (Ex "      ^M^D^J ") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^#^#^#^#^#^#^#^B^#^#^#^#^#^#^#^K^M^#^#^#^#^#^#^K^M^#^#^#^#^#^#^L^J^M^#^#^#^#^#^#^L^J^#^#^B  ^#^#^B^#^#^#^#^#^#^L^J") -ForegroundColor DarkYellow
-    Write-Host (Ex "          ^M^D^D^D^D^D^D^J^M^D^D^D^D^D^D^J ^M^D^D^D^D^D^J ^M^D^D^D^D^D^J  ^M^D^D^D^D^D^J ^M^D^J  ^M^D^J^M^D^D^D^D^D^J") -ForegroundColor DarkYellow
-    Write-Host (Ex " ^T^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^R") -ForegroundColor DarkGray
+    Write-Host (Ex ")^03^03^03^19 ^04 ") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^06  ^02^02^04     ^02^02^04  ^02^02^02^06^02^02^04   ^02^02^04^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^03^03^03^03^03^03^03^20") -ForegroundColor Red
+    Write-Host (Ex "      ^04 ^15^03") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^08^03^03^03^03^02^02^04^02^02^07^03^03^05  ^02^02^04     ^02^02^04   ^02^02^04^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^04  ^02^02^04") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^03^03^03^03^03^03^21") -ForegroundColor Red
+    Write-Host (Ex "      ^08^03^05 ") -ForegroundColor White -NoNewline
+    Write-Host (Ex "^02^02^02^02^02^02^02^04^02^02^02^02^02^02^02^06^08^02^02^02^02^02^02^06^08^02^02^02^02^02^02^07^05^08^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04^02^02^02^02^02^02^07^05") -ForegroundColor DarkYellow
+    Write-Host (Ex "          ^08^03^03^03^03^03^03^05^08^03^03^03^03^03^03^05 ^08^03^03^03^03^03^05 ^08^03^03^03^03^03^05  ^08^03^03^03^03^03^05 ^08^03^05  ^08^03^05^08^03^03^03^03^03^05") -ForegroundColor DarkYellow
+    Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor DarkGray
 }
 
 # ---------------------------------------------
@@ -488,7 +488,7 @@ try {
     Remove-Item $probe -Force -ErrorAction SilentlyContinue
 } catch {
     Write-Host ""
-    Write-Host (Ex "  ^x ERROR: Cannot write to output path:") -ForegroundColor Red
+    Write-Host (Ex "  ^23 ERROR: Cannot write to output path:") -ForegroundColor Red
     Write-Host "    $OutputPath" -ForegroundColor Red
     Write-Host "    $($_.Exception.Message)" -ForegroundColor DarkGray
     Write-Host ""
@@ -518,7 +518,7 @@ function Add-Finding {
         'MED'  { 'Yellow' }
         default { 'DarkGray' }
     }
-    Write-Host (Ex "       ^C^~ ") -ForegroundColor DarkGray -NoNewline
+    Write-Host (Ex "       ^26^00 ") -ForegroundColor DarkGray -NoNewline
     Write-Host $Message -ForegroundColor $color
 }
 
@@ -545,7 +545,7 @@ function Save-Output {
         $sw.Stop()
         $secs = ('{0,5:N1}s' -f ($sw.ElapsedMilliseconds / 1000))
         Write-Host "  $progress " -ForegroundColor DarkGray -NoNewline
-        Write-Host (Ex "[^V] ") -ForegroundColor Green -NoNewline
+        Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
         Write-Host ("{0,-42}" -f $FileName) -ForegroundColor Gray -NoNewline
         Write-Host $secs -ForegroundColor DarkGray
         $script:CollectedCount++
@@ -575,7 +575,7 @@ $script:TotalArtifacts = (
 if (-not $script:TotalArtifacts) { $script:TotalArtifacts = 1 }
 
 Write-Host ""
-Write-Host (Ex "     ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~  running triage  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
+Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  running triage  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
 Write-Host ""
 
 # ---------------------------------------------
@@ -615,7 +615,7 @@ Save-Output "02_local_users.txt" {
         $_.PasswordLastSet -and $_.PasswordLastSet -gt (Get-Date).AddDays(-14)
     }
     foreach ($u in $recentUsers) {
-        Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <14d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^@ possible new account")
+        Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <14d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^09 possible new account")
     }
 
     Write-Section "LOCAL GROUPS & MEMBERS"
@@ -757,9 +757,9 @@ Save-Output "03_services.txt" {
                 $sig = (Get-AuthenticodeSignature $path -ErrorAction SilentlyContinue)
                 $signer = $sig.SignerCertificate.Subject
                 if ($sig.Status -ne 'Valid') {
-                    Add-Finding 'HIGH' '03' (Ex "Unsigned service binary modified <30d: $($_.Name) ^> $path")
+                    Add-Finding 'HIGH' '03' (Ex "Unsigned service binary modified <30d: $($_.Name) ^17 $path")
                 } else {
-                    Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^> $path")
+                    Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path")
                 }
                 [PSCustomObject]@{
                     Service      = $_.Name
@@ -803,7 +803,7 @@ Save-Output "03_wmi_persistence.txt" {
     $bindings | Select-Object * | Format-List
 
     if ($bindings) {
-        Add-Finding 'HIGH' '03' (Ex "$($bindings.Count) WMI event consumer binding(s) present ^@ classic fileless persistence, review carefully")
+        Add-Finding 'HIGH' '03' (Ex "$($bindings.Count) WMI event consumer binding(s) present ^09 classic fileless persistence, review carefully")
     }
 }
 
@@ -837,7 +837,7 @@ Save-Output "03_com_hijacking_check.txt" {
         if ($hijacks) {
             $hijacks | Format-Table -AutoSize
         } else {
-            (Ex "  (no HKCU CLSIDs shadow HKLM\CLSID ^@ clean)")
+            (Ex "  (no HKCU CLSIDs shadow HKLM\CLSID ^09 clean)")
         }
     } else { "  (no HKCU CLSID hive)" }
 }
@@ -1165,7 +1165,7 @@ Save-Output "08_cleared_logs.txt" {
     $sec1102 = Get-WinEvent -LogName Security -FilterXPath "*[System[EventID=1102]]" -MaxEvents 100 -ErrorAction SilentlyContinue
     $sys104  = Get-WinEvent -LogName System -FilterXPath "*[System[EventID=104]]" -MaxEvents 100 -ErrorAction SilentlyContinue
     if ($sec1102) {
-        Add-Finding 'HIGH' '08' (Ex "Security log was CLEARED ($($sec1102.Count) event(s) 1102) ^@ possible anti-forensics")
+        Add-Finding 'HIGH' '08' (Ex "Security log was CLEARED ($($sec1102.Count) event(s) 1102) ^09 possible anti-forensics")
     }
     if ($sys104) {
         Add-Finding 'MED' '08' "A System/application log was cleared ($($sys104.Count) event(s) 104)"
@@ -1388,7 +1388,7 @@ $selectedIds = ($script:SelectedModules.GetEnumerator() | Where-Object { $_.Valu
 # 00_INDEX.txt   human-readable map of every file in the folder
 
 $indexLines = @()
-$indexLines += (Ex "secgurd $($script:secgurdVersion) ^@ Collection Index")
+$indexLines += (Ex "secgurd $($script:secgurdVersion) ^09 Collection Index")
 $indexLines += ("=" * 60)
 $indexLines += "Host        : $env:COMPUTERNAME"
 $indexLines += "User        : $env:USERDOMAIN\$env:USERNAME"
@@ -1410,18 +1410,18 @@ $indexLines | Out-File (Join-Path $OutputPath '00_INDEX.txt') -Encoding UTF8 -Fo
 # 00_SUMMARY.txt   findings + metadata, the first file an analyst should read
 
 $summaryLines = @()
-$summaryLines += (Ex "secgurd $($script:secgurdVersion) ^@ Triage Summary")
+$summaryLines += (Ex "secgurd $($script:secgurdVersion) ^09 Triage Summary")
 $summaryLines += ("=" * 60)
 $summaryLines += "Host     : $env:COMPUTERNAME    User: $env:USERDOMAIN\$env:USERNAME"
 $summaryLines += "When     : $($script:RunStart.ToString('yyyy-MM-dd HH:mm:ss'))   Duration: $elapsedStr"
 $summaryLines += "Admin    : $isAdminNow"
 $summaryLines += "Collected: $($script:CollectedCount) files   Errors: $($script:ErrorCount)"
 $summaryLines += ""
-$summaryLines += (Ex "FINDINGS (auto-flagged ^@ verify before acting)")
+$summaryLines += (Ex "FINDINGS (auto-flagged ^09 verify before acting)")
 $summaryLines += ("-" * 60)
 if ($script:Findings.Count -eq 0) {
     $summaryLines += "  No high-signal indicators auto-flagged."
-    $summaryLines += (Ex "  (Absence of flags is NOT proof of a clean host ^@ review the raw files.)")
+    $summaryLines += (Ex "  (Absence of flags is NOT proof of a clean host ^09 review the raw files.)")
 } else {
     $script:Findings | Sort-Object | ForEach-Object { $summaryLines += "  $_" }
 }
@@ -1436,24 +1436,24 @@ $summaryLines | Out-File (Join-Path $OutputPath '00_SUMMARY.txt') -Encoding UTF8
 # ---------------------------------------------
 
 Write-Host ""
-Write-Host (Ex " ^T^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^R") -ForegroundColor DarkGray
+Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor DarkGray
 Write-Host ""
 
 # Findings recap on screen
 
 if ($script:Findings.Count -gt 0) {
-    Write-Host (Ex "  ^F FINDINGS ($($script:Findings.Count))") -ForegroundColor Red
+    Write-Host (Ex "  ^24 FINDINGS ($($script:Findings.Count))") -ForegroundColor Red
     foreach ($f in ($script:Findings | Sort-Object)) {
         $c = if ($f -like '`[HIGH`]*') { 'Red' } elseif ($f -like '`[MED`]*') { 'Yellow' } else { 'DarkGray' }
         Write-Host "    $f" -ForegroundColor $c
     }
     Write-Host ""
 } else {
-    Write-Host (Ex "  ^F No high-signal indicators auto-flagged (review raw files anyway).") -ForegroundColor DarkGray
+    Write-Host (Ex "  ^24 No high-signal indicators auto-flagged (review raw files anyway).") -ForegroundColor DarkGray
     Write-Host ""
 }
 
-Write-Host (Ex "  ^H  Compressing the hoard...") -ForegroundColor Cyan
+Write-Host (Ex "  ^27  Compressing the hoard...") -ForegroundColor Cyan
 $zipPath = "$OutputPath.zip"
 $zipOk = $false
 try {
@@ -1461,28 +1461,28 @@ try {
     $zipOk = $true
 } catch {
     Write-Host "  [!] Could not create zip: $($_.Exception.Message)" -ForegroundColor Yellow
-    Write-Host (Ex "      Raw folder is intact ^@ collect it manually.") -ForegroundColor DarkGray
+    Write-Host (Ex "      Raw folder is intact ^09 collect it manually.") -ForegroundColor DarkGray
 }
 
 Write-Host ""
-Write-Host (Ex "  ^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~^~") -ForegroundColor DarkGray
+Write-Host (Ex "  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
 Write-Host "  Collected : " -ForegroundColor DarkGray -NoNewline
 Write-Host "$($script:CollectedCount) files" -ForegroundColor Green -NoNewline
 if ($script:ErrorCount -gt 0) {
-    Write-Host (Ex "   ^*   ") -ForegroundColor DarkGray -NoNewline
+    Write-Host (Ex "   ^10   ") -ForegroundColor DarkGray -NoNewline
     Write-Host "$($script:ErrorCount) errors" -ForegroundColor Yellow -NoNewline
 }
-Write-Host (Ex "   ^*   ") -ForegroundColor DarkGray -NoNewline
+Write-Host (Ex "   ^10   ") -ForegroundColor DarkGray -NoNewline
 Write-Host "$elapsedStr" -ForegroundColor White
 Write-Host ""
 if ($zipOk) {
-    Write-Host (Ex "  [^V] Archive : ") -ForegroundColor Green -NoNewline
+    Write-Host (Ex "  [^14] Archive : ") -ForegroundColor Green -NoNewline
     Write-Host $zipPath -ForegroundColor White
 }
-Write-Host (Ex "  [^V] Raw     : ") -ForegroundColor Green -NoNewline
+Write-Host (Ex "  [^14] Raw     : ") -ForegroundColor Green -NoNewline
 Write-Host $OutputPath -ForegroundColor White
-Write-Host (Ex "  [^V] Start   : ") -ForegroundColor Green -NoNewline
-Write-Host (Ex "00_SUMMARY.txt (findings) ^* 00_INDEX.txt (file map)") -ForegroundColor White
+Write-Host (Ex "  [^14] Start   : ") -ForegroundColor Green -NoNewline
+Write-Host (Ex "00_SUMMARY.txt (findings) ^10 00_INDEX.txt (file map)") -ForegroundColor White
 Write-Host ""
 
 # Retrieval hint for remote sessions
@@ -1495,9 +1495,9 @@ if ($zipOk) {
 }
 Write-Host ""
 
-Write-Host (Ex "  ^S The dragon falls. Triage complete. ^S") -ForegroundColor DarkRed
+Write-Host (Ex "  ^13 The dragon falls. Triage complete. ^13") -ForegroundColor DarkRed
 Write-Host ""
-Write-Host (Ex " ^R^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^=^T") -ForegroundColor DarkGray
+Write-Host (Ex " ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^12") -ForegroundColor DarkGray
 Write-Host ""
 
 # Optionally open the output folder (interactive desktop only)
