@@ -17,6 +17,9 @@
     Suppress the ASCII banner (quieter logs).
 .PARAMETER OpenWhenDone
     Open the output folder in Explorer when collection finishes (interactive only).
+.PARAMETER Cleanup
+    Delete all secgurd output folders and zips from %TEMP%. Lists items, shows total
+    size, and requires typing DELETE to confirm. Does nothing else.
 .PARAMETER Help
     Show usage and exit.
 .EXAMPLE
@@ -31,6 +34,9 @@
 .EXAMPLE
     .\secgurd.ps1 -Modules 03,04,06,11
     Run only persistence, PowerShell, processes, and LOLBins.
+.EXAMPLE
+    .\secgurd.ps1 -Cleanup
+    Remove all secgurd output from TEMP (asks you to type DELETE first).
 .NOTES
     Run as Administrator for full coverage.
     Works over WinRM / PSRemoting sessions.
@@ -43,6 +49,7 @@ param(
     [switch]$Auto,
     [string[]]$Modules,
     [switch]$OpenWhenDone,
+    [switch]$Cleanup,
     [switch]$Help
 )
 
@@ -240,6 +247,7 @@ function Show-Help {
     Write-Host "    -OutputPath <path>    Custom output folder" -ForegroundColor Gray
     Write-Host "    -NoBanner             Suppress the ASCII banner" -ForegroundColor Gray
     Write-Host "    -OpenWhenDone         Open output folder in Explorer when finished" -ForegroundColor Gray
+    Write-Host "    -Cleanup              Delete all secgurd output from TEMP (type-to-confirm)" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  MENU COMMANDS" -ForegroundColor White
@@ -258,6 +266,97 @@ function Show-Help {
 if ($Help) {
     if (-not $NoBanner) { Show-secgurdBanner }
     Show-Help
+    return
+}
+
+# ---------------------------------------------
+#  CLEANUP MODE  (-Cleanup)
+# ---------------------------------------------
+
+function Invoke-Cleanup {
+    # Finds every secgurd output folder and zip under %TEMP% and deletes them,
+    # gated behind a type-to-confirm prompt so it can't fire accidentally.
+    if (-not $NoBanner) { Show-secgurdBanner }
+
+    $pattern = Join-Path $env:TEMP 'secgurd_*'
+    $items = Get-ChildItem $pattern -Force -ErrorAction SilentlyContinue
+
+    Write-Host ""
+    Write-Host "  CLEANUP - remove secgurd output from this machine" -ForegroundColor Cyan
+    Write-Host "  ----------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "  Location: $env:TEMP" -ForegroundColor DarkGray
+    Write-Host ""
+
+    if (-not $items) {
+        Write-Host "  Nothing to clean - no secgurd_* items found in TEMP." -ForegroundColor Green
+        Write-Host ""
+        return
+    }
+
+    # List what would be deleted, with sizes
+    $totalBytes = 0
+    foreach ($it in $items) {
+        if ($it.PSIsContainer) {
+            $size = (Get-ChildItem $it.FullName -Recurse -Force -ErrorAction SilentlyContinue |
+                     Measure-Object -Property Length -Sum).Sum
+            $kind = 'folder'
+        } else {
+            $size = $it.Length
+            $kind = 'zip   '
+        }
+        $totalBytes += [int64]$size
+        Write-Host ("   {0}  {1,-50} {2,8:N0} KB" -f $kind, $it.Name, ($size/1KB)) -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host ("  {0} item(s), {1:N1} MB total" -f $items.Count, ($totalBytes/1MB)) -ForegroundColor White
+    Write-Host ""
+
+    # Non-interactive safety: never auto-delete without a human confirming.
+    if (-not [Environment]::UserInteractive -or $Host.Name -eq 'ServerRemoteHost') {
+        Write-Host "  Refusing to delete in a non-interactive session." -ForegroundColor Yellow
+        Write-Host "  Run interactively, or delete manually:" -ForegroundColor DarkGray
+        Write-Host "    Remove-Item `"$pattern`" -Recurse -Force" -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+
+    # Two-step type-to-confirm
+    Write-Flair "  This permanently deletes the items above. This cannot be undone." '1;91' 'Red'
+    Write-Host ""
+    Write-Host "  To confirm, type exactly:  " -ForegroundColor DarkGray -NoNewline
+    Write-Host "DELETE" -ForegroundColor Yellow
+    Write-Host "  (anything else cancels)" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+    $confirm = Read-Host
+
+    if ($confirm -cne 'DELETE') {
+        Write-Host ""
+        Write-Host "  Cancelled - nothing was deleted." -ForegroundColor Green
+        Write-Host ""
+        return
+    }
+
+    $removed = 0; $failed = 0
+    foreach ($it in $items) {
+        try {
+            Remove-Item $it.FullName -Recurse -Force -ErrorAction Stop
+            $removed++
+        } catch {
+            Write-Host "  [!] Could not remove: $($it.Name) - $($_.Exception.Message)" -ForegroundColor Yellow
+            $failed++
+        }
+    }
+    Write-Host ""
+    Write-Host "  Removed $removed item(s)." -ForegroundColor Green -NoNewline
+    if ($failed -gt 0) { Write-Host "  ($failed failed - may be in use)" -ForegroundColor Yellow }
+    else { Write-Host "" }
+    Write-Flair "  The hoard is scattered. Cleanup complete." '1;92' 'Green'
+    Write-Host ""
+}
+
+if ($Cleanup) {
+    Invoke-Cleanup
     return
 }
 
