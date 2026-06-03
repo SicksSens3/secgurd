@@ -113,9 +113,9 @@ try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 function Show-secgurdBanner {
     # Color palette
 
-    $gold   = 'DarkYellow'
+    $gold   = 'Yellow'
     $hilt   = 'White'
-    $pommel = 'DarkYellow'
+    $pommel = 'Yellow'
     $tip    = 'Red'
     $rust   = 'DarkRed'
     $dim    = 'DarkGray'
@@ -319,7 +319,7 @@ function Show-ModuleMenu {
             Write-Host "   " -NoNewline
             Write-Host $mark -ForegroundColor $markColor -NoNewline
             Write-Host "  " -NoNewline
-            Write-Host $m.Id -ForegroundColor Blue -NoNewline
+            Write-Host $m.Id -ForegroundColor Yellow -NoNewline
             Write-Host ("  {0,-22}" -f $m.Name) -ForegroundColor $nameColor -NoNewline
             Write-Host $m.Desc -ForegroundColor DarkGray
         }
@@ -437,21 +437,21 @@ function Show-secgurdBannerCompact {
     Write-Host ""
     Write-Host (Ex " ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^12") -ForegroundColor DarkGray
     Write-Host (Ex "      ^07^03^06 ") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^06   ^02^02^06^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06") -ForegroundColor DarkYellow
+    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^06   ^02^02^06^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06") -ForegroundColor Yellow
     Write-Host (Ex "      ^04 ^15^03") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05 ^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^07^03^03^02^02^06") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05 ^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^07^03^03^02^02^06") -ForegroundColor Yellow -NoNewline
     Write-Host (Ex "^03^03^03^03^03^03^18") -ForegroundColor Red
     Write-Host "(" -ForegroundColor White -NoNewline
-    Write-Host "o" -ForegroundColor DarkYellow -NoNewline
+    Write-Host "o" -ForegroundColor Yellow -NoNewline
     Write-Host (Ex ")^03^03^03^19 ^04 ") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^06  ^02^02^04     ^02^02^04  ^02^02^02^06^02^02^04   ^02^02^04^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^06  ^02^02^04     ^02^02^04  ^02^02^02^06^02^02^04   ^02^02^04^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04") -ForegroundColor Yellow -NoNewline
     Write-Host (Ex "^03^03^03^03^03^03^03^20") -ForegroundColor Red
     Write-Host (Ex "      ^04 ^15^03") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^08^03^03^03^03^02^02^04^02^02^07^03^03^05  ^02^02^04     ^02^02^04   ^02^02^04^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^04  ^02^02^04") -ForegroundColor DarkYellow -NoNewline
+    Write-Host (Ex "^08^03^03^03^03^02^02^04^02^02^07^03^03^05  ^02^02^04     ^02^02^04   ^02^02^04^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^04  ^02^02^04") -ForegroundColor Yellow -NoNewline
     Write-Host (Ex "^03^03^03^03^03^03^21") -ForegroundColor Red
     Write-Host (Ex "      ^08^03^05 ") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^02^02^02^02^02^02^02^04^02^02^02^02^02^02^02^06^08^02^02^02^02^02^02^06^08^02^02^02^02^02^02^07^05^08^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04^02^02^02^02^02^02^07^05") -ForegroundColor DarkYellow
-    Write-Host (Ex "          ^08^03^03^03^03^03^03^05^08^03^03^03^03^03^03^05 ^08^03^03^03^03^03^05 ^08^03^03^03^03^03^05  ^08^03^03^03^03^03^05 ^08^03^05  ^08^03^05^08^03^03^03^03^03^05") -ForegroundColor DarkYellow
+    Write-Host (Ex "^02^02^02^02^02^02^02^04^02^02^02^02^02^02^02^06^08^02^02^02^02^02^02^06^08^02^02^02^02^02^02^07^05^08^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04^02^02^02^02^02^02^07^05") -ForegroundColor Yellow
+    Write-Host (Ex "          ^08^03^03^03^03^03^03^05^08^03^03^03^03^03^03^05 ^08^03^03^03^03^03^05 ^08^03^03^03^03^03^05  ^08^03^03^03^03^03^05 ^08^03^05  ^08^03^05^08^03^03^03^03^03^05") -ForegroundColor Yellow
     Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor DarkGray
 }
 
@@ -874,20 +874,22 @@ Save-Output "04_ps_history.txt" {
 
 Save-Output "04_ps_transcripts.txt" {
     Write-Section "POWERSHELL TRANSCRIPT FILES"
+    # Transcripts are always named 'PowerShell_transcript.<host>.<rand>.<timestamp>.txt'.
+    # Filter by that pattern at the filesystem level (fast) instead of enumerating every .txt.
     $transcriptDirs = @(
         'C:\Transcripts',
         'C:\Windows\Temp',
         $env:TEMP,
-        'C:\Users'
+        "$env:SystemDrive\Users\*\Documents"   # default transcript location when enabled per-user
     )
     $found = $false
     foreach ($dir in $transcriptDirs) {
-        $files = Get-ChildItem $dir -Recurse -Filter '*.txt' -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match 'PowerShell_transcript' }
+        if (-not (Test-Path $dir)) { continue }
+        $files = Get-ChildItem -Path $dir -Filter 'PowerShell_transcript*.txt' -Recurse -ErrorAction SilentlyContinue -Force
         foreach ($f in $files) {
             $found = $true
             "`n===== $($f.FullName) ====="
-            Get-Content $f.FullName -TotalCount 50
+            Get-Content $f.FullName -TotalCount 50 -ErrorAction SilentlyContinue
             "... ($(($f.Length/1KB).ToString('F1')) KB total)"
         }
     }
