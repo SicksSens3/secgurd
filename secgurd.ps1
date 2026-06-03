@@ -149,6 +149,17 @@ function Write-Flair {
     }
 }
 
+function Wc {
+    # Write a colored segment with NO newline. Uses ANSI true-color when available
+    # (lets us do real orange), otherwise falls back to a 16-color -ForegroundColor.
+    param([string]$Text, [string]$Ansi, [string]$Fallback)
+    if ($script:AnsiOK) {
+        Write-Host ("{0}[{1}m{2}{0}[0m" -f $script:ESC, $Ansi, $Text) -NoNewline
+    } else {
+        Write-Host $Text -ForegroundColor $Fallback -NoNewline
+    }
+}
+
 # ---------------------------------------------
 
 #  secgurd BANNER
@@ -625,40 +636,164 @@ function Show-secgurdBannerCompact {
 
 function Show-DeadDragon {
     # Easter egg: shown when the user hits 'run' with zero modules selected.
-    # The dragon is already slain - nothing to hunt until you pick a module.
-    $d = 'DarkGreen'
+    # Knight (rider, body, leg, foot) = white, fire (bottom-left) = red/orange, worm = green.
     Write-Host ""
-    Write-Host '                            ==(W{==========-      /===-' -ForegroundColor $d
-    Write-Host '                              ||  (.--.)         /===-_---~~~~~~~~~------____' -ForegroundColor $d
-    Write-Host '                              | \_,|**|,__      |===-~___                _,-'' `' -ForegroundColor $d
-    Write-Host '                 -==\\        `\ '' `--''   ),    `//~\\   ~~~~`---.___.-~~' -ForegroundColor $d
-    Write-Host '             ______-==|        /`\_. .__/\ \    | |  \\           _-~`' -ForegroundColor $d
-    Write-Host '       __--~~~  ,-/-==\\      (   | .  |~~~~|   | |   `\        ,''' -ForegroundColor $d
-    Write-Host '    _-~       /''    |  \\     )__/==0==-\<>/   / /      \      /' -ForegroundColor $d
-    Write-Host '  .''        /       |   \\      /~\___/~~\/  /'' /        \   /''' -ForegroundColor $d
-    Write-Host ' /  ____  /         |    \`\.__/-~~   \  |_/''  /          \/''' -ForegroundColor $d
-    Write-Host '/-''~    ~~~~~---__  |     ~-/~         ( )   /''        _--~`' -ForegroundColor $d
-    Write-Host '                  \_|      /        _) | ;  ),   __--~~' -ForegroundColor $d
-    Write-Host '                    ''~~--_/      _-~/- |/ \   ''-~ \' -ForegroundColor $d
-    Write-Host '                   {\__--_/}    / \\_>-|)<__\      \' -ForegroundColor $d
-    Write-Host '                   /''   (_/  _-~  | |__>--<__|      |' -ForegroundColor $d
-    Write-Host '                  |   _/) )-~     | |__>--<__|      |' -ForegroundColor $d
-    Write-Host '                  / /~ ,_/       / /__>---<__/      |' -ForegroundColor $d
-    Write-Host '                 o-o _//        /-~_>---<__-~      /' -ForegroundColor $d
-    Write-Host '                 (^(~          /~_>---<__-      _-~' -ForegroundColor $d
-    Write-Host '                ,/|           /__>--<__/     _-~' -ForegroundColor $d
-    Write-Host '             ,//(''(          |__>--<__|     /                  .----_' -ForegroundColor $d
-    Write-Host '            ( ( ''))          |__>--<__|    |                 /'' _---_~\' -ForegroundColor $d
-    Write-Host '         `-)) )) (           |__>--<__|    |               /''  /     ~\`\' -ForegroundColor $d
-    Write-Host '        ,/,''//( (             \__>--<__\    \            /''  //        ||' -ForegroundColor $d
-    Write-Host '      ,( ( ((, ))              ~-__>--<_~-_  ~--____---~'' _/''/        /''' -ForegroundColor $d
-    Write-Host '    `~/  )` ) ,/|                 ~-_~>--<_/-__       __-~ _/' -ForegroundColor $d
-    Write-Host '  ._-~//( )/ )) `                    ~~-''_/_/ /~~~~~~~__--~' -ForegroundColor $d
-    Write-Host '   ;''( '')/ ,)(                              ~~~~~~~~~~' -ForegroundColor $d
-    Write-Host '  '' '') ''( (/' -ForegroundColor $d
-    Write-Host '    ''   ''  `' -ForegroundColor $d
+    Wc '                            ' '38;2;70;160;75' 'DarkGreen'
+    Wc '==(W{==========-' '38;2;245;245;245' 'White'
+    Wc '      /===-' '38;2;70;160;75' 'DarkGreen'
     Write-Host ""
-    Write-Flair "        The worm is already slain. Choose a module to hunt." '1;92' 'Green'
+    Wc '                              ' '38;2;70;160;75' 'DarkGreen'
+    Wc '||' '38;2;245;245;245' 'White'
+    Wc '  ' '38;2;70;160;75' 'DarkGreen'
+    Wc '(.--.)' '38;2;245;245;245' 'White'
+    Wc '         /===-_---~~~~~~~~~------____' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                              ' '38;2;70;160;75' 'DarkGreen'
+    Wc '| \_,|**|,__' '38;2;245;245;245' 'White'
+    Wc '      |===-~___                _,-'' `' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                 -==\\        ' '38;2;70;160;75' 'DarkGreen'
+    Wc '`\ '' `--''   ),' '38;2;245;245;245' 'White'
+    Wc '    `//~\\   ~~~~`---.___.-~~' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '             ______-==|        ' '38;2;70;160;75' 'DarkGreen'
+    Wc '/`\_. .__/\ \' '38;2;245;245;245' 'White'
+    Wc '    | |  \\           _-~`' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '       __--~~~  ,-/-==\\      ' '38;2;70;160;75' 'DarkGreen'
+    Wc '(   | .  |~~~~|' '38;2;245;245;245' 'White'
+    Wc '   | |   `\        ,''' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '    _-~       /''    |  \\     ' '38;2;70;160;75' 'DarkGreen'
+    Wc ')__/==0==-\<>/' '38;2;245;245;245' 'White'
+    Wc '   / /      \      /' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '  .''        /       |   \\      ' '38;2;70;160;75' 'DarkGreen'
+    Wc '/~\___/~~\/' '38;2;245;245;245' 'White'
+    Wc '  /'' /        \   /''' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc ' /  ____  /         |    \`\.__' '38;2;70;160;75' 'DarkGreen'
+    Wc '/-~~   \  |' '38;2;245;245;245' 'White'
+    Wc '_/''  /          \/''' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '/-''~    ~~~~~---__  |     ~-/~         ' '38;2;70;160;75' 'DarkGreen'
+    Wc '( )' '38;2;245;245;245' 'White'
+    Wc '   /''        _--~`' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                  \_|      /        _) ' '38;2;70;160;75' 'DarkGreen'
+    Wc '| ;' '38;2;245;245;245' 'White'
+    Wc '  ),   __--~~' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                    ''~~--_/      _-~/- ' '38;2;70;160;75' 'DarkGreen'
+    Wc '|/' '38;2;245;245;245' 'White'
+    Wc ' \   ''-~ \' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                   {\__--_/}    / \\_>-' '38;2;70;160;75' 'DarkGreen'
+    Wc '|)' '38;2;245;245;245' 'White'
+    Wc '<__\      \' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                   /''   (_/  _-~  | |__>--<__|      |' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                  |   _/) )-~     | |__>--<__|      |' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                  / /~ ,_/       / /__>---<__/      |' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                 o-o _//        /-~_>---<__-~      /' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                 (^(~          /~_>---<__-      _-~' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '                ' '38;2;70;160;75' 'DarkGreen'
+    Wc ',/|' '38;2;225;55;45' 'Red'
+    Wc '           /__>--<__/     _-~' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '             ' '38;2;70;160;75' 'DarkGreen'
+    Wc ',//(''' '38;2;225;55;45' 'Red'
+    Wc '(          |__>--<__|     /                  .----_' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '            ' '38;2;70;160;75' 'DarkGreen'
+    Wc '(' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '(' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc ''')' '38;2;225;55;45' 'Red'
+    Wc ')          |__>--<__|    |                 /'' _---_~\' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '         ' '38;2;70;160;75' 'DarkGreen'
+    Wc '`' '38;2;225;55;45' 'Red'
+    Wc '-' '38;2;255;150;30' 'Yellow'
+    Wc '))' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '))' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '(' '38;2;225;55;45' 'Red'
+    Wc '           |__>--<__|    |               /''  /     ~\`\' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '        ' '38;2;70;160;75' 'DarkGreen'
+    Wc ',/,''//(' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '(' '38;2;225;55;45' 'Red'
+    Wc '             \__>--<__\    \            /''  //        ||' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '      ' '38;2;70;160;75' 'DarkGreen'
+    Wc ',(' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '(' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '((,' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '))' '38;2;225;55;45' 'Red'
+    Wc '              ~-__>--<_~-_  ~--____---~'' _/''/        /''' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '    ' '38;2;70;160;75' 'DarkGreen'
+    Wc '`' '38;2;225;55;45' 'Red'
+    Wc '~' '38;2;255;150;30' 'Yellow'
+    Wc '/' '38;2;225;55;45' 'Red'
+    Wc '  ' '38;2;70;160;75' 'DarkGreen'
+    Wc ')`' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc ')' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc ',/|' '38;2;225;55;45' 'Red'
+    Wc '                 ~-_~>--<_/-__       __-~ _/' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '  ' '38;2;70;160;75' 'DarkGreen'
+    Wc '._' '38;2;225;55;45' 'Red'
+    Wc '-~' '38;2;255;150;30' 'Yellow'
+    Wc '//(' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc ')/' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '))' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '`' '38;2;225;55;45' 'Red'
+    Wc '                    ~~-''_/_/ /~~~~~~~__--~' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '   ' '38;2;70;160;75' 'DarkGreen'
+    Wc ';''(' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc ''')/' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc ',)(' '38;2;225;55;45' 'Red'
+    Wc '                              ~~~~~~~~~~' '38;2;70;160;75' 'DarkGreen'
+    Write-Host ""
+    Wc '  ' '38;2;70;160;75' 'DarkGreen'
+    Wc '''' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc ''')' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '''(' '38;2;225;55;45' 'Red'
+    Wc ' ' '38;2;70;160;75' 'DarkGreen'
+    Wc '(/' '38;2;225;55;45' 'Red'
+    Write-Host ""
+    Wc '    ' '38;2;70;160;75' 'DarkGreen'
+    Wc '''' '38;2;225;55;45' 'Red'
+    Wc '   ' '38;2;70;160;75' 'DarkGreen'
+    Wc '''' '38;2;225;55;45' 'Red'
+    Wc '  ' '38;2;70;160;75' 'DarkGreen'
+    Wc '`' '38;2;225;55;45' 'Red'
+    Write-Host ""
+    Write-Host ""
+    Write-Flair "        The Dragon still lives! Choose a module to hunt." '1;91' 'Red'
     Write-Host ""
 }
 
