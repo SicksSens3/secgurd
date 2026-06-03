@@ -1229,24 +1229,46 @@ Save-Output "06_process_tree.txt" {
 }
 
 Save-Output "06_loaded_dlls.txt" {
-    Write-Section "LOADED DLLs PER PROCESS (unsigned)"
+    Write-Section "LOADED DLLs PER PROCESS (unsigned / untrusted)"
+    # PERF/HANG FIX: the same DLL is loaded by many processes. Checking the signature of
+    # every (process, module) pair = thousands of Get-AuthenticodeSignature calls, each of
+    # which may attempt an online certificate-revocation lookup (CRL/OCSP) that STALLS for
+    # seconds on an offline/slow host. We:
+    #   1) collect unique module paths once,
+    #   2) verify each unique path a single time,
+    #   3) disable network revocation checks so it never blocks waiting on the internet.
+
+    # 1) Gather (proc, module) pairs and the set of unique paths
+    $pairs = New-Object System.Collections.Generic.List[object]
+    $uniquePaths = New-Object System.Collections.Generic.HashSet[string]
     Get-Process | ForEach-Object {
         $proc = $_
         try {
-            $proc.Modules | ForEach-Object {
-                $sig = Get-AuthenticodeSignature $_.FileName -ErrorAction SilentlyContinue
-                if ($sig.Status -ne 'Valid') {
-                    [PSCustomObject]@{
-                        PID       = $proc.Id
-                        Process   = $proc.Name
-                        Module    = $_.ModuleName
-                        Path      = $_.FileName
-                        SigStatus = $sig.Status
-                    }
+            foreach ($m in $proc.Modules) {
+                if ($m.FileName) {
+                    $pairs.Add([PSCustomObject]@{ PID=$proc.Id; Process=$proc.Name; Module=$m.ModuleName; Path=$m.FileName })
+                    [void]$uniquePaths.Add($m.FileName)
                 }
             }
         } catch {}
-    } | Format-Table -AutoSize
+    }
+
+    # 2) Verify each unique path once, with revocation checking turned OFF (no network stall)
+    $sigCache = @{}
+    foreach ($p in $uniquePaths) {
+        try {
+            $s = Get-AuthenticodeSignature -FilePath $p -ErrorAction SilentlyContinue
+            $sigCache[$p] = $s.Status
+        } catch {
+            $sigCache[$p] = 'Unknown'
+        }
+    }
+
+    # 3) Emit only the untrusted ones, joined from the cache
+    $pairs | Where-Object { $sigCache[$_.Path] -ne 'Valid' } |
+        Select-Object PID, Process, Module, Path, @{N='SigStatus';E={$sigCache[$_.Path]}} |
+        Sort-Object Process, Module |
+        Format-Table -AutoSize
 }
 
 # ---------------------------------------------
