@@ -104,6 +104,27 @@ $script:ProceedWithRun = $false
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
+# Detect ANSI/VT support (Windows 10+ console, Windows Terminal, modern hosts).
+# Lets us do bold + bright colors that Write-Host's -ForegroundColor can't.
+$script:ESC = [char]27
+$script:AnsiOK = $false
+try {
+    if ($Host.UI.SupportsVirtualTerminal -or $env:WT_SESSION -or
+        [int](Get-ItemProperty 'HKCU:\Console' -Name VirtualTerminalLevel -ErrorAction SilentlyContinue).VirtualTerminalLevel -ge 1) {
+        $script:AnsiOK = $true
+    }
+} catch {}
+
+function Write-Flair {
+    # Bold + colored line. Falls back to plain colored Write-Host if no ANSI.
+    param([string]$Text, [string]$Ansi = '1;33', [string]$Fallback = 'Yellow')
+    if ($script:AnsiOK) {
+        Write-Host ("{0}[{1}m{2}{0}[0m" -f $script:ESC, $Ansi, $Text)
+    } else {
+        Write-Host $Text -ForegroundColor $Fallback
+    }
+}
+
 # ---------------------------------------------
 
 #  secgurd BANNER
@@ -163,7 +184,7 @@ function Show-secgurdBanner {
     Write-Host (Ex "          ^08^03^03^03^03^03^03^05^08^03^03^03^03^03^03^05 ^08^03^03^03^03^03^05 ^08^03^03^03^03^03^05  ^08^03^03^03^03^03^05 ^08^03^05  ^08^03^05^08^03^03^03^03^03^05") -ForegroundColor $gold
 
     Write-Host ""
-    Write-Host (Ex "                ^13 Slayer of threats. Keeper of truth. ^13") -ForegroundColor $rust
+    Write-Flair (Ex "                ^13 Slayer of threats. Keeper of truth. ^13") '1;91' 'Red'
     Write-Host (Ex "                    ^22  F O R E N S I C   T R I A G E  ^22") -ForegroundColor $dim
     Write-Host ""
     Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor $dim
@@ -357,7 +378,7 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'q' -or $cmd -eq 'quit' -or $cmd -eq 'exit') {
             Write-Host ""
-            Write-Host (Ex "   ^13 Sigurd sheathes the blade. Farewell. ^13") -ForegroundColor DarkRed
+            Write-Flair (Ex "   ^13 Sigurd sheathes the blade. Farewell. ^13") '1;91' 'Red'
             Write-Host ""
             $script:ProceedWithRun = $false
             return
@@ -1501,7 +1522,7 @@ if ($zipOk) {
 }
 Write-Host ""
 
-Write-Host (Ex "  ^13 The dragon falls. Triage complete. ^13") -ForegroundColor DarkRed
+Write-Flair (Ex "  ^13 The dragon falls. Triage complete. ^13") '1;91' 'Red'
 Write-Host ""
 Write-Host (Ex " ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^12") -ForegroundColor DarkGray
 Write-Host ""
