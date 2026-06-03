@@ -20,6 +20,13 @@
 .PARAMETER Cleanup
     Delete all secgurd output folders and zips from %TEMP%. Lists items, shows total
     size, and requires typing DELETE to confirm. Does nothing else.
+.PARAMETER WithOwners
+    Resolve the owning account for each process in 06_process_tree. This adds a per-process
+    WMI call and can be slow on busy or domain-joined hosts, so it is off by default.
+.PARAMETER WithSignatures
+    Verify Authenticode signatures of service binaries and loaded DLLs. This does a full
+    trust-chain check per file and can stall for seconds each on an offline host, so it is
+    off by default. Without it, secgurd flags binaries by location and modification time.
 .PARAMETER Help
     Show usage and exit.
 .EXAMPLE
@@ -50,6 +57,8 @@ param(
     [string[]]$Modules,
     [switch]$OpenWhenDone,
     [switch]$Cleanup,
+    [switch]$WithOwners,
+    [switch]$WithSignatures,
     [switch]$Help
 )
 
@@ -107,11 +116,17 @@ $script:SkippedCount = 0
 $script:ProceedWithRun = $false
 $script:OpenFolderWhenDone = [bool]$OpenWhenDone
 $script:RunLineActive = $false
+$script:WithOwners = [bool]$WithOwners
+$script:WithSignatures = [bool]$WithSignatures
 
 # Force UTF-8 output so box-drawing chars render correctly
 
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
+# Prevent signature checks (Get-AuthenticodeSignature) from stalling on offline/slow hosts:
+# disable online certificate revocation (CRL/OCSP) lookups so they never block on network.
+try { [System.Net.ServicePointManager]::CheckCertificateRevocationList = $false } catch {}
 
 # Detect ANSI/VT support (Windows 10+ console, Windows Terminal, modern hosts).
 # Lets us do bold + bright colors that Write-Host's -ForegroundColor can't.
@@ -248,6 +263,8 @@ function Show-Help {
     Write-Host "    -NoBanner             Suppress the ASCII banner" -ForegroundColor Gray
     Write-Host "    -OpenWhenDone         Open output folder in Explorer when finished" -ForegroundColor Gray
     Write-Host "    -Cleanup              Delete all secgurd output from TEMP (type-to-confirm)" -ForegroundColor Gray
+    Write-Host "    -WithOwners           Include process owners in 06_process_tree (slower)" -ForegroundColor Gray
+    Write-Host "    -WithSignatures       Verify Authenticode signatures (slow, may stall offline)" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  MENU COMMANDS" -ForegroundColor White
@@ -386,7 +403,7 @@ $script:Presets = @{
 }
 
 $script:SelectedModules = @{}
-foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
+foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $false }
 
 # ---------------------------------------------
 
@@ -403,6 +420,8 @@ function Show-ModuleMenu {
         Write-Host ""
         Write-Host (Ex "  ^16  Non-interactive session detected ^09 running all modules.") -ForegroundColor Yellow
         Write-Host ""
+        # No menu available to choose from, so enable everything.
+        foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
         $script:ProceedWithRun = $true
         return
     }
@@ -521,7 +540,11 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'r' -or $cmd -eq 'run') {
             if ($count -eq 0) {
-                $pendingMsg = (Ex "^16  No modules selected ^09 pick at least one, or 'a' for all.")
+                Clear-Host
+                Show-secgurdBannerCompact
+                Show-DeadDragon
+                Write-Host "   Press Enter to return to the menu..." -ForegroundColor DarkGray
+                Read-Host | Out-Null
                 Clear-Host; Show-secgurdBannerCompact
                 continue
             }
@@ -600,6 +623,45 @@ function Show-secgurdBannerCompact {
     Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor DarkGray
 }
 
+function Show-DeadDragon {
+    # Easter egg: shown when the user hits 'run' with zero modules selected.
+    # The dragon is already slain - nothing to hunt until you pick a module.
+    $d = 'DarkGreen'
+    Write-Host ""
+    Write-Host '                            ==(W{==========-      /===-' -ForegroundColor $d
+    Write-Host '                              ||  (.--.)         /===-_---~~~~~~~~~------____' -ForegroundColor $d
+    Write-Host '                              | \_,|**|,__      |===-~___                _,-'' `' -ForegroundColor $d
+    Write-Host '                 -==\\        `\ '' `--''   ),    `//~\\   ~~~~`---.___.-~~' -ForegroundColor $d
+    Write-Host '             ______-==|        /`\_. .__/\ \    | |  \\           _-~`' -ForegroundColor $d
+    Write-Host '       __--~~~  ,-/-==\\      (   | .  |~~~~|   | |   `\        ,''' -ForegroundColor $d
+    Write-Host '    _-~       /''    |  \\     )__/==0==-\<>/   / /      \      /' -ForegroundColor $d
+    Write-Host '  .''        /       |   \\      /~\___/~~\/  /'' /        \   /''' -ForegroundColor $d
+    Write-Host ' /  ____  /         |    \`\.__/-~~   \  |_/''  /          \/''' -ForegroundColor $d
+    Write-Host '/-''~    ~~~~~---__  |     ~-/~         ( )   /''        _--~`' -ForegroundColor $d
+    Write-Host '                  \_|      /        _) | ;  ),   __--~~' -ForegroundColor $d
+    Write-Host '                    ''~~--_/      _-~/- |/ \   ''-~ \' -ForegroundColor $d
+    Write-Host '                   {\__--_/}    / \\_>-|)<__\      \' -ForegroundColor $d
+    Write-Host '                   /''   (_/  _-~  | |__>--<__|      |' -ForegroundColor $d
+    Write-Host '                  |   _/) )-~     | |__>--<__|      |' -ForegroundColor $d
+    Write-Host '                  / /~ ,_/       / /__>---<__/      |' -ForegroundColor $d
+    Write-Host '                 o-o _//        /-~_>---<__-~      /' -ForegroundColor $d
+    Write-Host '                 (^(~          /~_>---<__-      _-~' -ForegroundColor $d
+    Write-Host '                ,/|           /__>--<__/     _-~' -ForegroundColor $d
+    Write-Host '             ,//(''(          |__>--<__|     /                  .----_' -ForegroundColor $d
+    Write-Host '            ( ( ''))          |__>--<__|    |                 /'' _---_~\' -ForegroundColor $d
+    Write-Host '         `-)) )) (           |__>--<__|    |               /''  /     ~\`\' -ForegroundColor $d
+    Write-Host '        ,/,''//( (             \__>--<__\    \            /''  //        ||' -ForegroundColor $d
+    Write-Host '      ,( ( ((, ))              ~-__>--<_~-_  ~--____---~'' _/''/        /''' -ForegroundColor $d
+    Write-Host '    `~/  )` ) ,/|                 ~-_~>--<_/-__       __-~ _/' -ForegroundColor $d
+    Write-Host '  ._-~//( )/ )) `                    ~~-''_/_/ /~~~~~~~__--~' -ForegroundColor $d
+    Write-Host '   ;''( '')/ ,)(                              ~~~~~~~~~~' -ForegroundColor $d
+    Write-Host '  '' '') ''( (/' -ForegroundColor $d
+    Write-Host '    ''   ''  `' -ForegroundColor $d
+    Write-Host ""
+    Write-Flair "        The worm is already slain. Choose a module to hunt." '1;92' 'Green'
+    Write-Host ""
+}
+
 # ---------------------------------------------
 
 #  MODULE SELECTION DRIVER
@@ -614,7 +676,11 @@ if ($Modules) {
         if ($script:SelectedModules.ContainsKey($key)) { $script:SelectedModules[$key] = $true }
     }
 }
-elseif (-not $Auto) {
+elseif ($Auto) {
+    # -Auto skips the menu and runs everything.
+    foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
+}
+else {
     # Interactive menu (default). Use a script-scope flag so we never depend on
     # capturing the function's output stream (Write-Host is safe, but this is bulletproof).
     $script:ProceedWithRun = $false
@@ -925,10 +991,17 @@ Save-Output "03_services.txt" {
         if ($path -and (Test-Path $path)) {
             $f = Get-Item $path -ErrorAction SilentlyContinue
             if ($f -and $f.LastWriteTime -gt (Get-Date).AddDays(-30)) {
-                $sig = (Get-AuthenticodeSignature $path -ErrorAction SilentlyContinue)
-                $signer = $sig.SignerCertificate.Subject
-                if ($sig.Status -ne 'Valid') {
-                    Add-Finding 'HIGH' '03' (Ex "Unsigned service binary modified <30d: $($_.Name) ^17 $path")
+                $sigStatus = 'NotChecked'
+                $signer = ''
+                if ($script:WithSignatures) {
+                    $sig = (Get-AuthenticodeSignature $path -ErrorAction SilentlyContinue)
+                    $sigStatus = $sig.Status
+                    $signer = $sig.SignerCertificate.Subject
+                    if ($sig.Status -ne 'Valid') {
+                        Add-Finding 'HIGH' '03' (Ex "Unsigned service binary modified <30d: $($_.Name) ^17 $path")
+                    } else {
+                        Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path")
+                    }
                 } else {
                     Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path")
                 }
@@ -936,7 +1009,7 @@ Save-Output "03_services.txt" {
                     Service      = $_.Name
                     Path         = $path
                     LastModified = $f.LastWriteTime
-                    SigStatus    = $sig.Status
+                    SigStatus    = $sigStatus
                     Signer       = $signer
                 }
             }
@@ -1203,72 +1276,104 @@ Save-Output "06_processes.txt" {
 
 Save-Output "06_process_tree.txt" {
     Write-Section "PROCESS PARENT-CHILD TREE"
-    # Build dict once for fast lookups (fixes per-proc WMI query perf + parent-lookup bug)
-
-    $procs = Get-WmiObject Win32_Process
+    # The high-value triage data is the parent/child tree + command lines, which come from a
+    # single fast Get-CimInstance call. Per-process owner resolution (GetOwner) is a separate
+    # WMI round-trip EACH and can stall on a domain controller, so it is OFF by default and
+    # enabled with -WithOwners. Without it this block returns in well under a second.
+    $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
     $byPid = @{}
     foreach ($p in $procs) { $byPid[[int]$p.ProcessId] = $p }
+
+    $resolveOwners = $script:WithOwners
+    $ownerByPid = @{}
+    if ($resolveOwners) {
+        foreach ($p in $procs) {
+            try {
+                $r = Invoke-CimMethod -InputObject $p -MethodName GetOwner -ErrorAction SilentlyContinue
+                if ($r -and $r.ReturnValue -eq 0 -and $r.User) {
+                    $ownerByPid[[int]$p.ProcessId] = if ($r.Domain) { "$($r.Domain)\$($r.User)" } else { $r.User }
+                }
+            } catch {}
+        }
+    }
 
     $procs | ForEach-Object {
         $proc = $_
         $parent = $byPid[[int]$proc.ParentProcessId]
-        $owner = ""
-        try {
-            $o = $proc.GetOwner()
-            if ($o.ReturnValue -eq 0) { $owner = "$($o.Domain)\$($o.User)" }
-        } catch {}
-        [PSCustomObject]@{
+        $row = [ordered]@{
             PID         = $proc.ProcessId
             PPID        = $proc.ParentProcessId
             Name        = $proc.Name
             ParentName  = if ($parent) { $parent.Name } else { '<none>' }
             CommandLine = $proc.CommandLine
-            Owner       = $owner
         }
+        if ($resolveOwners) { $row.Owner = $ownerByPid[[int]$proc.ProcessId] }
+        [PSCustomObject]$row
     } | Sort-Object PPID, PID | Format-Table -AutoSize
+
+    if (-not $resolveOwners) {
+        "`n(Process owners omitted for speed. Re-run with -WithOwners to include them.)"
+    }
 }
 
 Save-Output "06_loaded_dlls.txt" {
-    Write-Section "LOADED DLLs PER PROCESS (unsigned / untrusted)"
-    # PERF/HANG FIX: the same DLL is loaded by many processes. Checking the signature of
-    # every (process, module) pair = thousands of Get-AuthenticodeSignature calls, each of
-    # which may attempt an online certificate-revocation lookup (CRL/OCSP) that STALLS for
-    # seconds on an offline/slow host. We:
-    #   1) collect unique module paths once,
-    #   2) verify each unique path a single time,
-    #   3) disable network revocation checks so it never blocks waiting on the internet.
+    Write-Section "LOADED DLLs FROM UNUSUAL LOCATIONS"
+    # Get-AuthenticodeSignature does a full trust-chain verification per file and can stall
+    # for seconds EACH on an offline host (WinVerifyTrust revocation behavior isn't fully
+    # suppressible from PowerShell). Across hundreds of DLLs that freezes the run.
+    #
+    # FAST DEFAULT (offline-safe, no signature calls): flag DLLs loaded from locations that
+    # are unusual for system binaries - the high-signal indicator for malicious DLLs anyway.
+    # Signed-binary verification is opt-in via -WithSignatures.
+    $systemRoots = @(
+        "$env:SystemRoot\System32",
+        "$env:SystemRoot\SysWOW64",
+        "$env:SystemRoot\WinSxS",
+        "$env:SystemRoot\Microsoft.NET",
+        "${env:ProgramFiles}",
+        "${env:ProgramFiles(x86)}"
+    ) | Where-Object { $_ }
 
-    # 1) Gather (proc, module) pairs and the set of unique paths
     $pairs = New-Object System.Collections.Generic.List[object]
-    $uniquePaths = New-Object System.Collections.Generic.HashSet[string]
-    Get-Process | ForEach-Object {
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
         $proc = $_
         try {
             foreach ($m in $proc.Modules) {
-                if ($m.FileName) {
-                    $pairs.Add([PSCustomObject]@{ PID=$proc.Id; Process=$proc.Name; Module=$m.ModuleName; Path=$m.FileName })
-                    [void]$uniquePaths.Add($m.FileName)
+                if (-not $m.FileName) { continue }
+                $inSystem = $false
+                foreach ($root in $systemRoots) {
+                    if ($m.FileName.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { $inSystem = $true; break }
+                }
+                if (-not $inSystem) {
+                    $pairs.Add([PSCustomObject]@{
+                        PID     = $proc.Id
+                        Process = $proc.Name
+                        Module  = $m.ModuleName
+                        Path    = $m.FileName
+                    })
                 }
             }
         } catch {}
     }
 
-    # 2) Verify each unique path once, with revocation checking turned OFF (no network stall)
-    $sigCache = @{}
-    foreach ($p in $uniquePaths) {
-        try {
-            $s = Get-AuthenticodeSignature -FilePath $p -ErrorAction SilentlyContinue
-            $sigCache[$p] = $s.Status
-        } catch {
-            $sigCache[$p] = 'Unknown'
+    if ($script:WithSignatures) {
+        Write-Section "  (verifying signatures - this can be slow)"
+        $sigCache = @{}
+        $pairs | Select-Object -ExpandProperty Path -Unique | ForEach-Object {
+            try { $sigCache[$_] = (Get-AuthenticodeSignature -FilePath $_ -ErrorAction SilentlyContinue).Status }
+            catch { $sigCache[$_] = 'Unknown' }
+        }
+        $pairs | Select-Object PID, Process, Module, Path, @{N='SigStatus';E={$sigCache[$_.Path]}} |
+            Sort-Object Process, Module | Format-Table -AutoSize
+    } else {
+        if ($pairs.Count -gt 0) {
+            $pairs | Sort-Object Process, Module | Format-Table -AutoSize
+            "`nNOTE: DLLs above load from non-standard paths (outside System32/Program Files)."
+            "Run with -WithSignatures to add Authenticode trust status (slower, may stall offline)."
+        } else {
+            "  (no DLLs loaded from unusual locations)"
         }
     }
-
-    # 3) Emit only the untrusted ones, joined from the cache
-    $pairs | Where-Object { $sigCache[$_.Path] -ne 'Valid' } |
-        Select-Object PID, Process, Module, Path, @{N='SigStatus';E={$sigCache[$_.Path]}} |
-        Sort-Object Process, Module |
-        Format-Table -AutoSize
 }
 
 # ---------------------------------------------
