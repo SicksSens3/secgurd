@@ -98,6 +98,8 @@ $script:CollectedCount = 0
 $script:ErrorCount = 0
 $script:SkippedCount = 0
 $script:ProceedWithRun = $false
+$script:OpenFolderWhenDone = [bool]$OpenWhenDone
+$script:RunLineActive = $false
 
 # Force UTF-8 output so box-drawing chars render correctly
 
@@ -244,6 +246,7 @@ function Show-Help {
     Write-Host "    01-14                 Toggle a module on/off (space/comma-separate many)" -ForegroundColor Gray
     Write-Host "    a / n                 Select all / none" -ForegroundColor Gray
     Write-Host "    qa / net / ps         Apply a preset" -ForegroundColor Gray
+    Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
     Write-Host ""
@@ -358,6 +361,20 @@ function Show-ModuleMenu {
         }
 
         Write-Host ""
+        Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  options  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
+        Write-Host ""
+
+        $ofOn   = $script:OpenFolderWhenDone
+        $ofMark = if ($ofOn) { (Ex "[^14]") } else { '[ ]' }
+        $ofClr  = if ($ofOn) { 'Green' } else { 'DarkGray' }
+        Write-Host "   " -NoNewline
+        Write-Host $ofMark -ForegroundColor $ofClr -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f 'o') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-30}" -f 'Open output folder when done') -ForegroundColor White -NoNewline
+        Write-Host "(local/RDP only)" -ForegroundColor DarkGray
+
+        Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
 
@@ -392,6 +409,14 @@ function Show-ModuleMenu {
             Read-Host | Out-Null
             Clear-Host
             Show-secgurdBannerCompact
+            continue
+        }
+
+        if ($cmd -eq 'o') {
+            $script:OpenFolderWhenDone = -not $script:OpenFolderWhenDone
+            $state = if ($script:OpenFolderWhenDone) { 'ON' } else { 'OFF' }
+            $pendingMsg = "Open output folder when done: $state"
+            Clear-Host; Show-secgurdBannerCompact
             continue
         }
 
@@ -536,12 +561,17 @@ function Write-Section {
 function Add-Finding {
     param([string]$Severity, [string]$Module, [string]$Message)
     # Severity: HIGH / MED / INFO
-
     $script:Findings.Add("[$Severity] ($Module) $Message")
     $color = switch ($Severity) {
         'HIGH' { 'Red' }
         'MED'  { 'Yellow' }
         default { 'DarkGray' }
+    }
+    # If a transient "running..." line is on screen, move to a fresh line first
+    # so the finding doesn't get tangled with it.
+    if ($script:RunLineActive) {
+        Write-Host ""
+        $script:RunLineActive = $false
     }
     Write-Host (Ex "       ^26^00 ") -ForegroundColor DarkGray -NoNewline
     Write-Host $Message -ForegroundColor $color
@@ -564,22 +594,39 @@ function Save-Output {
 
     $file = Join-Path $OutputPath $FileName
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # Print a transient "running" line so slow modules never look frozen.
+    Write-Host "  $progress " -ForegroundColor DarkGray -NoNewline
+    Write-Host (Ex "[^17] ") -ForegroundColor Cyan -NoNewline
+    Write-Host ("{0,-42}" -f $FileName) -ForegroundColor Gray -NoNewline
+    Write-Host "running..." -ForegroundColor DarkGray -NoNewline
+    $script:RunLineActive = $true
+
     try {
         $result = & $Block
         $result | Out-File -FilePath $file -Encoding UTF8 -Force
         $sw.Stop()
-        $secs = ('{0,5:N1}s' -f ($sw.ElapsedMilliseconds / 1000))
+        $secs = ('{0,6:N1}s' -f ($sw.ElapsedMilliseconds / 1000))
+        if ($script:RunLineActive) {
+            # running line still on screen - overwrite it in place
+            Write-Host "`r" -NoNewline
+        } else {
+            # findings were printed beneath; just emit the result on a fresh line
+        }
         Write-Host "  $progress " -ForegroundColor DarkGray -NoNewline
         Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
         Write-Host ("{0,-42}" -f $FileName) -ForegroundColor Gray -NoNewline
-        Write-Host $secs -ForegroundColor DarkGray
+        Write-Host "$secs        " -ForegroundColor DarkGray
+        $script:RunLineActive = $false
         $script:CollectedCount++
     } catch {
         $sw.Stop()
         "ERROR: $_" | Out-File -FilePath $file -Encoding UTF8 -Force
+        if ($script:RunLineActive) { Write-Host "`r" -NoNewline }
         Write-Host "  $progress " -ForegroundColor DarkGray -NoNewline
         Write-Host "[!] " -ForegroundColor Yellow -NoNewline
-        Write-Host "$FileName (error)" -ForegroundColor DarkGray
+        Write-Host "$FileName (error)            " -ForegroundColor DarkGray
+        $script:RunLineActive = $false
         $script:ErrorCount++
     }
 }
@@ -998,14 +1045,37 @@ Save-Output "05_firewall_rules.txt" {
     Write-Section "FIREWALL PROFILE STATUS"
     Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction | Format-Table
 
-    Write-Section "INBOUND ALLOW RULES (non-built-in)"
-    Get-NetFirewallRule -Direction Inbound -Action Allow |
-        Where-Object { $_.Profile -ne 'Any' -or $_.Enabled -eq 'True' } |
-        Select-Object DisplayName, Enabled, Profile, Direction, Action,
-            @{N='Program';E={($_ | Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue).Program}},
-            @{N='LocalPorts';E={($_ | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue).LocalPort}} |
-        Where-Object { $_.Program -ne 'Any' -and $_.Program -ne $null } |
-        Format-Table -AutoSize
+    Write-Section "INBOUND ALLOW RULES (program-specific)"
+    # PERF: calling Get-NetFirewallApplicationFilter/PortFilter per-rule is extremely slow
+    # (one CIM query each). Instead pull ALL filters once and build lookup tables keyed by
+    # InstanceID, then join. Turns minutes into a second or two.
+    Write-Progress -Activity "Firewall rules" -Status "Querying rules and filters..." -PercentComplete 10
+    $rules   = Get-NetFirewallRule -Direction Inbound -Action Allow -Enabled True -ErrorAction SilentlyContinue
+    $appAll  = Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue
+    $portAll = Get-NetFirewallPortFilter -ErrorAction SilentlyContinue
+
+    Write-Progress -Activity "Firewall rules" -Status "Indexing filters..." -PercentComplete 50
+    $appByRule  = @{}
+    foreach ($a in $appAll)  { if ($a.InstanceID) { $appByRule[$a.InstanceID]  = $a } }
+    $portByRule = @{}
+    foreach ($p in $portAll) { if ($p.InstanceID) { $portByRule[$p.InstanceID] = $p } }
+
+    Write-Progress -Activity "Firewall rules" -Status "Joining..." -PercentComplete 80
+    $rules | ForEach-Object {
+        $id = $_.InstanceID
+        $prog = $appByRule[$id].Program
+        if ($prog -and $prog -ne 'Any') {
+            [PSCustomObject]@{
+                DisplayName = $_.DisplayName
+                Enabled     = $_.Enabled
+                Profile     = $_.Profile
+                Action      = $_.Action
+                Program     = $prog
+                LocalPorts  = $portByRule[$id].LocalPort
+            }
+        }
+    } | Format-Table -AutoSize
+    Write-Progress -Activity "Firewall rules" -Completed
 }
 
 # ---------------------------------------------
@@ -1529,7 +1599,7 @@ Write-Host ""
 
 # Optionally open the output folder (interactive desktop only)
 
-if ($OpenWhenDone -and [Environment]::UserInteractive) {
+if ($script:OpenFolderWhenDone -and [Environment]::UserInteractive) {
     try { Invoke-Item $OutputPath } catch {}
 }
 
