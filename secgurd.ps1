@@ -400,13 +400,13 @@ if (-not $NoBanner) { Show-secgurdBanner }
 $script:ModuleCatalogue = @(
     [PSCustomObject]@{ Id='01'; Name='System info';          Desc='os, build, uptime, domain' }
     [PSCustomObject]@{ Id='02'; Name='Users & sessions';     Desc='accounts, logons, 4624/4625' }
-    [PSCustomObject]@{ Id='03'; Name='Persistence';          Desc='run keys, tasks, services, wmi' }
+    [PSCustomObject]@{ Id='03'; Name='Persistence';          Desc='run keys, tasks, services, wmi, ifeo' }
     [PSCustomObject]@{ Id='04'; Name='PowerShell artifacts'; Desc='history, transcripts, 4104' }
     [PSCustomObject]@{ Id='05'; Name='Network';              Desc='connections, dns, arp, fw' }
     [PSCustomObject]@{ Id='06'; Name='Processes';            Desc='proctree, cmdlines, unsigned dlls' }
     [PSCustomObject]@{ Id='07'; Name='Filesystem';           Desc='temp exes, ads, recent files' }
     [PSCustomObject]@{ Id='08'; Name='Event logs';           Desc='account changes, log clearing' }
-    [PSCustomObject]@{ Id='09'; Name='Software & patches';   Desc='installed apps, hotfixes' }
+    [PSCustomObject]@{ Id='09'; Name='Software & defender';  Desc='installed apps, patches, av status' }
     [PSCustomObject]@{ Id='10'; Name='Browser & creds';      Desc='history paths, .ssh, .aws' }
     [PSCustomObject]@{ Id='11'; Name='LOLBins';              Desc='certutil, mshta, rundll32...' }
     [PSCustomObject]@{ Id='12'; Name='AmCache / ShimCache';  Desc='execution artifact locations' }
@@ -1259,6 +1259,88 @@ Save-Output "03_dll_search_order.txt" {
         Select-Object CWDIllegalInDllSearch | Format-List
 }
 
+Save-Output "03_advanced_persistence.txt" {
+    # High-signal persistence vectors beyond run keys / tasks / services.
+
+    Write-Section "IMAGE FILE EXECUTION OPTIONS (debugger hijacks)"
+    # A 'Debugger' value under an IFEO subkey makes Windows launch that program instead of
+    # the named exe - classic stealth persistence + the sticky-keys backdoor mechanism.
+    $ifeoRoot = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
+    Get-ChildItem $ifeoRoot -ErrorAction SilentlyContinue | ForEach-Object {
+        $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+        if ($props.Debugger -or $props.GlobalFlag -or $props.VerifierDlls) {
+            [PSCustomObject]@{
+                Image       = $_.PSChildName
+                Debugger    = $props.Debugger
+                GlobalFlag  = $props.GlobalFlag
+                VerifierDlls= $props.VerifierDlls
+            }
+            if ($props.Debugger) {
+                Add-Finding 'HIGH' '03' (Ex "IFEO debugger hijack on $($_.PSChildName) ^17 $($props.Debugger)") '03_advanced_persistence.txt'
+            }
+        }
+    } | Format-Table -AutoSize
+
+    Write-Section "ACCESSIBILITY BINARY HIJACKS (sethc / utilman / osk / magnify)"
+    # Login-screen backdoors: replacing or IFEO-redirecting these gives pre-auth SYSTEM shell.
+    $accTargets = 'sethc.exe','utilman.exe','osk.exe','magnify.exe','narrator.exe','displayswitch.exe','atbroker.exe'
+    foreach ($a in $accTargets) {
+        $p = Join-Path $env:SystemRoot "System32\$a"
+        if (Test-Path $p) {
+            $f = Get-Item $p -ErrorAction SilentlyContinue
+            $ver = (Get-Item $p).VersionInfo.OriginalFilename
+            $suspect = ($ver -and $ver -notlike "*$a*")
+            [PSCustomObject]@{
+                Binary           = $a
+                LastModified     = $f.LastWriteTime
+                OriginalFilename = $ver
+                Suspect          = $suspect
+            }
+            if ($suspect) {
+                Add-Finding 'HIGH' '03' (Ex "Accessibility binary may be replaced: $a (OriginalFilename=$ver)") '03_advanced_persistence.txt'
+            }
+            # also flag an IFEO debugger specifically on an accessibility binary
+            $accDbg = (Get-ItemProperty (Join-Path $ifeoRoot $a) -ErrorAction SilentlyContinue).Debugger
+            if ($accDbg) {
+                Add-Finding 'HIGH' '03' (Ex "Accessibility backdoor: IFEO debugger on $a ^17 $accDbg") '03_advanced_persistence.txt'
+            }
+        }
+    }
+
+    Write-Section "WINLOGON (Shell / Userinit / Notify)"
+    # Shell should be 'explorer.exe'; Userinit should be 'C:\Windows\system32\userinit.exe,'.
+    # Extra entries here run at every interactive logon.
+    $wl = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -ErrorAction SilentlyContinue
+    $wl | Select-Object Shell, Userinit, Taskman, AppSetup, GinaDLL | Format-List
+    if ($wl.Shell -and $wl.Shell -notmatch '^explorer\.exe\s*$') {
+        Add-Finding 'HIGH' '03' (Ex "Winlogon Shell is not default explorer.exe: $($wl.Shell)") '03_advanced_persistence.txt'
+    }
+    if ($wl.Userinit -and $wl.Userinit -notmatch 'userinit\.exe,?\s*$') {
+        Add-Finding 'HIGH' '03' (Ex "Winlogon Userinit has extra entries: $($wl.Userinit)") '03_advanced_persistence.txt'
+    }
+
+    Write-Section "APPINIT_DLLS (loads into every GUI process)"
+    foreach ($hive in @('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows',
+                         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Windows')) {
+        $w = Get-ItemProperty $hive -ErrorAction SilentlyContinue
+        if ($w) {
+            [PSCustomObject]@{
+                Hive            = $hive
+                AppInit_DLLs    = $w.AppInit_DLLs
+                LoadAppInit_DLLs= $w.LoadAppInit_DLLs
+            }
+            if ($w.AppInit_DLLs -and $w.AppInit_DLLs.Trim() -ne '') {
+                Add-Finding 'HIGH' '03' (Ex "AppInit_DLLs set (loads into every process): $($w.AppInit_DLLs)") '03_advanced_persistence.txt'
+            }
+        }
+    } | Format-Table -AutoSize
+
+    Write-Section "LSA SECURITY/AUTHENTICATION PACKAGES"
+    # Rogue Security/Authentication packages = credential-theft persistence (e.g. mimilib).
+    Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -ErrorAction SilentlyContinue |
+        Select-Object 'Security Packages', 'Authentication Packages', 'Notification Packages' | Format-List
+}
+
 # ---------------------------------------------
 
 #  4. POWERSHELL ARTIFACTS
@@ -1316,12 +1398,26 @@ Save-Output "04_ps_logging_config.txt" {
 
 Save-Output "04_ps_event_log.txt" {
     Write-Section "POWERSHELL SCRIPT BLOCK LOGS (Event 4104 - last 500)"
-    Get-WinEvent -FilterHashtable @{
+    $sb4104 = Get-WinEvent -FilterHashtable @{
         LogName = 'Microsoft-Windows-PowerShell/Operational'
         Id      = 4104
-    } -MaxEvents 500 -ErrorAction SilentlyContinue |
-        Select-Object TimeCreated, @{N='ScriptBlock';E={$_.Message}} |
-        Format-List
+    } -MaxEvents 500 -ErrorAction SilentlyContinue
+    $sb4104 | Select-Object TimeCreated, @{N='ScriptBlock';E={$_.Message}} | Format-List
+
+    # Findings hook: flag obfuscation / encoded-command markers in script-block logs.
+    $suspectPS = 0
+    $patterns = @(
+        '-enc(odedcommand)?\b', 'FromBase64String', '-w(indowstyle)?\s+hidden',
+        'IEX\b', 'Invoke-Expression', 'DownloadString', 'DownloadFile', 'Net\.WebClient',
+        'Invoke-WebRequest.*-OutFile', 'bypass', '-nop\b', 'New-Object\s+Net', 'Reflection\.Assembly'
+    )
+    $rx = [string]::Join('|', $patterns)
+    foreach ($e in $sb4104) {
+        if ($e.Message -match $rx) { $suspectPS++ }
+    }
+    if ($suspectPS -gt 0) {
+        Add-Finding 'MED' '04' "$suspectPS script-block log(s) contain obfuscation/download markers (enc, IEX, DownloadString, hidden) - review 04_ps_event_log.txt" '04_ps_event_log.txt'
+    }
 
     Write-Section "POWERSHELL OPERATIONAL EVENTS (last 200)"
     Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents 200 -ErrorAction SilentlyContinue |
@@ -1476,6 +1572,34 @@ Save-Output "06_process_tree.txt" {
 
     if (-not $resolveOwners) {
         "`n(Process owners omitted for speed. Re-run with -WithOwners to include them.)"
+    }
+
+    # Findings hook: flag classic suspicious parent -> child chains (office/script host
+    # spawning a shell or LOLBin = common initial-access / execution pattern).
+    Write-Section "SUSPICIOUS PARENT-CHILD CHAINS"
+    $shells = 'powershell.exe','pwsh.exe','cmd.exe','wscript.exe','cscript.exe','mshta.exe','rundll32.exe','regsvr32.exe','certutil.exe','bitsadmin.exe'
+    $badParents = 'winword.exe','excel.exe','powerpnt.exe','outlook.exe','msaccess.exe','mspub.exe','visio.exe','onenote.exe','wmiprvse.exe','mshta.exe','wscript.exe','cscript.exe','eqnedt32.exe'
+    $hits = @()
+    foreach ($p in $procs) {
+        $parent = $byPid[[int]$p.ParentProcessId]
+        if (-not $parent) { continue }
+        $pn = ($p.Name).ToLower()
+        $par = ($parent.Name).ToLower()
+        if (($badParents -contains $par) -and ($shells -contains $pn)) {
+            $hits += [PSCustomObject]@{
+                Parent      = $parent.Name
+                Child       = $p.Name
+                ChildPID    = $p.ProcessId
+                CommandLine = $p.CommandLine
+            }
+        }
+    }
+    if ($hits.Count -gt 0) {
+        $hits | Format-Table -AutoSize -Wrap
+        $chainDesc = ($hits | ForEach-Object { "$($_.Parent)->$($_.Child)" } | Select-Object -Unique) -join ', '
+        Add-Finding 'HIGH' '06' (Ex "Suspicious process chain(s): $chainDesc ^09 common malicious spawn pattern") '06_process_tree.txt'
+    } else {
+        "(none detected among currently-running processes)"
     }
 }
 
@@ -1699,6 +1823,76 @@ Save-Output "09_patches.txt" {
     Get-HotFix | Sort-Object InstalledOn -Descending | Format-Table -AutoSize
 }
 
+Save-Output "09_defender_status.txt" {
+    # Microsoft Defender posture. Answers two key triage questions:
+    #   1) Did AV already detect something? (threat history)
+    #   2) Has an attacker weakened protection or hidden a path? (exclusions / disabled features)
+    $haveMp = Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue
+
+    if (-not $haveMp) {
+        "Defender cmdlets (Get-MpComputerStatus) not available on this host."
+        "Defender may be absent, replaced by another AV, or running on Server core without the module."
+        return
+    }
+
+    Write-Section "PROTECTION STATUS"
+    $st = Get-MpComputerStatus -ErrorAction SilentlyContinue
+    $st | Select-Object AMRunningMode, RealTimeProtectionEnabled, AntivirusEnabled,
+        BehaviorMonitorEnabled, IoavProtectionEnabled, OnAccessProtectionEnabled,
+        TamperProtectionSource, IsTamperProtected, AntivirusSignatureLastUpdated,
+        QuickScanAge, FullScanAge | Format-List
+
+    # Flag disabled core protections
+    if ($st) {
+        if ($st.RealTimeProtectionEnabled -eq $false) {
+            Add-Finding 'HIGH' '09' "Defender real-time protection is DISABLED" '09_defender_status.txt'
+        }
+        if ($st.AntivirusEnabled -eq $false) {
+            Add-Finding 'MED' '09' "Defender antivirus is disabled (another AV may be active)" '09_defender_status.txt'
+        }
+        if ($st.IsTamperProtected -eq $false) {
+            Add-Finding 'INFO' '09' "Defender tamper protection is off" '09_defender_status.txt'
+        }
+    }
+
+    Write-Section "EXCLUSIONS (paths / extensions / processes)"
+    # Attacker-added exclusions are a top hiding technique - e.g. excluding C:\Temp.
+    $pref = Get-MpPreference -ErrorAction SilentlyContinue
+    if ($pref) {
+        "ExclusionPath:"
+        if ($pref.ExclusionPath) { $pref.ExclusionPath | ForEach-Object { "  $_" } } else { "  (none)" }
+        "ExclusionExtension:"
+        if ($pref.ExclusionExtension) { $pref.ExclusionExtension | ForEach-Object { "  $_" } } else { "  (none)" }
+        "ExclusionProcess:"
+        if ($pref.ExclusionProcess) { $pref.ExclusionProcess | ForEach-Object { "  $_" } } else { "  (none)" }
+        ""
+        "DisableRealtimeMonitoring : $($pref.DisableRealtimeMonitoring)"
+        "DisableScriptScanning     : $($pref.DisableScriptScanning)"
+        "MAPSReporting             : $($pref.MAPSReporting)"
+        "SubmitSamplesConsent      : $($pref.SubmitSamplesConsent)"
+
+        # Flag suspicious exclusions (writable/temp locations)
+        foreach ($ex in $pref.ExclusionPath) {
+            if ($ex -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData|Downloads)\b' -or $ex -match '(?i)^[A-Z]:\\$') {
+                Add-Finding 'HIGH' '09' (Ex "Defender exclusion on a writable/temp path: $ex ^09 common malware-hiding spot") '09_defender_status.txt'
+            }
+        }
+        if ($pref.DisableRealtimeMonitoring -eq $true) {
+            Add-Finding 'HIGH' '09' "Defender real-time monitoring disabled via preference" '09_defender_status.txt'
+        }
+    }
+
+    Write-Section "THREAT DETECTION HISTORY"
+    $threats = Get-MpThreatDetection -ErrorAction SilentlyContinue | Sort-Object InitialDetectionTime -Descending
+    if ($threats) {
+        $threats | Select-Object ThreatID, @{N='Detected';E={$_.InitialDetectionTime}},
+            @{N='Resources';E={($_.Resources -join '; ')}} | Format-Table -AutoSize -Wrap
+        Add-Finding 'HIGH' '09' "$(@($threats).Count) Defender threat detection(s) in history - review 09_defender_status.txt" '09_defender_status.txt'
+    } else {
+        "(no detections recorded, or history cleared)"
+    }
+}
+
 # ---------------------------------------------
 
 #  10. BROWSER & CREDENTIAL ARTIFACTS
@@ -1914,6 +2108,64 @@ if ($script:Findings.Count -eq 0) {
 $summaryLines += ""
 $summaryLines += "Generated by secgurd. Review raw artifact files for full detail."
 $summaryLines | Out-File (Join-Path $OutputPath '00_SUMMARY.txt') -Encoding UTF8 -Force
+
+# ---------------------------------------------
+#  00_TIMELINE.txt   chronological merge of timestamped events
+# ---------------------------------------------
+
+Write-Host (Ex "  *  Building timeline...") -ForegroundColor Cyan
+$timeline = New-Object System.Collections.Generic.List[object]
+function Add-TL { param($Time, $Source, $Detail)
+    if ($Time -is [string]) { $t = $null; [void][datetime]::TryParse($Time, [ref]$t) } else { $t = $Time }
+    if ($t) { $timeline.Add([PSCustomObject]@{ Time=$t; Source=$Source; Detail=$Detail }) }
+}
+try {
+    # Logons (4624) - last 14 days
+    Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=(Get-Date).AddDays(-14)} -MaxEvents 200 -ErrorAction SilentlyContinue | ForEach-Object {
+        $x=[xml]$_.ToXml(); $u=($x.Event.EventData.Data | Where-Object {$_.Name -eq 'TargetUserName'}).'#text'
+        $lt=($x.Event.EventData.Data | Where-Object {$_.Name -eq 'LogonType'}).'#text'
+        Add-TL $_.TimeCreated 'Logon' "4624 user=$u type=$lt"
+    }
+} catch {}
+try {
+    # Log clears
+    Get-WinEvent -FilterHashtable @{LogName='Security';Id=1102} -MaxEvents 20 -ErrorAction SilentlyContinue | ForEach-Object { Add-TL $_.TimeCreated 'LogClear' '1102 Security log cleared' }
+} catch {}
+try {
+    # New services (7045)
+    Get-WinEvent -FilterHashtable @{LogName='System';Id=7045;StartTime=(Get-Date).AddDays(-30)} -MaxEvents 100 -ErrorAction SilentlyContinue | ForEach-Object {
+        $x=[xml]$_.ToXml(); $n=($x.Event.EventData.Data | Where-Object {$_.Name -eq 'ServiceName'}).'#text'
+        Add-TL $_.TimeCreated 'NewService' "7045 service=$n"
+    }
+} catch {}
+try {
+    # Scheduled task creation/update (TaskScheduler 106/140)
+    Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';Id=106,140;StartTime=(Get-Date).AddDays(-30)} -MaxEvents 100 -ErrorAction SilentlyContinue | ForEach-Object {
+        Add-TL $_.TimeCreated 'Task' "$($_.Id) $($_.Message -replace '\s+',' ')".Substring(0,[Math]::Min(90,"$($_.Id) $($_.Message -replace '\s+',' ')".Length))
+    }
+} catch {}
+try {
+    # Recently modified files in System32 (last 7 days)
+    Get-ChildItem "$env:SystemRoot\System32" -Filter *.exe -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-7) } |
+        ForEach-Object { Add-TL $_.LastWriteTime 'FileMod' "System32\$($_.Name)" }
+} catch {}
+
+$tlLines = @()
+$tlLines += (Ex "secgurd $($script:secgurdVersion) ^09 Event Timeline (most recent first)")
+$tlLines += ("=" * 70)
+$tlLines += "Merged from: logons (4624), log clears (1102), new services (7045),"
+$tlLines += "             scheduled tasks (106/140), System32 exe modifications (<7d)."
+$tlLines += ("-" * 70)
+if ($timeline.Count -eq 0) {
+    $tlLines += "  (no timestamped events gathered - may require admin / log access)"
+} else {
+    $timeline | Sort-Object Time -Descending | ForEach-Object {
+        $tlLines += ("{0:yyyy-MM-dd HH:mm:ss}  {1,-11} {2}" -f $_.Time, $_.Source, $_.Detail)
+    }
+}
+$tlLines | Out-File (Join-Path $OutputPath '00_TIMELINE.txt') -Encoding UTF8 -Force
+
 
 # ---------------------------------------------
 #  OPTIONAL: SINGLE-FILE HTML REPORT
@@ -2133,6 +2385,29 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
         Write-Host "  [!] Could not write report.html: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
+
+# ---------------------------------------------
+#  00_HASHES.txt   SHA-256 of every artifact (evidence integrity)
+# ---------------------------------------------
+
+Write-Host (Ex "  *  Hashing artifacts (SHA-256)...") -ForegroundColor Cyan
+$hashLines = @()
+$hashLines += (Ex "secgurd $($script:secgurdVersion) ^09 SHA-256 Manifest")
+$hashLines += ("=" * 78)
+$hashLines += "Generated : $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))   Host: $env:COMPUTERNAME"
+$hashLines += "Purpose   : evidence integrity - verify files were not altered after collection."
+$hashLines += ("-" * 78)
+Get-ChildItem $OutputPath -File | Where-Object { $_.Name -ne '00_HASHES.txt' } | Sort-Object Name | ForEach-Object {
+    try {
+        $h = (Get-FileHash $_.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
+        $hashLines += ("{0}  {1}" -f $h, $_.Name)
+    } catch {
+        $hashLines += ("{0,-64}  {1}" -f 'ERROR-HASHING', $_.Name)
+    }
+}
+$hashLines += ("-" * 78)
+$hashLines += "Verify later with:  Get-FileHash <file> -Algorithm SHA256"
+$hashLines | Out-File (Join-Path $OutputPath '00_HASHES.txt') -Encoding UTF8 -Force
 
 # ---------------------------------------------
 
