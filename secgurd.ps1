@@ -1320,7 +1320,7 @@ Save-Output "03_advanced_persistence.txt" {
     }
 
     Write-Section "APPINIT_DLLS (loads into every GUI process)"
-    foreach ($hive in @('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows',
+    $appInitRows = foreach ($hive in @('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows',
                          'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Windows')) {
         $w = Get-ItemProperty $hive -ErrorAction SilentlyContinue
         if ($w) {
@@ -1333,7 +1333,8 @@ Save-Output "03_advanced_persistence.txt" {
                 Add-Finding 'HIGH' '03' (Ex "AppInit_DLLs set (loads into every process): $($w.AppInit_DLLs)") '03_advanced_persistence.txt'
             }
         }
-    } | Format-Table -AutoSize
+    }
+    $appInitRows | Format-Table -AutoSize
 
     Write-Section "LSA SECURITY/AUTHENTICATION PACKAGES"
     # Rogue Security/Authentication packages = credential-theft persistence (e.g. mimilib).
