@@ -636,7 +636,7 @@ function Show-secgurdBannerCompact {
 
 function Show-DeadDragon {
     # Easter egg: shown when the user hits 'run' with zero modules selected.
-    # Knight (rider, body, leg, foot) = white, fire (bottom-left) = red/orange, worm = green.
+    # Knight = white, dragon-fire (bottom-left flame cluster) = red/orange, worm = green.
     Write-Host ""
     Wc '                            ' '38;2;70;160;75' 'DarkGreen'
     Wc '==(W{==========-' '38;2;245;245;245' 'White'
@@ -707,16 +707,16 @@ function Show-DeadDragon {
     Wc '           /__>--<__/     _-~' '38;2;70;160;75' 'DarkGreen'
     Write-Host ""
     Wc '             ' '38;2;70;160;75' 'DarkGreen'
-    Wc ',//(''' '38;2;225;55;45' 'Red'
-    Wc '(          |__>--<__|     /                  .----_' '38;2;70;160;75' 'DarkGreen'
+    Wc ',//(''(' '38;2;225;55;45' 'Red'
+    Wc '          |__>--<__|     /                  .----_' '38;2;70;160;75' 'DarkGreen'
     Write-Host ""
     Wc '            ' '38;2;70;160;75' 'DarkGreen'
     Wc '(' '38;2;225;55;45' 'Red'
     Wc ' ' '38;2;70;160;75' 'DarkGreen'
     Wc '(' '38;2;225;55;45' 'Red'
     Wc ' ' '38;2;70;160;75' 'DarkGreen'
-    Wc ''')' '38;2;225;55;45' 'Red'
-    Wc ')          |__>--<__|    |                 /'' _---_~\' '38;2;70;160;75' 'DarkGreen'
+    Wc '''))' '38;2;225;55;45' 'Red'
+    Wc '          |__>--<__|    |                 /'' _---_~\' '38;2;70;160;75' 'DarkGreen'
     Write-Host ""
     Wc '         ' '38;2;70;160;75' 'DarkGreen'
     Wc '`' '38;2;225;55;45' 'Red'
@@ -787,10 +787,7 @@ function Show-DeadDragon {
     Write-Host ""
     Wc '    ' '38;2;70;160;75' 'DarkGreen'
     Wc '''' '38;2;225;55;45' 'Red'
-    Wc '   ' '38;2;70;160;75' 'DarkGreen'
-    Wc '''' '38;2;225;55;45' 'Red'
-    Wc '  ' '38;2;70;160;75' 'DarkGreen'
-    Wc '`' '38;2;225;55;45' 'Red'
+    Wc '   ''  `' '38;2;70;160;75' 'DarkGreen'
     Write-Host ""
     Write-Host ""
     Write-Flair "        The Dragon still lives! Choose a module to hunt." '1;91' 'Red'
