@@ -787,7 +787,10 @@ function Show-DeadDragon {
     Write-Host ""
     Wc '    ' '38;2;70;160;75' 'DarkGreen'
     Wc '''' '38;2;225;55;45' 'Red'
-    Wc '   ''  `' '38;2;70;160;75' 'DarkGreen'
+    Wc '   ' '38;2;70;160;75' 'DarkGreen'
+    Wc '''' '38;2;225;55;45' 'Red'
+    Wc '  ' '38;2;70;160;75' 'DarkGreen'
+    Wc '`' '38;2;225;55;45' 'Red'
     Write-Host ""
     Write-Host ""
     Write-Flair "        The Dragon still lives! Choose a module to hunt." '1;91' 'Red'
