@@ -884,9 +884,12 @@ function Write-Section {
 }
 
 function Add-Finding {
-    param([string]$Severity, [string]$Module, [string]$Message)
-    # Severity: HIGH / MED / INFO
-    $script:Findings.Add("[$Severity] ($Module) $Message")
+    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '')
+    # Severity: HIGH / MED / INFO. Artifact (optional) is the exact .txt filename this
+    # finding points at, so the HTML report can highlight just that file (not the whole module).
+    # We encode it inside the stored string as {file:NAME} and strip it before display.
+    $tag = if ($Artifact) { " {file:$Artifact}" } else { '' }
+    $script:Findings.Add("[$Severity] ($Module) $Message$tag")
     $color = switch ($Severity) {
         'HIGH' { 'Red' }
         'MED'  { 'Yellow' }
@@ -1012,7 +1015,7 @@ Save-Output "02_local_users.txt" {
         $_.PasswordLastSet -and $_.PasswordLastSet -gt (Get-Date).AddDays(-14)
     }
     foreach ($u in $recentUsers) {
-        Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <14d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^09 possible new account")
+        Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <14d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^09 possible new account") '02_local_users.txt'
     }
 
     Write-Section "LOCAL GROUPS & MEMBERS"
@@ -1026,7 +1029,7 @@ Save-Output "02_local_users.txt" {
         if ($g -eq 'Administrators') {
             foreach ($mem in $members) {
                 if ($mem.PrincipalSource -eq 'Local' -and $mem.Name -notmatch '\\(Administrator|Domain Admins)$') {
-                    Add-Finding 'MED' '02' "Local account in Administrators group: $($mem.Name)"
+                    Add-Finding 'MED' '02' "Local account in Administrators group: $($mem.Name)" '02_local_users.txt'
                 }
             }
         }
@@ -1158,12 +1161,12 @@ Save-Output "03_services.txt" {
                     $sigStatus = $sig.Status
                     $signer = $sig.SignerCertificate.Subject
                     if ($sig.Status -ne 'Valid') {
-                        Add-Finding 'HIGH' '03' (Ex "Unsigned service binary modified <30d: $($_.Name) ^17 $path")
+                        Add-Finding 'HIGH' '03' (Ex "Unsigned service binary modified <30d: $($_.Name) ^17 $path") '03_services.txt'
                     } else {
-                        Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path")
+                        Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path") '03_services.txt'
                     }
                 } else {
-                    Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path")
+                    Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path") '03_services.txt'
                 }
                 [PSCustomObject]@{
                     Service      = $_.Name
@@ -1207,7 +1210,7 @@ Save-Output "03_wmi_persistence.txt" {
     $bindings | Select-Object * | Format-List
 
     if ($bindings) {
-        Add-Finding 'HIGH' '03' (Ex "$($bindings.Count) WMI event consumer binding(s) present ^09 classic fileless persistence, review carefully")
+        Add-Finding 'HIGH' '03' (Ex "$($bindings.Count) WMI event consumer binding(s) present ^09 classic fileless persistence, review carefully") '03_wmi_persistence.txt'
     }
 }
 
@@ -1648,10 +1651,10 @@ Save-Output "08_cleared_logs.txt" {
     $sec1102 = Get-WinEvent -LogName Security -FilterXPath "*[System[EventID=1102]]" -MaxEvents 100 -ErrorAction SilentlyContinue
     $sys104  = Get-WinEvent -LogName System -FilterXPath "*[System[EventID=104]]" -MaxEvents 100 -ErrorAction SilentlyContinue
     if ($sec1102) {
-        Add-Finding 'HIGH' '08' (Ex "Security log was CLEARED ($($sec1102.Count) event(s) 1102) ^09 possible anti-forensics")
+        Add-Finding 'HIGH' '08' (Ex "Security log was CLEARED ($($sec1102.Count) event(s) 1102) ^09 possible anti-forensics") '08_cleared_logs.txt'
     }
     if ($sys104) {
-        Add-Finding 'MED' '08' "A System/application log was cleared ($($sys104.Count) event(s) 104)"
+        Add-Finding 'MED' '08' "A System/application log was cleared ($($sys104.Count) event(s) 104)" '08_cleared_logs.txt'
     }
     $sec1102 | Select-Object TimeCreated, Message | Format-List
     $sys104  | Select-Object TimeCreated, Message | Format-List
@@ -1780,7 +1783,7 @@ Save-Output "11_lolbin_usage.txt" {
         }
     if ($lolHits) {
         $distinct = ($lolHits.Binary | Sort-Object -Unique) -join ', '
-        Add-Finding 'MED' '11' "$($lolHits.Count) LOLBin execution(s) in 4688 logs: $distinct"
+        Add-Finding 'MED' '11' "$($lolHits.Count) LOLBin execution(s) in 4688 logs: $distinct" '11_lolbin_usage.txt'
     }
     $lolHits | Format-Table -AutoSize
 }
@@ -1981,9 +1984,11 @@ details.errored summary{color:#b6938f}
 pre{margin:0;padding:14px 16px;border-top:1px solid var(--line);background:#0b0f14;color:#c9d1d9;font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto}
 .modhdr{margin-top:26px;color:var(--gold);font-size:13px;letter-spacing:.1em;text-transform:uppercase}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-top:1px solid var(--line);margin-top:30px}
-.filter{margin:10px 0 4px;display:flex;gap:8px;flex-wrap:wrap}
+.filter{margin:10px 0 4px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .filter button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px}
 .filter button:hover{border-color:var(--accent)}
+.filter .clearbtn{margin-left:auto;color:var(--muted)}
+.filter .clearbtn:hover{border-color:var(--muted);color:var(--ink)}
 '@)
     [void]$sb.AppendLine('</style></head><body>')
 
@@ -2021,7 +2026,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
     if ($script:Findings.Count -eq 0) {
         [void]$sb.AppendLine('<p class="none">No high-signal indicators auto-flagged. Absence of flags is not proof of a clean host - review the raw artifacts below.</p>')
     } else {
-        [void]$sb.AppendLine('<div class="filter"><button onclick="ff(0)">All</button><button onclick="ff(1)">HIGH</button><button onclick="ff(2)">MED</button><button onclick="ff(3)">INFO</button></div>')
+        [void]$sb.AppendLine('<div class="filter"><button onclick="ff(0)">All</button><button onclick="ff(1)">HIGH</button><button onclick="ff(2)">MED</button><button onclick="ff(3)">INFO</button><button class="clearbtn" onclick="clearHl()">Clear highlight</button></div>')
         [void]$sb.AppendLine('<div class="findings" id="findings">')
         foreach ($f in ($script:Findings | Sort-Object)) {
             $sev = 'INFO'
@@ -2030,12 +2035,17 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
             # module number is stored as "(NN)" right after the severity prefix
             $fmod = ''
             if ($f -match '^\[(?:HIGH|MED|INFO)\]\s*\((\d{2})\)') { $fmod = $matches[1] }
-            # strip the "[SEV] " prefix for cleaner display
+            # optional precise target file encoded as {file:NAME}
+            $ffile = ''
+            if ($f -match '\{file:([^}]+)\}') { $ffile = $matches[1] }
+            # strip the "[SEV] " prefix AND the {file:...} tag before display
             $msg = $f -replace '^\[(HIGH|MED|INFO)\]\s*',''
+            $msg = $msg -replace '\s*\{file:[^}]+\}\s*$',''
             $msg = ConvertTo-HtmlText $msg
-            if ($fmod) {
-                # clickable: jumps to the module and highlights its artifacts in the severity color
-                [void]$sb.AppendLine("<a class=`"f $sev`" href=`"#mod-$fmod`" onclick=`"jump('$fmod','$sev')`"><span class=`"sev $sev`">$sev</span>$msg<span class=`"go`">view &darr;</span></a>")
+            if ($fmod -or $ffile) {
+                # data-file (exact artifact) takes priority; data-mod is the fallback target
+                $anchor = if ($ffile) { "#art-$([System.IO.Path]::GetFileNameWithoutExtension($ffile))" } else { "#mod-$fmod" }
+                [void]$sb.AppendLine("<a class=`"f $sev`" href=`"$anchor`" data-mod=`"$fmod`" data-file=`"$ffile`" data-sev=`"$sev`" onclick=`"jump(this);return false;`"><span class=`"sev $sev`">$sev</span>$msg<span class=`"go`">view &darr;</span></a>")
             } else {
                 [void]$sb.AppendLine("<div class=`"f $sev`"><span class=`"sev $sev`">$sev</span>$msg</div>")
             }
@@ -2079,6 +2089,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
 
         $kb = '{0:N0} KB' -f ($file.Length/1KB)
         $nameHtml = ConvertTo-HtmlText $file.Name
+        $artId = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
 
         # An errored collector writes "ERROR: ..." into its file (see Save-Output catch block).
         $isError = $rawContent -match '(?m)^\s*ERROR:\s'
@@ -2088,14 +2099,14 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
             $errMsg = ''
             if ($rawContent -match '(?m)^\s*ERROR:\s*(.+)$') { $errMsg = $matches[1].Trim() }
             $errHtml = ConvertTo-HtmlText $errMsg
-            [void]$sb.AppendLine("<details class=`"errored`" data-mod=`"$modNum`"><summary><span>$nameHtml <span class=`"badge err`">error</span></span><span class=`"sz`">$kb</span></summary><div class=`"errbox`"><b>This collector failed to run.</b><br>$errHtml</div></details>")
+            [void]$sb.AppendLine("<details class=`"errored`" id=`"art-$artId`" data-mod=`"$modNum`" data-file=`"$($file.Name)`"><summary><span>$nameHtml <span class=`"badge err`">error</span></span><span class=`"sz`">$kb</span></summary><div class=`"errbox`"><b>This collector failed to run.</b><br>$errHtml</div></details>")
         }
         elseif (-not $hasData) {
             # Empty / no findings in this artifact: badge on the summary + a friendly banner inside.
-            [void]$sb.AppendLine("<details class=`"empty`" data-mod=`"$modNum`"><summary><span>$nameHtml <span class=`"badge`">no data</span></span><span class=`"sz`">$kb</span></summary><div class=`"nodata`">Nothing collected for this artifact &mdash; nothing was present on this host, or it was not accessible.</div></details>")
+            [void]$sb.AppendLine("<details class=`"empty`" id=`"art-$artId`" data-mod=`"$modNum`" data-file=`"$($file.Name)`"><summary><span>$nameHtml <span class=`"badge`">no data</span></span><span class=`"sz`">$kb</span></summary><div class=`"nodata`">Nothing collected for this artifact &mdash; nothing was present on this host, or it was not accessible.</div></details>")
         } else {
             $content = ConvertTo-HtmlText $rawContent
-            [void]$sb.AppendLine("<details data-mod=`"$modNum`"><summary><span>$nameHtml</span><span class=`"sz`">$kb</span></summary><pre>$content</pre></details>")
+            [void]$sb.AppendLine("<details id=`"art-$artId`" data-mod=`"$modNum`" data-file=`"$($file.Name)`"><summary><span>$nameHtml</span><span class=`"sz`">$kb</span></summary><pre>$content</pre></details>")
         }
     }
 
@@ -2105,7 +2116,8 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
     # tiny JS for findings filter (self-contained, no external deps)
     [void]$sb.AppendLine('<script>')
     [void]$sb.AppendLine('function ff(n){var m=["","HIGH","MED","INFO"][n];var L=document.querySelectorAll("#findings .f");for(var i=0;i<L.length;i++){L[i].style.display=(!m||L[i].classList.contains(m))?"":"none"}}')
-    [void]$sb.AppendLine('function jump(mod,sev){var sevs=["HIGH","MED","INFO"];for(var s=0;s<sevs.length;s++){var rm=document.querySelectorAll(".hl-"+sevs[s]);for(var j=0;j<rm.length;j++){rm[j].classList.remove("hl-"+sevs[s])}}var hdr=document.getElementById("mod-"+mod);if(hdr){hdr.classList.add("hl-"+sev);hdr.scrollIntoView({behavior:"smooth",block:"start"})}var ds=document.getElementsByTagName("details");for(var k=0;k<ds.length;k++){if(ds[k].getAttribute("data-mod")===mod){ds[k].classList.add("hl-"+sev);ds[k].open=true}}}')
+    [void]$sb.AppendLine('function clearHl(){var sevs=["HIGH","MED","INFO"];for(var s=0;s<sevs.length;s++){var rm=document.querySelectorAll(".hl-"+sevs[s]);for(var j=0;j<rm.length;j++){rm[j].classList.remove("hl-"+sevs[s])}}}')
+    [void]$sb.AppendLine('function jump(el){clearHl();var sev=el.getAttribute("data-sev")||"INFO";var file=el.getAttribute("data-file")||"";var mod=el.getAttribute("data-mod")||"";var target=null;var ds=document.getElementsByTagName("details");for(var k=0;k<ds.length;k++){var d=ds[k];var match=file?(d.getAttribute("data-file")===file):(d.getAttribute("data-mod")===mod);if(match){d.classList.add("hl-"+sev);d.open=true;if(!target)target=d}}if(!file&&mod){var hdr=document.getElementById("mod-"+mod);if(hdr){hdr.classList.add("hl-"+sev);if(!target)target=hdr}}if(target){target.scrollIntoView({behavior:"smooth",block:"start"})}}')
     [void]$sb.AppendLine('</script>')
     [void]$sb.AppendLine('</body></html>')
 
