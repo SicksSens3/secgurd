@@ -1952,8 +1952,17 @@ h1{margin:0;font-size:22px;letter-spacing:.08em;color:var(--gold)}
 .wrap{max-width:1100px;margin:0 auto;padding:24px 28px}
 h2{font-size:15px;letter-spacing:.05em;color:var(--accent);border-bottom:1px solid var(--line);padding-bottom:6px;margin:32px 0 14px}
 .findings{display:grid;gap:8px}
-.f{padding:10px 12px;border-radius:8px;border-left:4px solid var(--line);background:var(--panel)}
+.f{padding:10px 12px;border-radius:8px;border-left:4px solid var(--line);background:var(--panel);display:block;color:inherit;text-decoration:none}
 .f.HIGH{border-left-color:var(--hi)}.f.MED{border-left-color:var(--med)}.f.INFO{border-left-color:var(--info)}
+a.f{cursor:pointer;transition:background .12s,transform .12s}
+a.f:hover{background:#1c232c;transform:translateX(2px)}
+a.f .go{float:right;font-size:11px;color:var(--muted);opacity:0;transition:opacity .12s}
+a.f:hover .go{opacity:1}
+/* artifact highlight when jumped-to from a finding */
+details.hl-HIGH{border-color:var(--hi);box-shadow:0 0 0 1px var(--hi),0 0 16px rgba(248,81,73,.25)}
+details.hl-MED{border-color:var(--med);box-shadow:0 0 0 1px var(--med),0 0 16px rgba(210,153,34,.25)}
+details.hl-INFO{border-color:var(--info);box-shadow:0 0 0 1px var(--info),0 0 16px rgba(139,148,158,.25)}
+.modhdr.hl-HIGH{color:var(--hi)}.modhdr.hl-MED{color:var(--med)}.modhdr.hl-INFO{color:var(--gold)}
 .sev{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;margin-right:8px;vertical-align:1px}
 .sev.HIGH{background:rgba(248,81,73,.18);color:#ff7b72}.sev.MED{background:rgba(210,153,34,.18);color:#e3b341}.sev.INFO{background:rgba(139,148,158,.18);color:#adbac7}
 .none{color:var(--muted);font-style:italic}
@@ -1964,7 +1973,11 @@ summary:hover{background:#1c232c}
 summary .sz{color:var(--muted);font-weight:400;font-size:12px}
 details.empty summary{color:var(--muted)}
 .badge{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:rgba(139,148,158,.14);border:1px solid var(--line);border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:1px}
+.badge.err{color:#b08a86;background:rgba(176,138,134,.10);border-color:rgba(176,138,134,.30)}
 .nodata{padding:14px 16px;border-top:1px solid var(--line);color:var(--muted);font-style:italic;font-size:13px}
+details.errored summary{color:#b6938f}
+.errbox{padding:14px 16px;border-top:1px solid rgba(176,138,134,.25);color:#a98e8a;font-size:13px;background:rgba(176,138,134,.05)}
+.errbox b{color:#c79a95}
 pre{margin:0;padding:14px 16px;border-top:1px solid var(--line);background:#0b0f14;color:#c9d1d9;font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto}
 .modhdr{margin-top:26px;color:var(--gold);font-size:13px;letter-spacing:.1em;text-transform:uppercase}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-top:1px solid var(--line);margin-top:30px}
@@ -2014,10 +2027,18 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
             $sev = 'INFO'
             if ($f -like '`[HIGH`]*') { $sev = 'HIGH' }
             elseif ($f -like '`[MED`]*') { $sev = 'MED' }
+            # module number is stored as "(NN)" right after the severity prefix
+            $fmod = ''
+            if ($f -match '^\[(?:HIGH|MED|INFO)\]\s*\((\d{2})\)') { $fmod = $matches[1] }
             # strip the "[SEV] " prefix for cleaner display
             $msg = $f -replace '^\[(HIGH|MED|INFO)\]\s*',''
             $msg = ConvertTo-HtmlText $msg
-            [void]$sb.AppendLine("<div class=`"f $sev`"><span class=`"sev $sev`">$sev</span>$msg</div>")
+            if ($fmod) {
+                # clickable: jumps to the module and highlights its artifacts in the severity color
+                [void]$sb.AppendLine("<a class=`"f $sev`" href=`"#mod-$fmod`" onclick=`"jump('$fmod','$sev')`"><span class=`"sev $sev`">$sev</span>$msg<span class=`"go`">view &darr;</span></a>")
+            } else {
+                [void]$sb.AppendLine("<div class=`"f $sev`"><span class=`"sev $sev`">$sev</span>$msg</div>")
+            }
         }
         [void]$sb.AppendLine('</div>')
     }
@@ -2031,7 +2052,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
         $modNum = if ($file.Name -match '^(\d{2})_') { $matches[1] } else { '' }
         $modName = ($script:ModuleCatalogue | Where-Object { $_.Id -eq $modNum }).Name
         if ($modNum -and $modNum -ne $lastMod) {
-            [void]$sb.AppendLine("<div class=`"modhdr`">$modNum &middot; $(ConvertTo-HtmlText $modName)</div>")
+            [void]$sb.AppendLine("<div class=`"modhdr`" id=`"mod-$modNum`">$modNum &middot; $(ConvertTo-HtmlText $modName)</div>")
             $lastMod = $modNum
         }
         $rawContent = ''
@@ -2059,12 +2080,22 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
         $kb = '{0:N0} KB' -f ($file.Length/1KB)
         $nameHtml = ConvertTo-HtmlText $file.Name
 
-        if (-not $hasData) {
+        # An errored collector writes "ERROR: ..." into its file (see Save-Output catch block).
+        $isError = $rawContent -match '(?m)^\s*ERROR:\s'
+
+        if ($isError) {
+            # Pull the error message text for the banner.
+            $errMsg = ''
+            if ($rawContent -match '(?m)^\s*ERROR:\s*(.+)$') { $errMsg = $matches[1].Trim() }
+            $errHtml = ConvertTo-HtmlText $errMsg
+            [void]$sb.AppendLine("<details class=`"errored`" data-mod=`"$modNum`"><summary><span>$nameHtml <span class=`"badge err`">error</span></span><span class=`"sz`">$kb</span></summary><div class=`"errbox`"><b>This collector failed to run.</b><br>$errHtml</div></details>")
+        }
+        elseif (-not $hasData) {
             # Empty / no findings in this artifact: badge on the summary + a friendly banner inside.
-            [void]$sb.AppendLine("<details class=`"empty`"><summary><span>$nameHtml <span class=`"badge`">no data</span></span><span class=`"sz`">$kb</span></summary><div class=`"nodata`">Nothing collected for this artifact &mdash; nothing was present on this host, or it was not accessible.</div></details>")
+            [void]$sb.AppendLine("<details class=`"empty`" data-mod=`"$modNum`"><summary><span>$nameHtml <span class=`"badge`">no data</span></span><span class=`"sz`">$kb</span></summary><div class=`"nodata`">Nothing collected for this artifact &mdash; nothing was present on this host, or it was not accessible.</div></details>")
         } else {
             $content = ConvertTo-HtmlText $rawContent
-            [void]$sb.AppendLine("<details><summary><span>$nameHtml</span><span class=`"sz`">$kb</span></summary><pre>$content</pre></details>")
+            [void]$sb.AppendLine("<details data-mod=`"$modNum`"><summary><span>$nameHtml</span><span class=`"sz`">$kb</span></summary><pre>$content</pre></details>")
         }
     }
 
@@ -2072,7 +2103,10 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
     [void]$sb.AppendLine("<footer>Generated by secgurd $($script:secgurdVersion) on $($runEnd.ToString('yyyy-MM-dd HH:mm:ss')). Single-file report - safe to copy off-host.</footer>")
 
     # tiny JS for findings filter (self-contained, no external deps)
-    [void]$sb.AppendLine('<script>function ff(n){var m=["","HIGH","MED","INFO"][n];document.querySelectorAll("#findings .f").forEach(function(e){e.style.display=(!m||e.classList.contains(m))?"":"none"})}</script>')
+    [void]$sb.AppendLine('<script>')
+    [void]$sb.AppendLine('function ff(n){var m=["","HIGH","MED","INFO"][n];var L=document.querySelectorAll("#findings .f");for(var i=0;i<L.length;i++){L[i].style.display=(!m||L[i].classList.contains(m))?"":"none"}}')
+    [void]$sb.AppendLine('function jump(mod,sev){var sevs=["HIGH","MED","INFO"];for(var s=0;s<sevs.length;s++){var rm=document.querySelectorAll(".hl-"+sevs[s]);for(var j=0;j<rm.length;j++){rm[j].classList.remove("hl-"+sevs[s])}}var hdr=document.getElementById("mod-"+mod);if(hdr){hdr.classList.add("hl-"+sev);hdr.scrollIntoView({behavior:"smooth",block:"start"})}var ds=document.getElementsByTagName("details");for(var k=0;k<ds.length;k++){if(ds[k].getAttribute("data-mod")===mod){ds[k].classList.add("hl-"+sev);ds[k].open=true}}}')
+    [void]$sb.AppendLine('</script>')
     [void]$sb.AppendLine('</body></html>')
 
     try {
