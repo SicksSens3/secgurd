@@ -289,7 +289,7 @@ function Show-Help {
     Write-Host "    a / n                 Select all / none" -ForegroundColor Gray
     Write-Host "    qa / net / ps         Apply a preset" -ForegroundColor Gray
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
-    Write-Host "    h                     Toggle: build single-file HTML report" -ForegroundColor Gray
+    Write-Host "    h                     Toggle: build + open HTML report" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
     Write-Host ""
@@ -517,7 +517,7 @@ function Show-ModuleMenu {
         Write-Host $hrMark -ForegroundColor $hrClr -NoNewline
         Write-Host "  " -NoNewline
         Write-Host ("{0,-4}" -f 'h') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-30}" -f 'Build single-file HTML report') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-30}" -f 'Build + open HTML report') -ForegroundColor White -NoNewline
         Write-Host "(report.html)" -ForegroundColor DarkGray
 
         Write-Host ""
@@ -1962,6 +1962,9 @@ summary{cursor:pointer;padding:10px 14px;font-weight:600;list-style:none;display
 summary::-webkit-details-marker{display:none}
 summary:hover{background:#1c232c}
 summary .sz{color:var(--muted);font-weight:400;font-size:12px}
+details.empty summary{color:var(--muted)}
+.badge{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:rgba(139,148,158,.14);border:1px solid var(--line);border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:1px}
+.nodata{padding:14px 16px;border-top:1px solid var(--line);color:var(--muted);font-style:italic;font-size:13px}
 pre{margin:0;padding:14px 16px;border-top:1px solid var(--line);background:#0b0f14;color:#c9d1d9;font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto}
 .modhdr{margin-top:26px;color:var(--gold);font-size:13px;letter-spacing:.1em;text-transform:uppercase}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-top:1px solid var(--line);margin-top:30px}
@@ -2031,11 +2034,38 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
             [void]$sb.AppendLine("<div class=`"modhdr`">$modNum &middot; $(ConvertTo-HtmlText $modName)</div>")
             $lastMod = $modNum
         }
-        $content = ''
-        try { $content = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue } catch {}
-        $content = ConvertTo-HtmlText $content
+        $rawContent = ''
+        try { $rawContent = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue } catch {}
+        if ($null -eq $rawContent) { $rawContent = '' }
+
+        # Decide if this artifact actually has data. Strip the Write-Section dividers (===),
+        # section titles, common "(none found)/(not found)" placeholders and whitespace; if
+        # nothing meaningful remains, treat it as empty.
+        $meaningful = $rawContent -split "`r?`n" | Where-Object {
+            $line = $_.Trim()
+            $line -ne '' -and
+            $line -notmatch '^=+$' -and
+            $line -notmatch '^-+$' -and
+            $line -notmatch '^\(.*(none|not found|no .*found|disabled|unavailable).*\)$'
+        }
+        # Also require the meaningful lines to include something other than ALL-CAPS section titles
+        $hasData = $false
+        foreach ($ml in $meaningful) {
+            $t = $ml.Trim()
+            # a section title is usually short, all-caps/symbols; real data has lowercase or digits/paths
+            if ($t -cmatch '[a-z]' -or $t -match '\d' -or $t.Length -gt 50) { $hasData = $true; break }
+        }
+
         $kb = '{0:N0} KB' -f ($file.Length/1KB)
-        [void]$sb.AppendLine("<details><summary><span>$(ConvertTo-HtmlText $file.Name)</span><span class=`"sz`">$kb</span></summary><pre>$content</pre></details>")
+        $nameHtml = ConvertTo-HtmlText $file.Name
+
+        if (-not $hasData) {
+            # Empty / no findings in this artifact: badge on the summary + a friendly banner inside.
+            [void]$sb.AppendLine("<details class=`"empty`"><summary><span>$nameHtml <span class=`"badge`">no data</span></span><span class=`"sz`">$kb</span></summary><div class=`"nodata`">Nothing collected for this artifact &mdash; nothing was present on this host, or it was not accessible.</div></details>")
+        } else {
+            $content = ConvertTo-HtmlText $rawContent
+            [void]$sb.AppendLine("<details><summary><span>$nameHtml</span><span class=`"sz`">$kb</span></summary><pre>$content</pre></details>")
+        }
     }
 
     [void]$sb.AppendLine('</div>')  # /wrap
@@ -2130,11 +2160,17 @@ Write-Host ""
 
 # Optionally open the output folder (interactive desktop only)
 
-if ($script:OpenFolderWhenDone -and [Environment]::UserInteractive) {
+# Open results when done (interactive desktop only).
+#  - HTML report toggle (h) opens report.html on its own.
+#  - Open-folder toggle (o) opens the output folder.
+# These are independent; if both are on, the report opens and the folder opens.
+
+if ([Environment]::UserInteractive) {
     $reportPath = Join-Path $OutputPath 'report.html'
     if ($script:HtmlReport -and (Test-Path $reportPath)) {
         try { Invoke-Item $reportPath } catch {}
-    } else {
+    }
+    if ($script:OpenFolderWhenDone) {
         try { Invoke-Item $OutputPath } catch {}
     }
 }
