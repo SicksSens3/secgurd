@@ -84,20 +84,20 @@ function Ex {
         '11' = [char]0x16B1
         '12' = [char]0x16A6
         '13' = [char]0x224B
-        '14' = [char]0x2713
+        '14' = [char]0x002B
         '15' = [char]0x2560
-        '16' = [char]0x26A0
-        '17' = [char]0x2192
+        '16' = [char]0x0021
+        '17' = [char]0x003E
         '18' = [char]0x2572
         '19' = [char]0x2563
         '20' = [char]0x25B6
         '21' = [char]0x2571
         '22' = [char]0x16CA
-        '23' = [char]0x2717
-        '24' = [char]0x2691
-        '25' = [char]0x26A1
+        '23' = [char]0x0078
+        '24' = [char]0x0021
+        '25' = [char]0x002A
         '26' = [char]0x2514
-        '27' = [char]0x2692
+        '27' = [char]0x002A
     }
     foreach ($k in $map.Keys) { $s = $s.Replace('^' + $k, $map[$k]) }
     return $s
@@ -2069,22 +2069,27 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
         try { $rawContent = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue } catch {}
         if ($null -eq $rawContent) { $rawContent = '' }
 
-        # Decide if this artifact actually has data. Strip the Write-Section dividers (===),
-        # section titles, common "(none found)/(not found)" placeholders and whitespace; if
-        # nothing meaningful remains, treat it as empty.
-        $meaningful = $rawContent -split "`r?`n" | Where-Object {
-            $line = $_.Trim()
-            $line -ne '' -and
-            $line -notmatch '^=+$' -and
-            $line -notmatch '^-+$' -and
-            $line -notmatch '^\(.*(none|not found|no .*found|disabled|unavailable).*\)$'
-        }
-        # Also require the meaningful lines to include something other than ALL-CAPS section titles
+        # Decide if this artifact actually has data. A Write-Section block is exactly:
+        #   ===...   /   <Title>   /   ===...
+        # so a "title" line is any non-divider line that sits directly next to a === rule.
+        # We strip dividers, those title lines, and common "(none found)" placeholders; if
+        # nothing meaningful remains, the artifact is empty even though it has a banner.
+        $allLines = $rawContent -split "`r?`n"
+        $isDivider = { param($s) $s.Trim() -match '^[=\-]{3,}$' }
         $hasData = $false
-        foreach ($ml in $meaningful) {
-            $t = $ml.Trim()
-            # a section title is usually short, all-caps/symbols; real data has lowercase or digits/paths
-            if ($t -cmatch '[a-z]' -or $t -match '\d' -or $t.Length -gt 50) { $hasData = $true; break }
+        for ($li = 0; $li -lt $allLines.Count; $li++) {
+            $t = $allLines[$li].Trim()
+            if ($t -eq '') { continue }
+            if (& $isDivider $t) { continue }
+            # placeholder lines like "(none found)" / "(not found)" / "(disabled)"
+            if ($t -match '^\(.*(none|not found|no .*found|disabled|unavailable|empty).*\)$') { continue }
+            # section title? adjacent (prev or next non-blank line) is a === divider
+            $prev = ''; for ($p = $li-1; $p -ge 0; $p--) { if ($allLines[$p].Trim() -ne '') { $prev = $allLines[$p].Trim(); break } }
+            $next = ''; for ($n = $li+1; $n -lt $allLines.Count; $n++) { if ($allLines[$n].Trim() -ne '') { $next = $allLines[$n].Trim(); break } }
+            if ((& $isDivider $prev) -and (& $isDivider $next)) { continue }   # it's a section title (=== / title / ===)
+            # anything left is real data
+            $hasData = $true
+            break
         }
 
         $kb = '{0:N0} KB' -f ($file.Length/1KB)
