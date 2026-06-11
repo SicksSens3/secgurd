@@ -634,66 +634,84 @@ function Show-ModuleMenu {
         }
 
         if ($cmd -eq 'i') {
-            if ($script:IOCHashFile) {
-                # already on -> show the list, then ask whether to keep or turn off
-                Clear-Host; Show-secgurdBannerCompact
-                Show-IOCList
-                Write-Host "  IOC matching is " -ForegroundColor DarkGray -NoNewline
-                Write-Host "ON" -ForegroundColor Green -NoNewline
-                Write-Host ".  Press " -ForegroundColor DarkGray -NoNewline
-                Write-Host "x" -ForegroundColor Yellow -NoNewline
-                Write-Host " to turn off, or Enter to keep it." -ForegroundColor DarkGray
-                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                $ans = (Read-Host).Trim().ToLower()
-                if ($ans -eq 'x') {
-                    $script:IOCHashFile = $null; $script:IOCHashSet = $null; $script:IOCHashCount = 0
+            $iocLoaded = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
+            Write-Host ""
+            Write-Host "  IOC hash matching" -ForegroundColor Cyan -NoNewline
+            if ($iocLoaded) {
+                Write-Host "  ($($script:IOCHashCount) hashes loaded)" -ForegroundColor Green
+            } else {
+                Write-Host "  (none loaded)" -ForegroundColor DarkGray
+            }
+            Write-Host "    [f] " -ForegroundColor Yellow -NoNewline
+            Write-Host "load hashes from a file" -ForegroundColor White
+            Write-Host "    [p] " -ForegroundColor Yellow -NoNewline
+            Write-Host "paste hashes (comma, space, or newline separated)" -ForegroundColor White
+            Write-Host "    [l] " -ForegroundColor Yellow -NoNewline
+            Write-Host "list / show loaded hashes" -ForegroundColor White
+            if ($iocLoaded) {
+                Write-Host "    [x] " -ForegroundColor Yellow -NoNewline
+                Write-Host "turn IOC matching off" -ForegroundColor White
+            }
+            Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+            $how = (Read-Host).Trim().ToLower()
+
+            if ($how -eq 'x') {
+                if ($iocLoaded) {
+                    $script:IOCHashFile = $null; $script:IOCHashSet = $null; $script:IOCHashCount = 0; $script:ShowIOCList = $false
                     $pendingMsg = "IOC hash matching: OFF"
                 } else {
-                    $pendingMsg = "IOC matching kept ON ($($script:IOCHashCount) hashes)"
+                    $pendingMsg = "Nothing to turn off - no hashes loaded."
                 }
-            } else {
-                Write-Host ""
-                Write-Host "  Add IOC hashes by:" -ForegroundColor Cyan
-                Write-Host "    [f] " -ForegroundColor Yellow -NoNewline
-                Write-Host "load from a file" -ForegroundColor White
-                Write-Host "    [p] " -ForegroundColor Yellow -NoNewline
-                Write-Host "paste hashes (comma, space, or newline separated)" -ForegroundColor White
-                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                $how = (Read-Host).Trim().ToLower()
+                Clear-Host; Show-secgurdBannerCompact; continue
+            }
 
-                $loaded = @{}; $src = ''
-                if ($how -eq 'f') {
-                    Write-Host "  Path to hash list file:" -ForegroundColor Cyan
-                    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                    $iocPath = (Read-Host).Trim('"').Trim()
-                    if ($iocPath -and (Test-Path $iocPath)) {
-                        $loaded = Import-IOCHashes $iocPath
-                        $src = $iocPath
-                    } else {
-                        $pendingMsg = "File not found - IOC matching not enabled."
-                    }
-                } elseif ($how -eq 'p') {
-                    Write-Host "  Paste hashes, then press Enter (commas/spaces/newlines all OK):" -ForegroundColor Cyan
-                    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                    $pasted = Read-Host
-                    $loaded = ConvertFrom-IOCText $pasted
-                    $src = '(pasted)'
-                } else {
-                    $pendingMsg = "Cancelled - pick f or p."
-                }
-
-                if ($loaded.Count -gt 0) {
-                    $script:IOCHashFile = $src
-                    $script:IOCHashSet = $loaded
-                    $script:IOCHashCount = $loaded.Count
-                    Clear-Host; Show-secgurdBannerCompact
+            if ($how -eq 'l') {
+                Clear-Host; Show-secgurdBannerCompact
+                if ($iocLoaded) {
                     Show-IOCList
-                    Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
-                    Read-Host | Out-Null
-                    $pendingMsg = "IOC hash matching: ON ($($loaded.Count) hashes)"
-                } elseif (-not $pendingMsg) {
-                    $pendingMsg = "No valid SHA-256 hashes found."
+                } else {
+                    Write-Host ""
+                    Write-Host "  No hashes loaded." -ForegroundColor Yellow
+                    Write-Host "  Use [f] to load from a file or [p] to paste some first." -ForegroundColor DarkGray
+                    Write-Host ""
                 }
+                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
+                Read-Host | Out-Null
+                Clear-Host; Show-secgurdBannerCompact; continue
+            }
+
+            $loaded = @{}; $src = ''
+            if ($how -eq 'f') {
+                Write-Host "  Path to hash list file:" -ForegroundColor Cyan
+                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                $iocPath = (Read-Host).Trim('"').Trim()
+                if ($iocPath -and (Test-Path $iocPath)) {
+                    $loaded = Import-IOCHashes $iocPath
+                    $src = $iocPath
+                } else {
+                    $pendingMsg = "File not found - IOC matching not enabled."
+                }
+            } elseif ($how -eq 'p') {
+                Write-Host "  Paste hashes, then press Enter (commas/spaces/newlines all OK):" -ForegroundColor Cyan
+                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                $pasted = Read-Host
+                $loaded = ConvertFrom-IOCText $pasted
+                $src = '(pasted)'
+            } else {
+                $pendingMsg = "Cancelled - pick f, p, l, or x."
+            }
+
+            if ($loaded.Count -gt 0) {
+                $script:IOCHashFile = $src
+                $script:IOCHashSet = $loaded
+                $script:IOCHashCount = $loaded.Count
+                Clear-Host; Show-secgurdBannerCompact
+                Show-IOCList
+                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
+                Read-Host | Out-Null
+                $pendingMsg = "IOC hash matching: ON ($($loaded.Count) hashes)"
+            } elseif (($how -eq 'f' -or $how -eq 'p') -and -not $pendingMsg) {
+                $pendingMsg = "No valid SHA-256 hashes found (must be 64 hex chars each)."
             }
             Clear-Host; Show-secgurdBannerCompact
             continue
