@@ -27,6 +27,14 @@
     Verify Authenticode signatures of service binaries and loaded DLLs. This does a full
     trust-chain check per file and can stall for seconds each on an offline host, so it is
     off by default. Without it, secgurd flags binaries by location and modification time.
+.PARAMETER IOCHashes
+    Path to a file of known-bad SHA-256 hashes (one per line, optional ",label"). secgurd
+    hashes on-disk binaries in high-signal locations (Temp, AppData, Public, Downloads, and
+    running processes) and flags any that match. Fully offline - no API key or internet.
+.PARAMETER DaysBack
+    Lookback window in days for all time-bounded collectors (event logs, recently-modified
+    files, the timeline, and new-account / modified-binary findings). Default 30. Use a
+    larger value (e.g. 90) for suspected long-dwell compromises, smaller for fresh incidents.
 .PARAMETER Help
     Show usage and exit.
 .EXAMPLE
@@ -63,6 +71,8 @@ param(
     [switch]$WithOwners,
     [switch]$WithSignatures,
     [switch]$HtmlReport,
+    [string]$IOCHashes,
+    [int]$DaysBack = 30,
     [switch]$Help
 )
 
@@ -123,6 +133,13 @@ $script:RunLineActive = $false
 $script:WithOwners = [bool]$WithOwners
 $script:WithSignatures = [bool]$WithSignatures
 $script:HtmlReport = [bool]$HtmlReport
+$script:IOCHashFile = $null
+$script:IOCHashSet = $null
+$script:IOCHashCount = 0
+# Lookback window (days) for all time-bounded collectors. Clamp to a sane 1..3650 range.
+if ($DaysBack -lt 1) { $DaysBack = 1 }
+if ($DaysBack -gt 3650) { $DaysBack = 3650 }
+$script:DaysBack = $DaysBack
 
 # Force UTF-8 output so box-drawing chars render correctly
 
@@ -282,6 +299,8 @@ function Show-Help {
     Write-Host "    -WithOwners           Include process owners in 06_process_tree (slower)" -ForegroundColor Gray
     Write-Host "    -WithSignatures       Verify Authenticode signatures (slow, may stall offline)" -ForegroundColor Gray
     Write-Host "    -HtmlReport           Also build a single-file report.html" -ForegroundColor Gray
+    Write-Host "    -IOCHashes <file>     Match on-disk binaries against a SHA-256 IOC list" -ForegroundColor Gray
+    Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  MENU COMMANDS" -ForegroundColor White
@@ -290,6 +309,8 @@ function Show-Help {
     Write-Host "    qa / net / ps         Apply a preset" -ForegroundColor Gray
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
     Write-Host "    h                     Toggle: build + open HTML report" -ForegroundColor Gray
+    Write-Host "    i                     Toggle: match hashes vs IOC list (prompts for file)" -ForegroundColor Gray
+    Write-Host "    d                     Set lookback window in days (time-bounded collectors)" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
     Write-Host ""
@@ -520,6 +541,24 @@ function Show-ModuleMenu {
         Write-Host ("{0,-30}" -f 'Build + open HTML report') -ForegroundColor White -NoNewline
         Write-Host "(report.html)" -ForegroundColor DarkGray
 
+        $iocOn   = [bool]$script:IOCHashFile
+        $iocMark = if ($iocOn) { (Ex "[^14]") } else { '[ ]' }
+        $iocClr  = if ($iocOn) { 'Green' } else { 'DarkGray' }
+        $iocNote = if ($iocOn) { "($($script:IOCHashCount) hashes loaded)" } else { '(prompts for hash list)' }
+        Write-Host "   " -NoNewline
+        Write-Host $iocMark -ForegroundColor $iocClr -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f 'i') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-30}" -f 'Match hashes against IOC list') -ForegroundColor White -NoNewline
+        Write-Host $iocNote -ForegroundColor DarkGray
+
+        Write-Host "   " -NoNewline
+        Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f 'd') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-30}" -f 'Lookback window (days)') -ForegroundColor White -NoNewline
+        Write-Host "(currently $($script:DaysBack)d)" -ForegroundColor DarkGray
+
         Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
@@ -570,6 +609,57 @@ function Show-ModuleMenu {
             $script:HtmlReport = -not $script:HtmlReport
             $state = if ($script:HtmlReport) { 'ON' } else { 'OFF' }
             $pendingMsg = "Build HTML report: $state"
+            Clear-Host; Show-secgurdBannerCompact
+            continue
+        }
+
+        if ($cmd -eq 'i') {
+            if ($script:IOCHashFile) {
+                # already on -> toggle off
+                $script:IOCHashFile = $null
+                $script:IOCHashSet = $null
+                $script:IOCHashCount = 0
+                $pendingMsg = "IOC hash matching: OFF"
+            } else {
+                Write-Host ""
+                Write-Host "  Path to IOC hash list (one SHA-256 per line, or hash[,label]):" -ForegroundColor Cyan
+                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                $iocPath = (Read-Host).Trim('"').Trim()
+                if ($iocPath -and (Test-Path $iocPath)) {
+                    $loaded = Import-IOCHashes $iocPath
+                    if ($loaded.Count -gt 0) {
+                        $script:IOCHashFile = $iocPath
+                        $script:IOCHashSet = $loaded
+                        $script:IOCHashCount = $loaded.Count
+                        $pendingMsg = "IOC hash matching: ON ($($loaded.Count) hashes)"
+                    } else {
+                        $pendingMsg = "No valid SHA-256 hashes found in that file."
+                    }
+                } else {
+                    $pendingMsg = "File not found - IOC matching not enabled."
+                }
+            }
+            Clear-Host; Show-secgurdBannerCompact
+            continue
+        }
+
+        if ($cmd -eq 'd') {
+            Write-Host ""
+            Write-Host "  Lookback window in days (how far back time-bounded collectors reach):" -ForegroundColor Cyan
+            Write-Host "  Current: $($script:DaysBack)d    pick 1-3650, or Enter to keep" -ForegroundColor DarkGray
+            Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+            $dIn = (Read-Host).Trim()
+            if ($dIn -eq '') {
+                $pendingMsg = "Lookback unchanged: $($script:DaysBack)d"
+            } elseif ($dIn -match '^\d+$') {
+                $val = [int]$dIn
+                if ($val -lt 1) { $val = 1 }
+                if ($val -gt 3650) { $val = 3650 }
+                $script:DaysBack = $val
+                $pendingMsg = "Lookback window set to $($script:DaysBack)d"
+            } else {
+                $pendingMsg = "Not a number - lookback unchanged ($($script:DaysBack)d)"
+            }
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -905,6 +995,27 @@ function Add-Finding {
     Write-Host $Message -ForegroundColor $color
 }
 
+function Import-IOCHashes {
+    # Load a list of known-bad SHA-256 hashes from a file. Accepts one hash per line,
+    # optionally "hash,label" or "hash label". Lines starting with # are comments.
+    # Returns a hashtable: UPPERCASE-hash -> label (for fast O(1) lookup).
+    param([string]$Path)
+    $set = @{}
+    try {
+        Get-Content $Path -ErrorAction Stop | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -eq '' -or $line.StartsWith('#')) { return }
+            # split off an optional label after a comma, whitespace, or pipe
+            $parts = $line -split '[,\s|]+', 2
+            $h = $parts[0].Trim().ToUpper()
+            $label = if ($parts.Count -gt 1) { $parts[1].Trim() } else { '' }
+            # only accept valid 64-char hex SHA-256 values
+            if ($h -match '^[0-9A-F]{64}$') { $set[$h] = $label }
+        }
+    } catch {}
+    return $set
+}
+
 function Save-Output {
     param([string]$FileName, [scriptblock]$Block)
 
@@ -1012,7 +1123,7 @@ Save-Output "02_local_users.txt" {
     # Flag users created in the last 14 days (PasswordLastSet is a decent proxy for creation)
 
     $recentUsers = $localUsers | Where-Object {
-        $_.PasswordLastSet -and $_.PasswordLastSet -gt (Get-Date).AddDays(-14)
+        $_.PasswordLastSet -and $_.PasswordLastSet -gt (Get-Date).AddDays(-$script:DaysBack)
     }
     foreach ($u in $recentUsers) {
         Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <14d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^09 possible new account") '02_local_users.txt'
@@ -1153,7 +1264,7 @@ Save-Output "03_services.txt" {
         }
         if ($path -and (Test-Path $path)) {
             $f = Get-Item $path -ErrorAction SilentlyContinue
-            if ($f -and $f.LastWriteTime -gt (Get-Date).AddDays(-30)) {
+            if ($f -and $f.LastWriteTime -gt (Get-Date).AddDays(-$script:DaysBack)) {
                 $sigStatus = 'NotChecked'
                 $signer = ''
                 if ($script:WithSignatures) {
@@ -1673,7 +1784,7 @@ Save-Output "06_loaded_dlls.txt" {
 Save-Output "07_recently_modified_system32.txt" {
     Write-Section "RECENTLY MODIFIED FILES IN SYSTEM32 (last 7 days)"
     Get-ChildItem "$env:SystemRoot\System32" -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-7) } |
+        Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-$script:DaysBack) } |
         Select-Object Name, LastWriteTime, Length, FullName |
         Sort-Object LastWriteTime -Descending | Format-Table -AutoSize
 }
@@ -1698,7 +1809,7 @@ Save-Output "07_downloads_desktop.txt" {
             $path = Join-Path $_.FullName $folder
             if (Test-Path $path) {
                 $files = Get-ChildItem $path -Recurse -ErrorAction SilentlyContinue |
-                    Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-30) } |
+                    Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-$script:DaysBack) } |
                     Sort-Object LastWriteTime -Descending |
                     Select-Object -First 50
                 if ($files) {
@@ -1764,9 +1875,9 @@ Save-Output "08_security_events.txt" {
     }
 
     foreach ($id in $eventIds.Keys | Sort-Object) {
-        Write-Section "Event $id - $($eventIds[$id]) (last 50)"
+        Write-Section "Event $id - $($eventIds[$id]) (last 50, within $($script:DaysBack)d)"
         $logName = if ($id -ge 7000) { 'System' } else { 'Security' }
-        Get-WinEvent -FilterHashtable @{ LogName = $logName; Id = $id } -MaxEvents 50 -ErrorAction SilentlyContinue |
+        Get-WinEvent -FilterHashtable @{ LogName = $logName; Id = $id; StartTime = (Get-Date).AddDays(-$script:DaysBack) } -MaxEvents 50 -ErrorAction SilentlyContinue |
             Select-Object TimeCreated, Id, Message | Format-List
     }
 }
@@ -2078,6 +2189,7 @@ $indexLines += "Started     : $($script:RunStart.ToString('yyyy-MM-dd HH:mm:ss')
 $indexLines += "Finished    : $($runEnd.ToString('yyyy-MM-dd HH:mm:ss'))"
 $indexLines += "Duration    : $elapsedStr"
 $indexLines += "Modules run : $selectedIds"
+$indexLines += "Lookback    : $($script:DaysBack) days"
 $indexLines += "Collected   : $($script:CollectedCount) files"
 $indexLines += "Errors      : $($script:ErrorCount)"
 $indexLines += ""
@@ -2122,7 +2234,7 @@ function Add-TL { param($Time, $Source, $Detail)
 }
 try {
     # Logons (4624) - last 14 days
-    Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=(Get-Date).AddDays(-14)} -MaxEvents 200 -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624;StartTime=(Get-Date).AddDays(-$script:DaysBack)} -MaxEvents 200 -ErrorAction SilentlyContinue | ForEach-Object {
         $x=[xml]$_.ToXml(); $u=($x.Event.EventData.Data | Where-Object {$_.Name -eq 'TargetUserName'}).'#text'
         $lt=($x.Event.EventData.Data | Where-Object {$_.Name -eq 'LogonType'}).'#text'
         Add-TL $_.TimeCreated 'Logon' "4624 user=$u type=$lt"
@@ -2134,21 +2246,21 @@ try {
 } catch {}
 try {
     # New services (7045)
-    Get-WinEvent -FilterHashtable @{LogName='System';Id=7045;StartTime=(Get-Date).AddDays(-30)} -MaxEvents 100 -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-WinEvent -FilterHashtable @{LogName='System';Id=7045;StartTime=(Get-Date).AddDays(-$script:DaysBack)} -MaxEvents 100 -ErrorAction SilentlyContinue | ForEach-Object {
         $x=[xml]$_.ToXml(); $n=($x.Event.EventData.Data | Where-Object {$_.Name -eq 'ServiceName'}).'#text'
         Add-TL $_.TimeCreated 'NewService' "7045 service=$n"
     }
 } catch {}
 try {
     # Scheduled task creation/update (TaskScheduler 106/140)
-    Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';Id=106,140;StartTime=(Get-Date).AddDays(-30)} -MaxEvents 100 -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-TaskScheduler/Operational';Id=106,140;StartTime=(Get-Date).AddDays(-$script:DaysBack)} -MaxEvents 100 -ErrorAction SilentlyContinue | ForEach-Object {
         Add-TL $_.TimeCreated 'Task' "$($_.Id) $($_.Message -replace '\s+',' ')".Substring(0,[Math]::Min(90,"$($_.Id) $($_.Message -replace '\s+',' ')".Length))
     }
 } catch {}
 try {
     # Recently modified files in System32 (last 7 days)
     Get-ChildItem "$env:SystemRoot\System32" -Filter *.exe -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-7) } |
+        Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-$script:DaysBack) } |
         ForEach-Object { Add-TL $_.LastWriteTime 'FileMod' "System32\$($_.Name)" }
 } catch {}
 
@@ -2268,6 +2380,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-t
     [void]$sb.AppendLine("<span><b>Admin:</b> $isAdminNow</span>")
     [void]$sb.AppendLine("<span><b>Started:</b> $($script:RunStart.ToString('yyyy-MM-dd HH:mm:ss'))</span>")
     [void]$sb.AppendLine("<span><b>Duration:</b> $elapsedStr</span>")
+    [void]$sb.AppendLine("<span><b>Lookback:</b> $($script:DaysBack)d</span>")
     [void]$sb.AppendLine("<span><b>Collected:</b> $($script:CollectedCount) files</span>")
     [void]$sb.AppendLine("<span><b>Errors:</b> $($script:ErrorCount)</span>")
     [void]$sb.AppendLine('</div></header>')
@@ -2409,6 +2522,83 @@ Get-ChildItem $OutputPath -File | Where-Object { $_.Name -ne '00_HASHES.txt' } |
 $hashLines += ("-" * 78)
 $hashLines += "Verify later with:  Get-FileHash <file> -Algorithm SHA256"
 $hashLines | Out-File (Join-Path $OutputPath '00_HASHES.txt') -Encoding UTF8 -Force
+
+# ---------------------------------------------
+#  00_IOC_MATCHES.txt   match on-disk binaries against a known-bad SHA-256 list
+# ---------------------------------------------
+
+# Resolve the IOC list: interactive toggle wins; else the -IOCHashes CLI param.
+if (-not $script:IOCHashSet -and $IOCHashes) {
+    if (Test-Path $IOCHashes) {
+        $script:IOCHashSet = Import-IOCHashes $IOCHashes
+        $script:IOCHashFile = $IOCHashes
+        $script:IOCHashCount = $script:IOCHashSet.Count
+    } else {
+        Write-Host "  [!] -IOCHashes file not found: $IOCHashes" -ForegroundColor Yellow
+    }
+}
+
+if ($script:IOCHashSet -and $script:IOCHashCount -gt 0) {
+    Write-Host (Ex "  *  Matching on-disk binaries against $($script:IOCHashCount) IOC hashes...") -ForegroundColor Cyan
+
+    # Build the candidate set: real executables/DLLs from the high-signal locations a triage
+    # would care about. We hash these (not secgurd's own output) and compare to the IOC list.
+    $scanRoots = @(
+        "$env:TEMP", "$env:SystemRoot\Temp",
+        "$env:PUBLIC", "$env:ProgramData",
+        "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", "$env:USERPROFILE\AppData\Local\Temp",
+        "$env:USERPROFILE\AppData\Roaming", "$env:USERPROFILE\AppData\Local"
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+
+    $exts = '.exe','.dll','.scr','.ps1','.bat','.cmd','.vbs','.js','.hta','.com','.sys'
+    $candidates = New-Object System.Collections.Generic.List[string]
+    foreach ($root in $scanRoots) {
+        try {
+            Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue -Force |
+                Where-Object { $exts -contains $_.Extension.ToLower() -and $_.Length -lt 100MB } |
+                ForEach-Object { $candidates.Add($_.FullName) }
+        } catch {}
+    }
+    # also include currently-running process images (catches things outside the scan roots)
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.Path) { $candidates.Add($_.Path) }
+    }
+
+    $seen = @{}
+    $matchLines = @()
+    $matchLines += (Ex "secgurd $($script:secgurdVersion) ^09 IOC Hash Matches")
+    $matchLines += ("=" * 78)
+    $matchLines += "IOC list  : $($script:IOCHashFile)  ($($script:IOCHashCount) hashes)"
+    $matchLines += "Scanned   : Temp, AppData, Public, ProgramData, Downloads, Desktop, running procs"
+    $matchLines += ("-" * 78)
+
+    $matchCount = 0; $scanned = 0
+    foreach ($path in $candidates) {
+        if ($seen.ContainsKey($path)) { continue }
+        $seen[$path] = $true
+        $scanned++
+        try {
+            $fh = (Get-FileHash $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpper()
+            if ($script:IOCHashSet.ContainsKey($fh)) {
+                $matchCount++
+                $label = $script:IOCHashSet[$fh]
+                $matchLines += ("MATCH  {0}" -f $path)
+                $matchLines += ("       {0}{1}" -f $fh, $(if ($label) { "  [$label]" } else { '' }))
+                Add-Finding 'HIGH' '09' (Ex "IOC hash match: $path$(if($label){" ($label)"})") '00_IOC_MATCHES.txt'
+            }
+        } catch {}
+    }
+    $matchLines += ("-" * 78)
+    $matchLines += "Files scanned: $scanned   Matches: $matchCount"
+    if ($matchCount -eq 0) { $matchLines += "(no on-disk binaries matched the IOC list)" }
+    $matchLines | Out-File (Join-Path $OutputPath '00_IOC_MATCHES.txt') -Encoding UTF8 -Force
+
+    if ($matchCount -gt 0) {
+        Write-Host (Ex "  ! $matchCount IOC MATCH(es) found - see 00_IOC_MATCHES.txt") -ForegroundColor Red
+    } else {
+        Write-Host (Ex "  [^14] No IOC matches ($scanned files scanned)") -ForegroundColor Green
+    }
+}
 
 # ---------------------------------------------
 
