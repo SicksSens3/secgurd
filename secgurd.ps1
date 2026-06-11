@@ -136,6 +136,7 @@ $script:HtmlReport = [bool]$HtmlReport
 $script:IOCHashFile = $null
 $script:IOCHashSet = $null
 $script:IOCHashCount = 0
+$script:ShowIOCList = $false
 # Lookback window (days) for all time-bounded collectors. Clamp to a sane 1..3650 range.
 if ($DaysBack -lt 1) { $DaysBack = 1 }
 if ($DaysBack -gt 3650) { $DaysBack = 3650 }
@@ -310,6 +311,7 @@ function Show-Help {
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
     Write-Host "    h                     Toggle: build + open HTML report" -ForegroundColor Gray
     Write-Host "    i                     Toggle: match hashes vs IOC list (prompts for file)" -ForegroundColor Gray
+    Write-Host "    l                     Toggle: show the loaded IOC hash list in the menu" -ForegroundColor Gray
     Write-Host "    d                     Set lookback window in days (time-bounded collectors)" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
@@ -552,6 +554,19 @@ function Show-ModuleMenu {
         Write-Host ("{0,-30}" -f 'Match hashes against IOC list') -ForegroundColor White -NoNewline
         Write-Host $iocNote -ForegroundColor DarkGray
 
+        # Only offer the list toggle once hashes are loaded
+        if ($iocOn) {
+            $lMark = if ($script:ShowIOCList) { (Ex "[^14]") } else { '[ ]' }
+            $lClr  = if ($script:ShowIOCList) { 'Green' } else { 'DarkGray' }
+            $lNote = if ($script:ShowIOCList) { '(showing below)' } else { '(hidden)' }
+            Write-Host "   " -NoNewline
+            Write-Host $lMark -ForegroundColor $lClr -NoNewline
+            Write-Host "  " -NoNewline
+            Write-Host ("{0,-4}" -f 'l') -ForegroundColor Yellow -NoNewline
+            Write-Host ("{0,-30}" -f 'Show IOC hash list in menu') -ForegroundColor White -NoNewline
+            Write-Host $lNote -ForegroundColor DarkGray
+        }
+
         Write-Host "   " -NoNewline
         Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
         Write-Host "  " -NoNewline
@@ -562,6 +577,11 @@ function Show-ModuleMenu {
         Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
+
+        # Inline IOC hash list (toggled with 'l')
+        if ($script:ShowIOCList -and $script:IOCHashSet -and $script:IOCHashCount -gt 0) {
+            Show-IOCList
+        }
 
         $count = ($script:SelectedModules.Values | Where-Object { $_ }).Count
         $total = $script:ModuleCatalogue.Count
@@ -615,29 +635,77 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'i') {
             if ($script:IOCHashFile) {
-                # already on -> toggle off
-                $script:IOCHashFile = $null
-                $script:IOCHashSet = $null
-                $script:IOCHashCount = 0
-                $pendingMsg = "IOC hash matching: OFF"
+                # already on -> show the list, then ask whether to keep or turn off
+                Clear-Host; Show-secgurdBannerCompact
+                Show-IOCList
+                Write-Host "  IOC matching is " -ForegroundColor DarkGray -NoNewline
+                Write-Host "ON" -ForegroundColor Green -NoNewline
+                Write-Host ".  Press " -ForegroundColor DarkGray -NoNewline
+                Write-Host "x" -ForegroundColor Yellow -NoNewline
+                Write-Host " to turn off, or Enter to keep it." -ForegroundColor DarkGray
+                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                $ans = (Read-Host).Trim().ToLower()
+                if ($ans -eq 'x') {
+                    $script:IOCHashFile = $null; $script:IOCHashSet = $null; $script:IOCHashCount = 0
+                    $pendingMsg = "IOC hash matching: OFF"
+                } else {
+                    $pendingMsg = "IOC matching kept ON ($($script:IOCHashCount) hashes)"
+                }
             } else {
                 Write-Host ""
-                Write-Host "  Path to IOC hash list (one SHA-256 per line, or hash[,label]):" -ForegroundColor Cyan
+                Write-Host "  Add IOC hashes by:" -ForegroundColor Cyan
+                Write-Host "    [f] " -ForegroundColor Yellow -NoNewline
+                Write-Host "load from a file" -ForegroundColor White
+                Write-Host "    [p] " -ForegroundColor Yellow -NoNewline
+                Write-Host "paste hashes (comma, space, or newline separated)" -ForegroundColor White
                 Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                $iocPath = (Read-Host).Trim('"').Trim()
-                if ($iocPath -and (Test-Path $iocPath)) {
-                    $loaded = Import-IOCHashes $iocPath
-                    if ($loaded.Count -gt 0) {
-                        $script:IOCHashFile = $iocPath
-                        $script:IOCHashSet = $loaded
-                        $script:IOCHashCount = $loaded.Count
-                        $pendingMsg = "IOC hash matching: ON ($($loaded.Count) hashes)"
+                $how = (Read-Host).Trim().ToLower()
+
+                $loaded = @{}; $src = ''
+                if ($how -eq 'f') {
+                    Write-Host "  Path to hash list file:" -ForegroundColor Cyan
+                    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                    $iocPath = (Read-Host).Trim('"').Trim()
+                    if ($iocPath -and (Test-Path $iocPath)) {
+                        $loaded = Import-IOCHashes $iocPath
+                        $src = $iocPath
                     } else {
-                        $pendingMsg = "No valid SHA-256 hashes found in that file."
+                        $pendingMsg = "File not found - IOC matching not enabled."
                     }
+                } elseif ($how -eq 'p') {
+                    Write-Host "  Paste hashes, then press Enter (commas/spaces/newlines all OK):" -ForegroundColor Cyan
+                    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                    $pasted = Read-Host
+                    $loaded = ConvertFrom-IOCText $pasted
+                    $src = '(pasted)'
                 } else {
-                    $pendingMsg = "File not found - IOC matching not enabled."
+                    $pendingMsg = "Cancelled - pick f or p."
                 }
+
+                if ($loaded.Count -gt 0) {
+                    $script:IOCHashFile = $src
+                    $script:IOCHashSet = $loaded
+                    $script:IOCHashCount = $loaded.Count
+                    Clear-Host; Show-secgurdBannerCompact
+                    Show-IOCList
+                    Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
+                    Read-Host | Out-Null
+                    $pendingMsg = "IOC hash matching: ON ($($loaded.Count) hashes)"
+                } elseif (-not $pendingMsg) {
+                    $pendingMsg = "No valid SHA-256 hashes found."
+                }
+            }
+            Clear-Host; Show-secgurdBannerCompact
+            continue
+        }
+
+        if ($cmd -eq 'l') {
+            if (-not $script:IOCHashSet -or $script:IOCHashCount -eq 0) {
+                $pendingMsg = "No IOC hashes loaded - press 'i' to add some first."
+            } else {
+                $script:ShowIOCList = -not $script:ShowIOCList
+                $state = if ($script:ShowIOCList) { 'shown' } else { 'hidden' }
+                $pendingMsg = "IOC list $state in menu"
             }
             Clear-Host; Show-secgurdBannerCompact
             continue
@@ -995,25 +1063,72 @@ function Add-Finding {
     Write-Host $Message -ForegroundColor $color
 }
 
-function Import-IOCHashes {
-    # Load a list of known-bad SHA-256 hashes from a file. Accepts one hash per line,
-    # optionally "hash,label" or "hash label". Lines starting with # are comments.
-    # Returns a hashtable: UPPERCASE-hash -> label (for fast O(1) lookup).
-    param([string]$Path)
+function ConvertFrom-IOCText {
+    # Parse free-form IOC text into a hashtable: UPPERCASE-hash -> label.
+    # Accepts hashes separated by commas, spaces, newlines, semicolons, or pipes - so you
+    # can paste 'hash, hash, hash' OR one-per-line OR any mix. A token of exactly 64 hex
+    # chars is a hash; if the NEXT token isn't itself a hash, it's treated as that hash's label.
+    param([string]$Text)
     $set = @{}
-    try {
-        Get-Content $Path -ErrorAction Stop | ForEach-Object {
-            $line = $_.Trim()
-            if ($line -eq '' -or $line.StartsWith('#')) { return }
-            # split off an optional label after a comma, whitespace, or pipe
-            $parts = $line -split '[,\s|]+', 2
-            $h = $parts[0].Trim().ToUpper()
-            $label = if ($parts.Count -gt 1) { $parts[1].Trim() } else { '' }
-            # only accept valid 64-char hex SHA-256 values
-            if ($h -match '^[0-9A-F]{64}$') { $set[$h] = $label }
+    if (-not $Text) { return $set }
+    # strip comment lines first
+    $clean = ($Text -split "`r?`n" | Where-Object { -not $_.TrimStart().StartsWith('#') }) -join "`n"
+    # tokenize on commas / whitespace / semicolons / pipes
+    $tokens = $clean -split '[,;\s|]+' | Where-Object { $_ -ne '' }
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        $t = $tokens[$i].Trim().ToUpper()
+        if ($t -match '^[0-9A-F]{64}$') {
+            # peek at the next token; if it's NOT a hash, use it as this hash's label
+            $label = ''
+            if ($i + 1 -lt $tokens.Count -and $tokens[$i+1] -notmatch '^[0-9A-Fa-f]{64}$') {
+                $label = $tokens[$i+1].Trim()
+                $i++   # consume the label token
+            }
+            $set[$t] = $label
         }
-    } catch {}
+    }
     return $set
+}
+
+function Import-IOCHashes {
+    # Load known-bad SHA-256 hashes from a FILE. Delegates parsing to ConvertFrom-IOCText so
+    # the file can use any delimiter (one-per-line, comma-separated, "hash,label", etc.).
+    param([string]$Path)
+    try { return ConvertFrom-IOCText (Get-Content $Path -Raw -ErrorAction Stop) }
+    catch { return @{} }
+}
+
+function Show-IOCList {
+    # Print the currently-loaded IOC hashes with a green check, the source, and a count.
+    if (-not $script:IOCHashSet -or $script:IOCHashCount -eq 0) {
+        Write-Host ""
+        Write-Host "  No IOC hashes loaded." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+    Write-Host ""
+    Write-Host "  " -NoNewline
+    Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
+    Write-Host "IOC hash matching ENABLED" -ForegroundColor White -NoNewline
+    Write-Host "   source: $($script:IOCHashFile)" -ForegroundColor DarkGray
+    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+    $n = 0
+    foreach ($h in ($script:IOCHashSet.Keys | Sort-Object)) {
+        $n++
+        $label = $script:IOCHashSet[$h]
+        # show first 16 + last 8 of the hash so the list stays readable
+        $short = $h.Substring(0,16) + '...' + $h.Substring($h.Length-8)
+        Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
+        Write-Host $short -ForegroundColor Gray -NoNewline
+        if ($label) { Write-Host "  [$label]" -ForegroundColor DarkCyan } else { Write-Host "" }
+        if ($n -ge 50) {
+            Write-Host ("        ... and $($script:IOCHashCount - 50) more") -ForegroundColor DarkGray
+            break
+        }
+    }
+    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+    Write-Host "  $($script:IOCHashCount) hash(es) loaded - will be matched against on-disk binaries at run time." -ForegroundColor DarkGray
+    Write-Host ""
 }
 
 function Save-Output {
