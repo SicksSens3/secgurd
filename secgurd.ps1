@@ -452,6 +452,74 @@ foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $fals
 
 # ---------------------------------------------
 
+function ConvertFrom-IOCText {
+    # Parse free-form IOC text into a hashtable: UPPERCASE-hash -> label.
+    # Accepts hashes separated by commas, spaces, newlines, semicolons, or pipes - so you
+    # can paste 'hash, hash, hash' OR one-per-line OR any mix. A token of exactly 64 hex
+    # chars is a hash; if the NEXT token isn't itself a hash, it's treated as that hash's label.
+    param([string]$Text)
+    $set = @{}
+    if (-not $Text) { return $set }
+    # strip comment lines first
+    $clean = ($Text -split "`r?`n" | Where-Object { -not $_.TrimStart().StartsWith('#') }) -join "`n"
+    # tokenize on commas / whitespace / semicolons / pipes
+    $tokens = $clean -split '[,;\s|]+' | Where-Object { $_ -ne '' }
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        $t = $tokens[$i].Trim().ToUpper()
+        if ($t -match '^[0-9A-F]{64}$') {
+            # peek at the next token; if it's NOT a hash, use it as this hash's label
+            $label = ''
+            if ($i + 1 -lt $tokens.Count -and $tokens[$i+1] -notmatch '^[0-9A-Fa-f]{64}$') {
+                $label = $tokens[$i+1].Trim()
+                $i++   # consume the label token
+            }
+            $set[$t] = $label
+        }
+    }
+    return $set
+}
+
+function Import-IOCHashes {
+    # Load known-bad SHA-256 hashes from a FILE. Delegates parsing to ConvertFrom-IOCText so
+    # the file can use any delimiter (one-per-line, comma-separated, "hash,label", etc.).
+    param([string]$Path)
+    try { return ConvertFrom-IOCText (Get-Content $Path -Raw -ErrorAction Stop) }
+    catch { return @{} }
+}
+
+function Show-IOCList {
+    # Print the currently-loaded IOC hashes with a green check, the source, and a count.
+    if (-not $script:IOCHashSet -or $script:IOCHashCount -eq 0) {
+        Write-Host ""
+        Write-Host "  No IOC hashes loaded." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+    Write-Host ""
+    Write-Host "  " -NoNewline
+    Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
+    Write-Host "IOC hash matching ENABLED" -ForegroundColor White -NoNewline
+    Write-Host "   source: $($script:IOCHashFile)" -ForegroundColor DarkGray
+    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+    $n = 0
+    foreach ($h in ($script:IOCHashSet.Keys | Sort-Object)) {
+        $n++
+        $label = $script:IOCHashSet[$h]
+        # show first 16 + last 8 of the hash so the list stays readable
+        $short = $h.Substring(0,16) + '...' + $h.Substring($h.Length-8)
+        Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
+        Write-Host $short -ForegroundColor Gray -NoNewline
+        if ($label) { Write-Host "  [$label]" -ForegroundColor DarkCyan } else { Write-Host "" }
+        if ($n -ge 50) {
+            Write-Host ("        ... and $($script:IOCHashCount - 50) more") -ForegroundColor DarkGray
+            break
+        }
+    }
+    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+    Write-Host "  $($script:IOCHashCount) hash(es) loaded - will be matched against on-disk binaries at run time." -ForegroundColor DarkGray
+    Write-Host ""
+}
+
 function Show-ModuleMenu {
     # If we're not running interactively (e.g. piped via iex over remote shell with no TTY),
 
@@ -1081,73 +1149,6 @@ function Add-Finding {
     Write-Host $Message -ForegroundColor $color
 }
 
-function ConvertFrom-IOCText {
-    # Parse free-form IOC text into a hashtable: UPPERCASE-hash -> label.
-    # Accepts hashes separated by commas, spaces, newlines, semicolons, or pipes - so you
-    # can paste 'hash, hash, hash' OR one-per-line OR any mix. A token of exactly 64 hex
-    # chars is a hash; if the NEXT token isn't itself a hash, it's treated as that hash's label.
-    param([string]$Text)
-    $set = @{}
-    if (-not $Text) { return $set }
-    # strip comment lines first
-    $clean = ($Text -split "`r?`n" | Where-Object { -not $_.TrimStart().StartsWith('#') }) -join "`n"
-    # tokenize on commas / whitespace / semicolons / pipes
-    $tokens = $clean -split '[,;\s|]+' | Where-Object { $_ -ne '' }
-    for ($i = 0; $i -lt $tokens.Count; $i++) {
-        $t = $tokens[$i].Trim().ToUpper()
-        if ($t -match '^[0-9A-F]{64}$') {
-            # peek at the next token; if it's NOT a hash, use it as this hash's label
-            $label = ''
-            if ($i + 1 -lt $tokens.Count -and $tokens[$i+1] -notmatch '^[0-9A-Fa-f]{64}$') {
-                $label = $tokens[$i+1].Trim()
-                $i++   # consume the label token
-            }
-            $set[$t] = $label
-        }
-    }
-    return $set
-}
-
-function Import-IOCHashes {
-    # Load known-bad SHA-256 hashes from a FILE. Delegates parsing to ConvertFrom-IOCText so
-    # the file can use any delimiter (one-per-line, comma-separated, "hash,label", etc.).
-    param([string]$Path)
-    try { return ConvertFrom-IOCText (Get-Content $Path -Raw -ErrorAction Stop) }
-    catch { return @{} }
-}
-
-function Show-IOCList {
-    # Print the currently-loaded IOC hashes with a green check, the source, and a count.
-    if (-not $script:IOCHashSet -or $script:IOCHashCount -eq 0) {
-        Write-Host ""
-        Write-Host "  No IOC hashes loaded." -ForegroundColor DarkGray
-        Write-Host ""
-        return
-    }
-    Write-Host ""
-    Write-Host "  " -NoNewline
-    Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
-    Write-Host "IOC hash matching ENABLED" -ForegroundColor White -NoNewline
-    Write-Host "   source: $($script:IOCHashFile)" -ForegroundColor DarkGray
-    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
-    $n = 0
-    foreach ($h in ($script:IOCHashSet.Keys | Sort-Object)) {
-        $n++
-        $label = $script:IOCHashSet[$h]
-        # show first 16 + last 8 of the hash so the list stays readable
-        $short = $h.Substring(0,16) + '...' + $h.Substring($h.Length-8)
-        Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
-        Write-Host $short -ForegroundColor Gray -NoNewline
-        if ($label) { Write-Host "  [$label]" -ForegroundColor DarkCyan } else { Write-Host "" }
-        if ($n -ge 50) {
-            Write-Host ("        ... and $($script:IOCHashCount - 50) more") -ForegroundColor DarkGray
-            break
-        }
-    }
-    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
-    Write-Host "  $($script:IOCHashCount) hash(es) loaded - will be matched against on-disk binaries at run time." -ForegroundColor DarkGray
-    Write-Host ""
-}
 
 function Save-Output {
     param([string]$FileName, [scriptblock]$Block)
