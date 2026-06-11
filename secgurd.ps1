@@ -28,7 +28,8 @@
     trust-chain check per file and can stall for seconds each on an offline host, so it is
     off by default. Without it, secgurd flags binaries by location and modification time.
 .PARAMETER IOCHashes
-    Path to a file of known-bad SHA-256 hashes (one per line, optional ",label"). secgurd
+    Path to a file of known-bad hashes (MD5, SHA-1, or SHA-256; one per line, optional
+    ",label"). secgurd
     hashes on-disk binaries in high-signal locations (Temp, AppData, Public, Downloads, and
     running processes) and flags any that match. Fully offline - no API key or internet.
 .PARAMETER DaysBack
@@ -300,7 +301,7 @@ function Show-Help {
     Write-Host "    -WithOwners           Include process owners in 06_process_tree (slower)" -ForegroundColor Gray
     Write-Host "    -WithSignatures       Verify Authenticode signatures (slow, may stall offline)" -ForegroundColor Gray
     Write-Host "    -HtmlReport           Also build a single-file report.html" -ForegroundColor Gray
-    Write-Host "    -IOCHashes <file>     Match on-disk binaries against a SHA-256 IOC list" -ForegroundColor Gray
+    Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
     Write-Host ""
@@ -422,7 +423,7 @@ if (-not $NoBanner) { Show-secgurdBanner }
 
 $script:ModuleCatalogue = @(
     [PSCustomObject]@{ Id='01'; Name='System info';          Desc='os, build, uptime, domain' }
-    [PSCustomObject]@{ Id='02'; Name='Users & sessions';     Desc='accounts, logons, 4624/4625' }
+    [PSCustomObject]@{ Id='02'; Name='Users & sessions';     Desc='accounts, logons, rdp/remote' }
     [PSCustomObject]@{ Id='03'; Name='Persistence';          Desc='run keys, tasks, services, wmi, ifeo' }
     [PSCustomObject]@{ Id='04'; Name='PowerShell artifacts'; Desc='history, transcripts, 4104' }
     [PSCustomObject]@{ Id='05'; Name='Network';              Desc='connections, dns, arp, fw' }
@@ -455,21 +456,23 @@ foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $fals
 function ConvertFrom-IOCText {
     # Parse free-form IOC text into a hashtable: UPPERCASE-hash -> label.
     # Accepts hashes separated by commas, spaces, newlines, semicolons, or pipes - so you
-    # can paste 'hash, hash, hash' OR one-per-line OR any mix. A token of exactly 64 hex
-    # chars is a hash; if the NEXT token isn't itself a hash, it's treated as that hash's label.
+    # can paste 'hash, hash, hash' OR one-per-line OR any mix. A token of 32 (MD5), 40 (SHA-1),
+    # or 64 (SHA-256) hex chars is a hash; if the NEXT token isn't itself a hash, it's treated
+    # as that hash's label.
     param([string]$Text)
     $set = @{}
     if (-not $Text) { return $set }
+    $hashRx = '^[0-9A-F]{32}$|^[0-9A-F]{40}$|^[0-9A-F]{64}$'
     # strip comment lines first
     $clean = ($Text -split "`r?`n" | Where-Object { -not $_.TrimStart().StartsWith('#') }) -join "`n"
     # tokenize on commas / whitespace / semicolons / pipes
     $tokens = $clean -split '[,;\s|]+' | Where-Object { $_ -ne '' }
     for ($i = 0; $i -lt $tokens.Count; $i++) {
         $t = $tokens[$i].Trim().ToUpper()
-        if ($t -match '^[0-9A-F]{64}$') {
+        if ($t -match $hashRx) {
             # peek at the next token; if it's NOT a hash, use it as this hash's label
             $label = ''
-            if ($i + 1 -lt $tokens.Count -and $tokens[$i+1] -notmatch '^[0-9A-Fa-f]{64}$') {
+            if ($i + 1 -lt $tokens.Count -and $tokens[$i+1].ToUpper() -notmatch $hashRx) {
                 $label = $tokens[$i+1].Trim()
                 $i++   # consume the label token
             }
@@ -505,9 +508,11 @@ function Show-IOCList {
     foreach ($h in ($script:IOCHashSet.Keys | Sort-Object)) {
         $n++
         $label = $script:IOCHashSet[$h]
-        # show first 16 + last 8 of the hash so the list stays readable
-        $short = $h.Substring(0,16) + '...' + $h.Substring($h.Length-8)
+        $algo = switch ($h.Length) { 32 {'MD5'} 40 {'SHA1'} 64 {'SHA256'} default {'?'} }
+        # only shorten long (SHA-256) hashes; show MD5/SHA-1 in full since they're already short
+        $short = if ($h.Length -gt 40) { $h.Substring(0,16) + '...' + $h.Substring($h.Length-8) } else { $h }
         Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
+        Write-Host ("{0,-7}" -f $algo) -ForegroundColor DarkCyan -NoNewline
         Write-Host $short -ForegroundColor Gray -NoNewline
         if ($label) { Write-Host "  [$label]" -ForegroundColor DarkCyan } else { Write-Host "" }
         if ($n -ge 50) {
@@ -779,7 +784,7 @@ function Show-ModuleMenu {
                 Read-Host | Out-Null
                 $pendingMsg = "IOC hash matching: ON ($($loaded.Count) hashes)"
             } elseif (($how -eq 'f' -or $how -eq 'p') -and -not $pendingMsg) {
-                $pendingMsg = "No valid SHA-256 hashes found (must be 64 hex chars each)."
+                $pendingMsg = "No valid hashes found (need MD5/SHA-1/SHA-256 hex values)."
             }
             Clear-Host; Show-secgurdBannerCompact
             continue
@@ -1205,16 +1210,26 @@ function Save-Output {
 }
 
 # Pre-count selected artifacts so the [n/total] progress is accurate.
+# Count is derived DYNAMICALLY from this script's own 'Save-Output "NN_..."' lines, grouped
+# by module id, so it can never drift when collectors are added or removed.
 
-# We do this by counting Save-Output lines for selected modules in this very script.
+$script:ArtifactsPerModule = @{}
+try {
+    $selfText = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop
+} catch {
+    # When run via iex(irm) there is no file on disk; fall back to the invocation text.
+    $selfText = $MyInvocation.MyCommand.Definition
+}
+[regex]::Matches($selfText, '(?m)^\s*Save-Output\s+"(\d{2})_') | ForEach-Object {
+    $mid = $_.Groups[1].Value
+    if ($script:ArtifactsPerModule.ContainsKey($mid)) { $script:ArtifactsPerModule[$mid]++ }
+    else { $script:ArtifactsPerModule[$mid] = 1 }
+}
 
 $script:TotalArtifacts = (
     $script:SelectedModules.GetEnumerator() | Where-Object { $_.Value } | ForEach-Object {
         $mid = $_.Key
-        switch ($mid) {
-            '01' {2} '02' {3} '03' {7} '04' {4} '05' {5} '06' {3} '07' {4}
-            '08' {3} '09' {2} '10' {2} '11' {1} '12' {1} '13' {1} '14' {1}
-        }
+        if ($script:ArtifactsPerModule.ContainsKey($mid)) { $script:ArtifactsPerModule[$mid] } else { 0 }
     } | Measure-Object -Sum
 ).Sum
 if (-not $script:TotalArtifacts) { $script:TotalArtifacts = 1 }
@@ -1303,6 +1318,115 @@ Save-Output "02_logon_history.txt" {
     Format-Table -AutoSize
 }
 
+Save-Output "02_rdp_remote_access.txt" {
+    # Remote-access / lateral-movement artifacts: who connected via RDP, where this host
+    # connected OUT to, and whether RDP is exposed. Logon type 10 = RemoteInteractive (RDP).
+
+    Write-Section "RDP IS ENABLED?"
+    # fDenyTSConnections = 0 means RDP is ON.
+    $ts = Get-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -ErrorAction SilentlyContinue
+    $rdpOn = ($ts.fDenyTSConnections -eq 0)
+    "fDenyTSConnections : $($ts.fDenyTSConnections)   (0 = RDP enabled)"
+    "RDP enabled        : $rdpOn"
+    # Network Level Authentication state
+    $nla = Get-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -ErrorAction SilentlyContinue
+    "UserAuthentication : $($nla.UserAuthentication)   (1 = NLA required)"
+    $rdpPort = (Get-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -ErrorAction SilentlyContinue).PortNumber
+    "RDP PortNumber     : $rdpPort"
+    if ($rdpOn -and $nla.UserAuthentication -eq 0) {
+        Add-Finding 'MED' '02' "RDP is enabled with Network Level Authentication OFF (weaker exposure)" '02_rdp_remote_access.txt'
+    }
+    if ($rdpPort -and $rdpPort -ne 3389) {
+        Add-Finding 'INFO' '02' "RDP listening on non-standard port $rdpPort" '02_rdp_remote_access.txt'
+    }
+
+    Write-Section "INBOUND RDP LOGONS (type 10 RemoteInteractive, within $($script:DaysBack)d)"
+    $rdpLogons = Get-WinEvent -FilterHashtable @{
+        LogName = 'Security'; Id = 4624; StartTime = (Get-Date).AddDays(-$script:DaysBack)
+    } -MaxEvents 1000 -ErrorAction SilentlyContinue |
+        Where-Object { $_.Properties[8].Value -eq 10 } |
+        Select-Object TimeCreated,
+            @{N='User';E={$_.Properties[5].Value}},
+            @{N='Domain';E={$_.Properties[6].Value}},
+            @{N='SourceIP';E={$_.Properties[18].Value}},
+            @{N='SourceHost';E={$_.Properties[11].Value}}
+    if ($rdpLogons) {
+        $rdpLogons | Format-Table -AutoSize
+        $srcIps = ($rdpLogons | Select-Object -ExpandProperty SourceIP -Unique) -join ', '
+        Add-Finding 'MED' '02' (Ex "$(@($rdpLogons).Count) inbound RDP logon(s) from: $srcIps ^09 review for lateral movement") '02_rdp_remote_access.txt'
+    } else {
+        "(no inbound RDP logons in the lookback window)"
+    }
+
+    Write-Section "FAILED RDP-RELATED LOGONS (4625 type 10)"
+    Get-WinEvent -FilterHashtable @{
+        LogName = 'Security'; Id = 4625; StartTime = (Get-Date).AddDays(-$script:DaysBack)
+    } -MaxEvents 500 -ErrorAction SilentlyContinue |
+        Where-Object { $_.Properties[10].Value -eq 10 } |
+        Select-Object TimeCreated,
+            @{N='User';E={$_.Properties[5].Value}},
+            @{N='SourceIP';E={$_.Properties[19].Value}} |
+        Format-Table -AutoSize
+
+    Write-Section "TERMINALSERVICES SESSION EVENTS (connect / reconnect / disconnect)"
+    # 21=logon, 22=shell start, 24=disconnect, 25=reconnect, 1149=network connection (pre-auth)
+    Get-WinEvent -FilterHashtable @{
+        LogName = 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'
+        StartTime = (Get-Date).AddDays(-$script:DaysBack)
+    } -MaxEvents 200 -ErrorAction SilentlyContinue |
+        Select-Object TimeCreated, Id, @{N='Detail';E={($_.Message -replace '\s+',' ').Trim()}} |
+        Format-Table -AutoSize -Wrap
+
+    Write-Section "RDP CONNECTION ATTEMPTS (RemoteConnectionManager 1149 - source user/IP)"
+    Get-WinEvent -FilterHashtable @{
+        LogName = 'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational'
+        Id = 1149
+        StartTime = (Get-Date).AddDays(-$script:DaysBack)
+    } -MaxEvents 200 -ErrorAction SilentlyContinue |
+        Select-Object TimeCreated, @{N='Detail';E={($_.Message -replace '\s+',' ').Trim()}} |
+        Format-Table -AutoSize -Wrap
+
+    Write-Section "OUTBOUND RDP DESTINATIONS (this host connected OUT to)"
+    # Cached under each user's HKU hive: Terminal Server Client\Servers + Default MRU.
+    # We read the loaded HKEY_USERS hives so we catch all profiles, not just the current one.
+    $foundDest = $false
+    Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | ForEach-Object {
+        $sid = $_.PSChildName
+        if ($sid -match '_Classes$') { return }
+        $serversKey = "Registry::HKEY_USERS\$sid\Software\Microsoft\Terminal Server Client\Servers"
+        if (Test-Path $serversKey) {
+            Get-ChildItem $serversKey -ErrorAction SilentlyContinue | ForEach-Object {
+                $foundDest = $true
+                $hint = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).UsernameHint
+                [PSCustomObject]@{ SID = $sid; Destination = $_.PSChildName; UsernameHint = $hint }
+            }
+        }
+        $mruKey = "Registry::HKEY_USERS\$sid\Software\Microsoft\Terminal Server Client\Default"
+        if (Test-Path $mruKey) {
+            $mru = Get-ItemProperty $mruKey -ErrorAction SilentlyContinue
+            $mru.PSObject.Properties | Where-Object { $_.Name -like 'MRU*' } | ForEach-Object {
+                $foundDest = $true
+                [PSCustomObject]@{ SID = $sid; Destination = $_.Value; UsernameHint = '(MRU)' }
+            }
+        }
+    } | Format-Table -AutoSize
+    if (-not $foundDest) { "(no cached outbound RDP destinations found)" }
+
+    Write-Section "RDP BITMAP CACHE FILES (evidence of past RDP sessions)"
+    # bcache/Cache files prove RDP was used even if logs rolled; we list presence, not content.
+    $bmFound = $false
+    Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $cacheDir = Join-Path $_.FullName 'AppData\Local\Microsoft\Terminal Server Client\Cache'
+        if (Test-Path $cacheDir) {
+            Get-ChildItem $cacheDir -File -ErrorAction SilentlyContinue | ForEach-Object {
+                $bmFound = $true
+                [PSCustomObject]@{ User = $cacheDir.Split('\')[2]; File = $_.Name; Size = $_.Length; Modified = $_.LastWriteTime }
+            }
+        }
+    } | Format-Table -AutoSize
+    if (-not $bmFound) { "(no RDP bitmap cache files found)" }
+}
+
 # ---------------------------------------------
 
 #  3. PERSISTENCE
@@ -1366,6 +1490,31 @@ Save-Output "03_scheduled_tasks.txt" {
             Author     = $_.Principal.UserId
         }
     } | Format-Table -AutoSize
+
+    Write-Section "SUSPICIOUS TASK ACTIONS (writable path / encoded / lolbin)"
+    # Flag tasks whose action runs from a writable location or uses a download/encoded pattern.
+    $suspectTasks = foreach ($t in (Get-ScheduledTask)) {
+        foreach ($act in $t.Actions) {
+            $cmd = "$($act.Execute) $($act.Arguments)".Trim()
+            if (-not $cmd) { continue }
+            $badLoc = $cmd -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\'
+            $badCmd = $cmd -match '(?i)(-enc(odedcommand)?|frombase64string|downloadstring|downloadfile|-w(indowstyle)?\s+hidden|iex|invoke-expression|mshta|bitsadmin|certutil\s+-urlcache|regsvr32.*scrobj)'
+            if ($badLoc -or $badCmd) {
+                $reason = @()
+                if ($badLoc) { $reason += 'writable-path' }
+                if ($badCmd) { $reason += 'suspicious-command' }
+                $sev = if ($badCmd) { 'HIGH' } else { 'MED' }
+                Add-Finding $sev '03' (Ex "Scheduled task '$($t.TaskName)' action looks suspicious ($($reason -join ', '))") '03_scheduled_tasks.txt'
+                [PSCustomObject]@{
+                    Task   = $t.TaskName
+                    Path   = $t.TaskPath
+                    Reason = ($reason -join ', ')
+                    Action = $cmd
+                }
+            }
+        }
+    }
+    if ($suspectTasks) { $suspectTasks | Format-Table -AutoSize -Wrap } else { "(none found)" }
 }
 
 Save-Output "03_services.txt" {
@@ -1423,6 +1572,43 @@ Save-Output "03_services.txt" {
             }
         }
     } | Format-Table -AutoSize
+
+    Write-Section "SUSPICIOUS SERVICE PATHS (location / unquoted)"
+    # Two classic red flags:
+    #  1) service binary living in a user-writable spot (Temp, AppData, Public, ProgramData)
+    #  2) an unquoted ImagePath that contains a space -> unquoted service path hijack (T1574.009)
+    $suspectSvc = foreach ($svc in (Get-WmiObject Win32_Service)) {
+        $raw = $svc.PathName
+        if (-not $raw) { continue }
+        # isolate the executable path portion
+        $p = $null
+        if ($raw -match '^"([^"]+)"') { $p = $matches[1] }
+        elseif ($raw -match '^(\S+\.(?:exe|dll))') { $p = $matches[1] }
+        elseif ($raw -match '^(.+?\.(?:exe|dll))\s') { $p = $matches[1] }
+        else { $p = $raw }
+
+        $badLoc = $p -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\'
+        # unquoted + has a space before the .exe and isn't already quoted
+        $unquoted = ($raw -notmatch '^\s*"') -and ($p -match '\s') -and ($raw -match '\.exe')
+        if ($badLoc -or $unquoted) {
+            $reason = @()
+            if ($badLoc)   { $reason += 'writable-location' }
+            if ($unquoted) { $reason += 'unquoted-path' }
+            if ($badLoc) {
+                Add-Finding 'HIGH' '03' (Ex "Service '$($svc.Name)' runs from a writable path ^17 $p") '03_services.txt'
+            }
+            if ($unquoted) {
+                Add-Finding 'MED' '03' (Ex "Service '$($svc.Name)' has an unquoted path with spaces (hijackable): $raw") '03_services.txt'
+            }
+            [PSCustomObject]@{
+                Service  = $svc.Name
+                Reason   = ($reason -join ', ')
+                ImagePath= $raw
+                StartName= $svc.StartName
+            }
+        }
+    }
+    if ($suspectSvc) { $suspectSvc | Format-Table -AutoSize -Wrap } else { "(none found)" }
 }
 
 Save-Output "03_startup_items.txt" {
@@ -1585,6 +1771,131 @@ Save-Output "03_advanced_persistence.txt" {
     # Rogue Security/Authentication packages = credential-theft persistence (e.g. mimilib).
     Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -ErrorAction SilentlyContinue |
         Select-Object 'Security Packages', 'Authentication Packages', 'Notification Packages' | Format-List
+}
+
+Save-Output "03_remote_access_tools.txt" {
+    # Hunt for remote-access / RMM tools (ScreenConnect, AnyDesk, TeamViewer, Atera, Splashtop,
+    # etc.). Attackers drop these as a stealthy backdoor - they are signed, legitimate software,
+    # so the TOOL existing is not the finding; the CONTEXT is (writable-path install, portable
+    # exe, unexpected tool for this org, ScreenConnect instance folders). MITRE T1219.
+
+    # name fragments -> friendly product. Matched against services, processes, paths, reg keys.
+    $rmm = @(
+        @{ Pat='screenconnect|connectwise';   Name='ScreenConnect / ConnectWise Control' }
+        @{ Pat='anydesk';                      Name='AnyDesk' }
+        @{ Pat='teamviewer';                   Name='TeamViewer' }
+        @{ Pat='ateraagent|atera';             Name='Atera' }
+        @{ Pat='splashtop';                    Name='Splashtop' }
+        @{ Pat='meshagent|meshcentral';        Name='MeshCentral / MeshAgent' }
+        @{ Pat='netsupport';                   Name='NetSupport Manager' }
+        @{ Pat='logmein|lmiignition';          Name='LogMeIn' }
+        @{ Pat='gotoassist|gotomypc';          Name='GoTo (GoToAssist/MyPC)' }
+        @{ Pat='remoteutilities|rutserv';      Name='Remote Utilities' }
+        @{ Pat='dwagent|dwservice';            Name='DWService' }
+        @{ Pat='ammyy';                        Name='Ammyy Admin' }
+        @{ Pat='rustdesk';                     Name='RustDesk' }
+        @{ Pat='tightvnc|ultravnc|realvnc|tigervnc'; Name='VNC variant' }
+        @{ Pat='pulseway';                     Name='Pulseway' }
+        @{ Pat='kaseya|agentmon';              Name='Kaseya VSA' }
+        @{ Pat='syncro|kabuto';                Name='Syncro' }
+        @{ Pat='quickassist';                  Name='Quick Assist' }
+    )
+    $writable = '(?i)\\(Temp|AppData|Users\\Public|ProgramData|Downloads|Desktop)\\'
+
+    function Test-RMM { param($text) foreach ($r in $rmm) { if ($text -match $r.Pat) { return $r.Name } } return $null }
+
+    Write-Section "RMM-RELATED SERVICES"
+    $svcHits = foreach ($svc in (Get-WmiObject Win32_Service -ErrorAction SilentlyContinue)) {
+        $hay = "$($svc.Name) $($svc.DisplayName) $($svc.PathName)"
+        $prod = Test-RMM $hay
+        if ($prod) {
+            $path = $null
+            if ($svc.PathName -match '^"([^"]+)"') { $path = $matches[1] }
+            elseif ($svc.PathName -match '^(\S+\.exe)') { $path = $matches[1] }
+            $badLoc = $svc.PathName -match $writable
+            if ($badLoc) {
+                Add-Finding 'HIGH' '03' (Ex "Remote-access tool '$prod' service runs from a writable path ^17 $($svc.PathName)") '03_remote_access_tools.txt'
+            } else {
+                Add-Finding 'MED' '03' (Ex "Remote-access tool present: $prod (service $($svc.Name)) ^09 confirm it is authorized") '03_remote_access_tools.txt'
+            }
+            [PSCustomObject]@{ Product=$prod; Service=$svc.Name; State=$svc.State; StartMode=$svc.StartMode; Path=$svc.PathName }
+        }
+    }
+    if ($svcHits) { $svcHits | Format-Table -AutoSize -Wrap } else { "(no RMM-related services found)" }
+
+    Write-Section "RMM-RELATED RUNNING PROCESSES"
+    $procHits = foreach ($p in (Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+        $hay = "$($p.Name) $($p.ExecutablePath) $($p.CommandLine)"
+        $prod = Test-RMM $hay
+        if ($prod) {
+            if ($p.ExecutablePath -and $p.ExecutablePath -match $writable) {
+                Add-Finding 'HIGH' '03' (Ex "Remote-access tool '$prod' running from a writable path ^17 $($p.ExecutablePath)") '03_remote_access_tools.txt'
+            }
+            [PSCustomObject]@{ Product=$prod; PID=$p.ProcessId; Process=$p.Name; Path=$p.ExecutablePath }
+        }
+    }
+    if ($procHits) { $procHits | Format-Table -AutoSize -Wrap } else { "(no RMM-related processes running)" }
+
+    Write-Section "RMM-RELATED INSTALL PATHS"
+    $searchRoots = @(
+        "$env:ProgramFiles", "${env:ProgramFiles(x86)}", "$env:ProgramData",
+        "$env:PUBLIC", "$env:SystemRoot\Temp"
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+    $pathHits = foreach ($root in $searchRoots) {
+        Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $prod = Test-RMM $_.Name
+            if ($prod) { [PSCustomObject]@{ Product=$prod; Folder=$_.FullName; Created=$_.CreationTime } }
+        }
+    }
+    if ($pathHits) { $pathHits | Format-Table -AutoSize -Wrap } else { "(no RMM install folders in common locations)" }
+
+    Write-Section "RMM-RELATED REGISTRY KEYS (services + uninstall entries)"
+    $regRoots = @(
+        'HKLM:\SYSTEM\CurrentControlSet\Services',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+    $regHits = foreach ($rr in $regRoots) {
+        if (Test-Path $rr) {
+            Get-ChildItem $rr -ErrorAction SilentlyContinue | ForEach-Object {
+                $dn = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName
+                $prod = Test-RMM "$($_.PSChildName) $dn"
+                if ($prod) { [PSCustomObject]@{ Product=$prod; Key=$_.PSChildName; DisplayName=$dn; Hive=($rr -replace 'HKLM:\\','') } }
+            }
+        }
+    }
+    if ($regHits) { $regHits | Format-Table -AutoSize -Wrap } else { "(no RMM-related registry keys)" }
+
+    Write-Section "SCREENCONNECT CLIENT ARTIFACTS (instance folders + user.config)"
+    # ScreenConnect drops 'ScreenConnect Client (instanceID)' folders and a user.config that
+    # maps the C2/relay host -> IP. Multiple distinct instance IDs = multiple deployments.
+    $scFound = $false
+    $scRoots = @(
+        "$env:ProgramFiles", "${env:ProgramFiles(x86)}",
+        "$env:SystemRoot\SysWOW64\config\systemprofile\AppData\Local",
+        "$env:SystemRoot\System32\config\systemprofile\AppData\Local"
+    )
+    Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $scRoots += (Join-Path $_.FullName 'AppData\Local')
+        $scRoots += (Join-Path $_.FullName 'AppData\Roaming')
+        $scRoots += (Join-Path $_.FullName 'Documents\ConnectWiseControl')
+    }
+    foreach ($r in ($scRoots | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique)) {
+        Get-ChildItem $r -Directory -ErrorAction SilentlyContinue -Filter 'ScreenConnect Client*' | ForEach-Object {
+            $scFound = $true
+            "Instance folder: $($_.FullName)   (created $($_.CreationTime))"
+            $cfg = Join-Path $_.FullName 'user.config'
+            if (Test-Path $cfg) {
+                "  user.config present - contains the configured relay/C2 host mapping:"
+                try {
+                    Select-String -Path $cfg -Pattern 'https?://|\b\d{1,3}(\.\d{1,3}){3}\b|\.controlhub\.|\.screenconnect\.' -ErrorAction SilentlyContinue |
+                        Select-Object -First 10 | ForEach-Object { "    $($_.Line.Trim())" }
+                } catch {}
+                Add-Finding 'HIGH' '03' (Ex "ScreenConnect client instance found: $($_.Name) ^09 verify relay host in user.config is authorized") '03_remote_access_tools.txt'
+            }
+        }
+    }
+    if (-not $scFound) { "(no ScreenConnect client instance folders found)" }
 }
 
 # ---------------------------------------------
@@ -2698,11 +3009,21 @@ if ($script:IOCHashSet -and $script:IOCHashCount -gt 0) {
         if ($_.Path) { $candidates.Add($_.Path) }
     }
 
+    # Determine which algorithms we actually need, based on the hash lengths in the list.
+    # 32 = MD5, 40 = SHA-1, 64 = SHA-256. Only compute what's present to avoid wasted hashing.
+    $algos = @()
+    $lengths = $script:IOCHashSet.Keys | ForEach-Object { $_.Length } | Sort-Object -Unique
+    if ($lengths -contains 32) { $algos += 'MD5' }
+    if ($lengths -contains 40) { $algos += 'SHA1' }
+    if ($lengths -contains 64) { $algos += 'SHA256' }
+    if ($algos.Count -eq 0) { $algos = @('SHA256') }
+
     $seen = @{}
     $matchLines = @()
     $matchLines += (Ex "secgurd $($script:secgurdVersion) ^09 IOC Hash Matches")
     $matchLines += ("=" * 78)
     $matchLines += "IOC list  : $($script:IOCHashFile)  ($($script:IOCHashCount) hashes)"
+    $matchLines += "Algorithms: $($algos -join ', ')"
     $matchLines += "Scanned   : Temp, AppData, Public, ProgramData, Downloads, Desktop, running procs"
     $matchLines += ("-" * 78)
 
@@ -2711,16 +3032,19 @@ if ($script:IOCHashSet -and $script:IOCHashCount -gt 0) {
         if ($seen.ContainsKey($path)) { continue }
         $seen[$path] = $true
         $scanned++
-        try {
-            $fh = (Get-FileHash $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpper()
+        foreach ($algo in $algos) {
+            try {
+                $fh = (Get-FileHash $path -Algorithm $algo -ErrorAction Stop).Hash.ToUpper()
+            } catch { continue }
             if ($script:IOCHashSet.ContainsKey($fh)) {
                 $matchCount++
                 $label = $script:IOCHashSet[$fh]
                 $matchLines += ("MATCH  {0}" -f $path)
-                $matchLines += ("       {0}{1}" -f $fh, $(if ($label) { "  [$label]" } else { '' }))
-                Add-Finding 'HIGH' '09' (Ex "IOC hash match: $path$(if($label){" ($label)"})") '00_IOC_MATCHES.txt'
+                $matchLines += ("       {0} ({1}){2}" -f $fh, $algo, $(if ($label) { "  [$label]" } else { '' }))
+                Add-Finding 'HIGH' '09' (Ex "IOC hash match ($algo): $path$(if($label){" ($label)"})") '00_IOC_MATCHES.txt'
+                break  # one match per file is enough
             }
-        } catch {}
+        }
     }
     $matchLines += ("-" * 78)
     $matchLines += "Files scanned: $scanned   Matches: $matchCount"
