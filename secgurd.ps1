@@ -735,6 +735,84 @@ function Show-S1ChunkedPaste {
     } catch {}
 }
 
+function Show-S1Compressed {
+    # Compressed SINGLE paste. Gzip the script then Base64 it - roughly one third the size of
+    # the plain text, so the whole thing fits in one paste even on size-limited shells. The
+    # pasted block is a short decompress-write-run wrapper plus the blob. NOTE: this DOES use a
+    # FromBase64String + GzipStream decode, which is a stronger pattern than plain text - test it
+    # on one box first; if your EDR flags it, fall back to the chunked plain-text option.
+
+    $src = $null
+    if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
+        try { $src = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop } catch {}
+    }
+    if (-not $src) {
+        try { $src = $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text } catch {}
+    }
+    if (-not $src) {
+        Write-Host "  Could not read secgurd's own source to build the compressed paste." -ForegroundColor Yellow
+        return
+    }
+
+    # Gzip-compress the UTF-8 source in memory, then Base64-encode.
+    $srcBytes = [Text.Encoding]::UTF8.GetBytes($src)
+    $ms = New-Object System.IO.MemoryStream
+    $gz = New-Object System.IO.Compression.GzipStream($ms, [System.IO.Compression.CompressionMode]::Compress)
+    $gz.Write($srcBytes, 0, $srcBytes.Length)
+    $gz.Close()
+    $b64 = [Convert]::ToBase64String($ms.ToArray())
+    $ms.Dispose()
+
+    $tgtPs1 = '$env:TEMP\secgurd.ps1'
+
+    # The paste block: store the blob, decompress to the .ps1, run it.
+    # Built as one line so it pastes cleanly. Uses $env:TEMP on the target.
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('$b=')
+    [void]$sb.Append("'$b64'")
+    [void]$sb.Append('; $d=[IO.Compression.GzipStream]::new([IO.MemoryStream]::new([Convert]::FromBase64String($b)),[IO.Compression.CompressionMode]::Decompress); ')
+    [void]$sb.Append('$o=[IO.MemoryStream]::new(); $d.CopyTo($o); ')
+    [void]$sb.Append("[IO.File]::WriteAllBytes(`"$tgtPs1`",`$o.ToArray()); ")
+    [void]$sb.Append("powershell -ExecutionPolicy Bypass -File `"$tgtPs1`"")
+    $block = $sb.ToString()
+
+    # Save a file fallback.
+    $outFile = Join-Path $env:TEMP "secgurd_s1_compressed.txt"
+    $wrote = $false
+    try { $block | Out-File -FilePath $outFile -Encoding UTF8 -Force; $wrote = $true } catch {}
+
+    # Copy to clipboard.
+    $copied = $false
+    if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
+        try { Set-Clipboard -Value $block -ErrorAction Stop; $copied = $true } catch {}
+    }
+    if (-not $copied) { try { $block | clip.exe; $copied = $true } catch {} }
+
+    Clear-Host
+    Write-Host ""
+    Write-Host "  ============================================================" -ForegroundColor DarkGray
+    Write-Host "   Compressed single paste" -ForegroundColor Cyan
+    Write-Host "  ============================================================" -ForegroundColor DarkGray
+    $kb = [Math]::Round($block.Length / 1KB)
+    if ($copied) {
+        Write-Host (Ex "  [^14] Copied to clipboard") -ForegroundColor Green -NoNewline
+        Write-Host "  (~$kb KB, one paste)" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Paste the single block into the S1 shell and press Enter." -ForegroundColor Gray
+        Write-Host "  It decompresses secgurd to %TEMP%\secgurd.ps1 and runs it (menu appears)." -ForegroundColor Gray
+    } else {
+        Write-Host (Ex "  ^16 Clipboard not available - use the saved file below.") -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host "  NOTE: this uses gzip+Base64 decode. If your EDR flags it, use option [2]" -ForegroundColor DarkGray
+    Write-Host "  (chunked plain text) instead - same result, no encoding." -ForegroundColor DarkGray
+    Write-Host ""
+    if ($wrote) {
+        Write-Host "  Also saved to: $outFile" -ForegroundColor DarkGray
+        Write-Host ""
+    }
+}
+
 function Show-ModuleMenu {
     # Show the interactive menu whenever we can read keyboard input. We intentionally do NOT
     # treat S1's remote shell (ServerRemoteHost) as non-interactive - it supports Read-Host
@@ -1067,9 +1145,11 @@ function Show-ModuleMenu {
             Write-Host ""
             Write-Host "  SentinelOne / remote-shell paste:" -ForegroundColor Cyan
             Write-Host "    [1] " -ForegroundColor Yellow -NoNewline
-            Write-Host "Single paste (one big clipboard block - shells with no paste limit)" -ForegroundColor White
+            Write-Host "Single paste, full text (shells with no paste limit)" -ForegroundColor White
             Write-Host "    [2] " -ForegroundColor Yellow -NoNewline
-            Write-Host "Chunked paste (air-gapped shells that limit paste size)" -ForegroundColor White
+            Write-Host "Chunked paste, plain text (air-gapped, size-limited shells)" -ForegroundColor White
+            Write-Host "    [3] " -ForegroundColor Yellow -NoNewline
+            Write-Host "Compressed single paste (~1/3 size, one block - decompresses on target)" -ForegroundColor White
             Write-Host "  > " -ForegroundColor DarkGray -NoNewline
             $sMode = (Read-Host).Trim()
             if ($sMode -eq '2') {
@@ -1079,6 +1159,8 @@ function Show-ModuleMenu {
                 $cs = 6000
                 if ($csIn -match '^\d+$' -and [int]$csIn -ge 500) { $cs = [int]$csIn }
                 Show-S1ChunkedPaste -ChunkSize $cs
+            } elseif ($sMode -eq '3') {
+                Show-S1Compressed
             } else {
                 Show-S1PasteVersion
             }
