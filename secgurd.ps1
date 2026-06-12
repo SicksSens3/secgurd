@@ -146,6 +146,19 @@ $script:ShowIOCList = $false
 $script:CommunityHashSet = $null
 $script:CommunityHashCount = 0
 $script:CommunityHashFile = $null
+# Trusted binary locations that sit under otherwise-writable roots (e.g. ProgramData) but are
+# legitimate OS/vendor software. We exempt these from "writable path" findings so we don't flag
+# Windows Defender (which lives in ProgramData\Microsoft\Windows Defender\Platform\<ver>\ and
+# updates that version folder constantly), OneDrive's per-user installs, etc. Anything genuinely
+# dropped into Temp/AppData/Downloads is still flagged.
+$script:TrustedPathRx = '(?i)\\(Windows Defender|Windows Defender Advanced Threat Protection)\\Platform\\|' +
+    '(?i)\\Microsoft\\Windows Defender\\|' +
+    '(?i)\\Microsoft OneDrive\\|' +
+    '(?i)\\Microsoft\\OneDrive\\|' +
+    '(?i)OneDrive.*\.exe|' +
+    '(?i)\\Packages\\Microsoft\.|' +
+    '(?i)\\Microsoft\\EdgeUpdate\\|' +
+    '(?i)\\Microsoft\\EdgeWebView\\'
 # Lookback window (days) for all time-bounded collectors. Clamp to a sane 1..3650 range.
 if ($DaysBack -lt 1) { $DaysBack = 1 }
 if ($DaysBack -gt 3650) { $DaysBack = 3650 }
@@ -1942,7 +1955,7 @@ Save-Output "03_scheduled_tasks.txt" {
         foreach ($act in $t.Actions) {
             $cmd = "$($act.Execute) $($act.Arguments)".Trim()
             if (-not $cmd) { continue }
-            $badLoc = $cmd -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\'
+            $badLoc = ($cmd -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\') -and ($cmd -notmatch $script:TrustedPathRx)
             $badCmd = $cmd -match '(?i)(-enc(odedcommand)?|frombase64string|downloadstring|downloadfile|-w(indowstyle)?\s+hidden|iex|invoke-expression|mshta|bitsadmin|certutil\s+-urlcache|regsvr32.*scrobj)'
             if ($badLoc -or $badCmd) {
                 $reason = @()
@@ -2002,7 +2015,9 @@ Save-Output "03_services.txt" {
                 $svcNameLc = ($_.Name).ToLower()
                 $autoUpdater = $svcNameLc -match 'clicktorun|onedrive|edgeupdate|gupdate|googleupdate|chromeelevation|edgeelevation|brave|mozilla|adobearmservice|teamsmachineinstaller|widevine|dropbox'
                 $inTrustedLoc = $path -match '(?i)^[A-Z]:\\(Program Files( \(x86\))?|Windows\\(System32|SysWOW64|WinSxS))\\'
-                $inWritableLoc = $path -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData|Downloads|Desktop)\\'
+                # exempt legit software that lives under writable roots (Defender, OneDrive, ...)
+                $isTrustedPath = $path -match $script:TrustedPathRx
+                $inWritableLoc = ($path -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData|Downloads|Desktop)\\') -and (-not $isTrustedPath)
 
                 $sigStatus = 'NotChecked'
                 $signer = ''
@@ -2012,7 +2027,7 @@ Save-Output "03_services.txt" {
                     $signer = $sig.SignerCertificate.Subject
                 }
 
-                if (-not $autoUpdater) {
+                if (-not $autoUpdater -and -not $isTrustedPath) {
                     if ($inWritableLoc) {
                         # recently-modified service binary in a writable path - genuinely suspicious
                         Add-Finding 'HIGH' '03' (Ex "Service binary in writable path, modified <$($script:DaysBack)d: $($_.Name) ^17 $path") '03_services.txt'
@@ -2050,7 +2065,7 @@ Save-Output "03_services.txt" {
         elseif ($raw -match '^(.+?\.(?:exe|dll))\s') { $p = $matches[1] }
         else { $p = $raw }
 
-        $badLoc = $p -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\'
+        $badLoc = ($p -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\') -and ($p -notmatch $script:TrustedPathRx)
         # unquoted + has a space before the .exe and isn't already quoted
         $unquoted = ($raw -notmatch '^\s*"') -and ($p -match '\s') -and ($raw -match '\.exe')
         if ($badLoc -or $unquoted) {
@@ -2290,7 +2305,7 @@ Save-Output "03_remote_access_tools.txt" {
             $path = $null
             if ($svc.PathName -match '^"([^"]+)"') { $path = $matches[1] }
             elseif ($svc.PathName -match '^(\S+\.exe)') { $path = $matches[1] }
-            $badLoc = $svc.PathName -match $writable
+            $badLoc = ($svc.PathName -match $writable) -and ($svc.PathName -notmatch $script:TrustedPathRx)
             if ($badLoc) {
                 Add-Finding 'HIGH' '03' (Ex "Remote-access tool '$prod' service runs from a writable path ^17 $($svc.PathName)") '03_remote_access_tools.txt'
             } else {
