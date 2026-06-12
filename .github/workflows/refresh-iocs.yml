@@ -1,0 +1,83 @@
+name: Refresh community IOC list
+
+# Auto-updates communitysavedIOCS.txt from a free public malware-hash feed.
+# Runs in GitHub's cloud (NOT on any endpoint), commits the refreshed file to the repo.
+# Your endpoints stay offline - they just get the new hashes on the next `git pull`.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'        # daily at 06:00 UTC
+  workflow_dispatch:            # also allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: write               # needed to commit the refreshed file back to the repo
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Download and build community IOC list
+        run: |
+          set -euo pipefail
+          OUT="communitysavedIOCS.txt"
+          TMP="$(mktemp)"
+
+          # --- Source: abuse.ch MalwareBazaar full SHA-256 hash export (free, no API key) ---
+          # Published as a daily zip of recent samples. We pull it, extract the SHA-256 column,
+          # and keep the malware family/signature as the label.
+          echo "Downloading MalwareBazaar recent hash export..."
+          curl -fsSL "https://bazaar.abuse.ch/export/csv/recent/" -o recent.csv || {
+            echo "Download failed; leaving the existing list untouched."
+            exit 0
+          }
+
+          # MalwareBazaar CSV columns (quoted, comma-separated):
+          #   first_seen, sha256_hash, md5_hash, sha1_hash, reporter, file_name,
+          #   file_type, mime_type, signature, ...
+          # We want column 2 (sha256) and column 9 (signature) as the label.
+          {
+            echo "# secgurd community IOC list"
+            echo "# Auto-generated from abuse.ch MalwareBazaar recent export"
+            echo "# Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "# Format: <sha256>,<malware family/signature>"
+            echo "#"
+            # strip comment lines, strip quotes, print "sha256,signature" when sha256 looks valid
+            grep -v '^#' recent.csv \
+              | sed 's/"//g' \
+              | awk -F',' '{
+                  gsub(/^[ \t]+|[ \t]+$/, "", $2);
+                  gsub(/^[ \t]+|[ \t]+$/, "", $9);
+                  if ($2 ~ /^[0-9A-Fa-f]{64}$/) {
+                    sig = ($9 == "" || $9 == "n/a") ? "MalwareBazaar" : $9;
+                    print $2 "," sig
+                  }
+                }' \
+              | sort -u
+          } > "$TMP"
+
+          # Sanity: only replace the committed file if we actually parsed some hashes.
+          HASHCOUNT=$(grep -cE '^[0-9A-Fa-f]{64},' "$TMP" || true)
+          echo "Parsed $HASHCOUNT hashes."
+          if [ "$HASHCOUNT" -gt 0 ]; then
+            mv "$TMP" "$OUT"
+            echo "Wrote $OUT"
+          else
+            echo "No hashes parsed; keeping existing $OUT unchanged."
+          fi
+
+      - name: Commit changes if the list changed
+        run: |
+          set -euo pipefail
+          git config user.name  "secgurd-ioc-bot"
+          git config user.email "secgurd-ioc-bot@users.noreply.github.com"
+          if git diff --quiet -- communitysavedIOCS.txt; then
+            echo "No changes to commit."
+          else
+            git add communitysavedIOCS.txt
+            git commit -m "Auto-refresh community IOC list ($(date -u '+%Y-%m-%d'))"
+            git push
+            echo "Committed updated community IOC list."
+          fi
