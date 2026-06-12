@@ -183,19 +183,33 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 
 ## IOC hash matching
 
-Feed secgurd a list of known-bad hashes and it will hash real on-disk binaries in high-signal locations (Temp, AppData, Public, ProgramData, Downloads, Desktop) plus every running process image, and flag any match as a HIGH finding (written to `00_IOC_MATCHES.txt`).
+Secgurd matches real on-disk binaries (in high-signal locations like Temp, AppData, Public, ProgramData, Downloads, Desktop, plus every running process image) against known-bad hashes. There are **two separate sources**, and matches are labeled by which one they came from:
 
-- **Formats:** MD5 (32 hex), SHA-1 (40 hex), or SHA-256 (64 hex). Mix freely.
-- **Delimiters:** one per line, or comma/space/semicolon/pipe separated. `#` comment lines are ignored.
-- **Optional labels:** `44d88612...02f,Emotet` attaches a label shown on match.
+**1. Community list (`communitysavedIOCS.txt`) — auto-loaded, shared, version-controlled.**
+This file lives in the repo next to `secgurd.ps1` and is **loaded automatically** on every run, no flags needed. Update it with `git pull` and your runs use the latest community hashes. It's meant as the curated, team-shared baseline.
+
+**2. Hashes you add — case-specific, kept separate.**
+Provide your own list via `-IOCHashes C:\path\list.txt` or the interactive `i` menu (file or paste). These never touch the community file, so you can always tell *what you added* from *what was already saved*.
+
+When both are present, secgurd matches against **community hashes + the ones you added**, and writes results to two separate files:
+
+- `00_IOC_MATCHES_community.txt` — hits from the community list
+- `00_IOC_MATCHES_manual.txt` — hits from hashes you added
+
+Each finding is tagged `[community]` or `[you added]`.
+
+**Hash formats:** MD5 (32 hex), SHA-1 (40 hex), or SHA-256 (64 hex) — mix freely. One per line, or comma/space/semicolon/pipe separated. `#` comment lines ignored. An optional `,label` after a hash is shown on a match:
 
 ```
-# example IOC list
 44d88612fea8a8f36de82e1278abb02f0000000000000000000000000000abcd,Emotet
 a1b2c3d4e5f6...
 ```
 
-Load it via `-IOCHashes C:\ioc\list.txt`, or interactively with the `i` menu command (file or paste). Free hash feeds (e.g. abuse.ch MalwareBazaar) work well — download to *your* box, point secgurd at the file.
+Everything is **fully offline** — no API key, no internet on the target. Hashes ride along in the repo (via `git pull`) or are supplied by you.
+
+### Keeping the community list fresh automatically
+
+The repo includes a GitHub Action (`.github/workflows/refresh-iocs.yml`) that, once a day, fetches a free public malware-hash feed (abuse.ch MalwareBazaar) **in GitHub's cloud** and commits the refreshed `communitysavedIOCS.txt` back to the repo. Your endpoints never touch the internet — only GitHub does the fetching. Then your next `git pull` picks up the new hashes. You can also trigger it manually from the repo's **Actions** tab ("Run workflow").
 
 ---
 
@@ -209,7 +223,8 @@ secgurd_<HOST>_<timestamp>\
   00_SUMMARY.txt        findings summary
   00_TIMELINE.txt       chronological event merge
   00_HASHES.txt         SHA-256 of every output file (evidence integrity)
-  00_IOC_MATCHES.txt    IOC hash matches (only if IOC list was loaded)
+  00_IOC_MATCHES_community.txt   community IOC matches (if community list present)
+  00_IOC_MATCHES_manual.txt      your IOC matches (if you supplied a list)
   report.html           single-file report (only with -HtmlReport)
   01_system_info.txt
   02_rdp_remote_access.txt
