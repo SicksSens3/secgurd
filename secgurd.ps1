@@ -1715,19 +1715,37 @@ Save-Output "03_services.txt" {
         if ($path -and (Test-Path $path)) {
             $f = Get-Item $path -ErrorAction SilentlyContinue
             if ($f -and $f.LastWriteTime -gt (Get-Date).AddDays(-$script:DaysBack)) {
+                # Reduce false positives from normal software patching:
+                #  - skip well-known auto-updater services (Chrome/Edge/Google/OneDrive/ClickToRun...)
+                #  - a binary in a legitimate location (Program Files / System32) that's merely
+                #    recently-modified is almost always a routine update, so we DON'T raise a
+                #    finding for it - we only record it in the table below. We DO flag it when it
+                #    lives in a writable/unusual path, or (under -WithSignatures) fails to verify.
+                $svcNameLc = ($_.Name).ToLower()
+                $autoUpdater = $svcNameLc -match 'clicktorun|onedrive|edgeupdate|gupdate|googleupdate|chromeelevation|edgeelevation|brave|mozilla|adobearmservice|teamsmachineinstaller|widevine|dropbox'
+                $inTrustedLoc = $path -match '(?i)^[A-Z]:\\(Program Files( \(x86\))?|Windows\\(System32|SysWOW64|WinSxS))\\'
+                $inWritableLoc = $path -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData|Downloads|Desktop)\\'
+
                 $sigStatus = 'NotChecked'
                 $signer = ''
                 if ($script:WithSignatures) {
                     $sig = (Get-AuthenticodeSignature $path -ErrorAction SilentlyContinue)
                     $sigStatus = $sig.Status
                     $signer = $sig.SignerCertificate.Subject
-                    if ($sig.Status -ne 'Valid') {
-                        Add-Finding 'HIGH' '03' (Ex "Unsigned service binary modified <30d: $($_.Name) ^17 $path") '03_services.txt'
-                    } else {
-                        Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path") '03_services.txt'
+                }
+
+                if (-not $autoUpdater) {
+                    if ($inWritableLoc) {
+                        # recently-modified service binary in a writable path - genuinely suspicious
+                        Add-Finding 'HIGH' '03' (Ex "Service binary in writable path, modified <$($script:DaysBack)d: $($_.Name) ^17 $path") '03_services.txt'
+                    } elseif ($script:WithSignatures -and $sigStatus -ne 'Valid') {
+                        # invalid/missing signature on a recently-modified service binary
+                        Add-Finding 'HIGH' '03' (Ex "Service binary not validly signed, modified <$($script:DaysBack)d: $($_.Name) ^17 $path") '03_services.txt'
+                    } elseif (-not $inTrustedLoc) {
+                        # modified, not an auto-updater, not in a standard trusted location
+                        Add-Finding 'MED' '03' (Ex "Service binary modified <$($script:DaysBack)d (non-standard path): $($_.Name) ^17 $path") '03_services.txt'
                     }
-                } else {
-                    Add-Finding 'MED' '03' (Ex "Service binary modified <30d: $($_.Name) ^17 $path") '03_services.txt'
+                    # else: trusted location + not an updater -> recorded in table, no finding (routine patch)
                 }
                 [PSCustomObject]@{
                     Service      = $_.Name
@@ -1881,23 +1899,38 @@ Save-Output "03_advanced_persistence.txt" {
 
     Write-Section "ACCESSIBILITY BINARY HIJACKS (sethc / utilman / osk / magnify)"
     # Login-screen backdoors: replacing or IFEO-redirecting these gives pre-auth SYSTEM shell.
+    # NOTE: legitimate Microsoft accessibility binaries routinely have an internal
+    # OriginalFilename that differs from the on-disk name (e.g. magnify.exe -> ScreenMagnifier),
+    # so that is NOT a reliable signal and we do not flag on it. The real backdoor indicators
+    # are: (a) an IFEO debugger set on the binary, or (b) the file failing to verify as a
+    # validly-signed Microsoft binary (only checked under -WithSignatures, since signature
+    # verification can stall offline).
     $accTargets = 'sethc.exe','utilman.exe','osk.exe','magnify.exe','narrator.exe','displayswitch.exe','atbroker.exe'
     foreach ($a in $accTargets) {
         $p = Join-Path $env:SystemRoot "System32\$a"
         if (Test-Path $p) {
             $f = Get-Item $p -ErrorAction SilentlyContinue
-            $ver = (Get-Item $p).VersionInfo.OriginalFilename
-            $suspect = ($ver -and $ver -notlike "*$a*")
+            $sigInfo = '(not checked - use -WithSignatures)'
+            $suspectSig = $false
+            if ($script:WithSignatures) {
+                try {
+                    $sig = Get-AuthenticodeSignature -FilePath $p -ErrorAction SilentlyContinue
+                    $sigInfo = "$($sig.Status) / $($sig.SignerCertificate.Subject)"
+                    # suspicious if signature isn't valid, or signer isn't Microsoft
+                    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Microsoft') {
+                        $suspectSig = $true
+                    }
+                } catch { $sigInfo = 'signature check failed' }
+            }
             [PSCustomObject]@{
-                Binary           = $a
-                LastModified     = $f.LastWriteTime
-                OriginalFilename = $ver
-                Suspect          = $suspect
+                Binary       = $a
+                LastModified = $f.LastWriteTime
+                Signature    = $sigInfo
             }
-            if ($suspect) {
-                Add-Finding 'HIGH' '03' (Ex "Accessibility binary may be replaced: $a (OriginalFilename=$ver)") '03_advanced_persistence.txt'
+            if ($suspectSig) {
+                Add-Finding 'HIGH' '03' (Ex "Accessibility binary not validly Microsoft-signed: $a ^09 possible replacement") '03_advanced_persistence.txt'
             }
-            # also flag an IFEO debugger specifically on an accessibility binary
+            # flag an IFEO debugger specifically on an accessibility binary (the classic backdoor)
             $accDbg = (Get-ItemProperty (Join-Path $ifeoRoot $a) -ErrorAction SilentlyContinue).Debugger
             if ($accDbg) {
                 Add-Finding 'HIGH' '03' (Ex "Accessibility backdoor: IFEO debugger on $a ^17 $accDbg") '03_advanced_persistence.txt'
