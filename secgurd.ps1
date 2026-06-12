@@ -75,6 +75,7 @@ param(
     [string]$IOCHashes,
     [int]$DaysBack = 30,
     [switch]$MakeS1Paste,
+    [int]$S1ChunkSize = 0,
     [switch]$Help
 )
 
@@ -309,7 +310,8 @@ function Show-Help {
     Write-Host "    -HtmlReport           Also build a single-file report.html" -ForegroundColor Gray
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
-    Write-Host "    -MakeS1Paste          Print a copy/paste version for the SentinelOne shell" -ForegroundColor Gray
+    Write-Host "    -MakeS1Paste          Copy a paste-ready version for the SentinelOne shell" -ForegroundColor Gray
+    Write-Host "    -S1ChunkSize <N>      With -MakeS1Paste: chunked paste (N chars) for size-limited shells" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  MENU COMMANDS" -ForegroundColor White
@@ -321,7 +323,7 @@ function Show-Help {
     Write-Host "    i                     Toggle: match hashes vs IOC list (prompts for file)" -ForegroundColor Gray
     Write-Host "    l                     Toggle: show the loaded IOC hash list in the menu" -ForegroundColor Gray
     Write-Host "    d                     Set lookback window in days (time-bounded collectors)" -ForegroundColor Gray
-    Write-Host "    s                     Make a copy/paste version for the SentinelOne shell" -ForegroundColor Gray
+    Write-Host "    s                     S1 paste version - single or chunked (air-gapped shells)" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
     Write-Host ""
@@ -617,6 +619,120 @@ function Show-S1PasteVersion {
         Write-Host "  Open it with:  notepad `"$outFile`"" -ForegroundColor DarkGray
         Write-Host ""
     }
+}
+
+function Show-S1ChunkedPaste {
+    # For AIR-GAPPED remote shells (e.g. SentinelOne) that allow pasting only up to a size limit
+    # per paste. We split the RAW script on line boundaries into groups small enough to paste,
+    # and each chunk appends its lines to a .ps1 file on the target via a here-string. The final
+    # step just runs that file. NO Base64, NO decode-and-execute pattern - the chunks are plain
+    # script text (the same content that already runs fine via iex in your environment), just
+    # delivered in pieces. secgurd is wrap-safe (no internal line starts with the here-string
+    # closer), so the here-string container can't be broken by the script's own content.
+    param([int]$ChunkSize = 6000)
+
+    $src = $null
+    if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
+        try { $src = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop } catch {}
+    }
+    if (-not $src) {
+        try { $src = $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text } catch {}
+    }
+    if (-not $src) {
+        Write-Host "  Could not read secgurd's own source to build the chunked paste." -ForegroundColor Yellow
+        return
+    }
+
+    # Safety: a line starting with the here-string closer ('@) inside the source would terminate
+    # a chunk's here-string early. secgurd has none, but guard so we never emit a broken chunk.
+    if ($src -match "(?m)^'@") {
+        Write-Host "  This build has a line starting with '@ which would break a chunk. Aborting." -ForegroundColor Yellow
+        return
+    }
+
+    $tgtPs1 = '$env:TEMP\secgurd.ps1'
+
+    # Split the source into line-boundary groups whose total size stays under ChunkSize.
+    $srcLines = $src -split "`r?`n"
+    $groups = @()
+    $cur = New-Object System.Collections.Generic.List[string]
+    $curLen = 0
+    foreach ($ln in $srcLines) {
+        # +2 accounts for the line + newline; if adding it would exceed the limit, close the group
+        if ($curLen -gt 0 -and ($curLen + $ln.Length + 2) -gt $ChunkSize) {
+            $groups += ,($cur.ToArray())
+            $cur = New-Object System.Collections.Generic.List[string]
+            $curLen = 0
+        }
+        $cur.Add($ln)
+        $curLen += $ln.Length + 2
+    }
+    if ($cur.Count -gt 0) { $groups += ,($cur.ToArray()) }
+    $total = $groups.Count
+
+    # Build each chunk: a here-string of raw lines appended to the target file.
+    # First chunk uses Set-Content (create/overwrite); the rest use Add-Content (append).
+    $chunks = @()
+    for ($i = 0; $i -lt $total; $i++) {
+        $body = ($groups[$i] -join "`r`n")
+        $verb = if ($i -eq 0) { 'Set-Content' } else { 'Add-Content' }
+        # @' ... '@ literal here-string: nothing inside is interpreted, so the script's own
+        # quotes/$/backticks are preserved verbatim.
+        $chunks += "$verb -Path `"$tgtPs1`" -Value @'`r`n$body`r`n'@"
+    }
+    # final command: just run the assembled file (menu appears, community IOCs auto-load)
+    $finalCmd = "powershell -ExecutionPolicy Bypass -File `"$tgtPs1`""
+
+    Clear-Host
+    Write-Host ""
+    Write-Host "  ============================================================" -ForegroundColor DarkGray
+    Write-Host "   Air-gapped chunked paste  ($total chunks, ~$ChunkSize chars each)" -ForegroundColor Cyan
+    Write-Host "  ============================================================" -ForegroundColor DarkGray
+    Write-Host "  For remote shells that limit paste size. Each step copies one" -ForegroundColor Gray
+    Write-Host "  chunk to your clipboard - paste it into the S1 shell, press Enter" -ForegroundColor Gray
+    Write-Host "  there, then come back here and press Enter for the next chunk." -ForegroundColor Gray
+    Write-Host "  Plain script text (no encoding) - the final step just runs the file." -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  Tip: if a chunk still won't paste, re-run with a smaller size." -ForegroundColor DarkGray
+    Write-Host ""
+
+    $copy = {
+        param($text)
+        $ok = $false
+        if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
+            try { Set-Clipboard -Value $text -ErrorAction Stop; $ok = $true } catch {}
+        }
+        if (-not $ok) { try { $text | clip.exe; $ok = $true } catch {} }
+        return $ok
+    }
+
+    for ($i = 0; $i -lt $chunks.Count; $i++) {
+        $ok = & $copy $chunks[$i]
+        $label = "CHUNK $($i + 1) of $total"
+        if ($ok) {
+            Write-Host (Ex "  [^14] $label copied to clipboard.") -ForegroundColor Green
+        } else {
+            Write-Host (Ex "  ^16 Clipboard failed for $label - see the saved file.") -ForegroundColor Yellow
+        }
+        Write-Host "      Paste into the S1 shell, press Enter there, then Enter here..." -ForegroundColor DarkGray
+        Read-Host | Out-Null
+    }
+
+    & $copy $finalCmd | Out-Null
+    Write-Host (Ex "  [^14] FINAL command copied (run the assembled file).") -ForegroundColor Green
+    Write-Host "      Paste it into the S1 shell and press Enter - secgurd will launch." -ForegroundColor Gray
+    Write-Host ""
+
+    # Save the full transcript of chunks to a file too, as a fallback / for review.
+    $allFile = Join-Path $env:TEMP "secgurd_s1_chunks.txt"
+    try {
+        $dump = @()
+        for ($i = 0; $i -lt $chunks.Count; $i++) { $dump += "### CHUNK $($i+1) of $total ###"; $dump += $chunks[$i]; $dump += '' }
+        $dump += "### FINAL (run the file) ###"; $dump += $finalCmd
+        $dump | Out-File -FilePath $allFile -Encoding UTF8 -Force
+        Write-Host "  All chunks also saved to: $allFile" -ForegroundColor DarkGray
+        Write-Host ""
+    } catch {}
 }
 
 function Show-ModuleMenu {
@@ -948,7 +1064,24 @@ function Show-ModuleMenu {
         }
 
         if ($cmd -eq 's') {
-            Show-S1PasteVersion
+            Write-Host ""
+            Write-Host "  SentinelOne / remote-shell paste:" -ForegroundColor Cyan
+            Write-Host "    [1] " -ForegroundColor Yellow -NoNewline
+            Write-Host "Single paste (one big clipboard block - shells with no paste limit)" -ForegroundColor White
+            Write-Host "    [2] " -ForegroundColor Yellow -NoNewline
+            Write-Host "Chunked paste (air-gapped shells that limit paste size)" -ForegroundColor White
+            Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+            $sMode = (Read-Host).Trim()
+            if ($sMode -eq '2') {
+                Write-Host "  Chunk size in characters (Enter for 6000; lower it if pastes still cut off):" -ForegroundColor Cyan
+                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                $csIn = (Read-Host).Trim()
+                $cs = 6000
+                if ($csIn -match '^\d+$' -and [int]$csIn -ge 500) { $cs = [int]$csIn }
+                Show-S1ChunkedPaste -ChunkSize $cs
+            } else {
+                Show-S1PasteVersion
+            }
             Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
             Read-Host | Out-Null
             Clear-Host; Show-secgurdBannerCompact
@@ -1234,7 +1367,11 @@ if ($scriptDir) {
 # ---------------------------------------------
 
 if ($MakeS1Paste) {
-    Show-S1PasteVersion
+    if ($S1ChunkSize -ge 500) {
+        Show-S1ChunkedPaste -ChunkSize $S1ChunkSize
+    } else {
+        Show-S1PasteVersion
+    }
     return
 }
 
