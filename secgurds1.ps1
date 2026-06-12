@@ -139,6 +139,11 @@ $script:IOCHashFile = $null
 $script:IOCHashSet = $null
 $script:IOCHashCount = 0
 $script:ShowIOCList = $false
+# Community IOC list: auto-loaded from communitysavedIOCS.txt next to the script (refreshed
+# via git pull). Kept SEPARATE from the manual set above so matches can be labeled by source.
+$script:CommunityHashSet = $null
+$script:CommunityHashCount = 0
+$script:CommunityHashFile = $null
 # Lookback window (days) for all time-bounded collectors. Clamp to a sane 1..3650 range.
 if ($DaysBack -lt 1) { $DaysBack = 1 }
 if ($DaysBack -gt 3650) { $DaysBack = 3650 }
@@ -494,37 +499,48 @@ function Import-IOCHashes {
 }
 
 function Show-IOCList {
-    # Print the currently-loaded IOC hashes with a green check, the source, and a count.
-    if (-not $script:IOCHashSet -or $script:IOCHashCount -eq 0) {
+    # Print the currently-loaded IOC hashes, grouped by source (community vs. ones you added).
+    $haveComm = ($script:CommunityHashSet -and $script:CommunityHashCount -gt 0)
+    $haveMan  = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
+    if (-not $haveComm -and -not $haveMan) {
         Write-Host ""
         Write-Host "  No IOC hashes loaded." -ForegroundColor DarkGray
         Write-Host ""
         return
     }
-    Write-Host ""
-    Write-Host "  " -NoNewline
-    Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
-    Write-Host "IOC hash matching ENABLED" -ForegroundColor White -NoNewline
-    Write-Host "   source: $($script:IOCHashFile)" -ForegroundColor DarkGray
-    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
-    $n = 0
-    foreach ($h in ($script:IOCHashSet.Keys | Sort-Object)) {
-        $n++
-        $label = $script:IOCHashSet[$h]
-        $algo = switch ($h.Length) { 32 {'MD5'} 40 {'SHA1'} 64 {'SHA256'} default {'?'} }
-        # only shorten long (SHA-256) hashes; show MD5/SHA-1 in full since they're already short
-        $short = if ($h.Length -gt 40) { $h.Substring(0,16) + '...' + $h.Substring($h.Length-8) } else { $h }
-        Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
-        Write-Host ("{0,-7}" -f $algo) -ForegroundColor DarkCyan -NoNewline
-        Write-Host $short -ForegroundColor Gray -NoNewline
-        if ($label) { Write-Host "  [$label]" -ForegroundColor DarkCyan } else { Write-Host "" }
-        if ($n -ge 50) {
-            Write-Host ("        ... and $($script:IOCHashCount - 50) more") -ForegroundColor DarkGray
-            break
+
+    # Inner helper to print one source's hashes (capped at 50 for readability).
+    $printSet = {
+        param($title, $set, $count, $src)
+        Write-Host ""
+        Write-Host "  " -NoNewline
+        Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
+        Write-Host $title -ForegroundColor White -NoNewline
+        Write-Host "   source: $src" -ForegroundColor DarkGray
+        Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+        $n = 0
+        foreach ($h in ($set.Keys | Sort-Object)) {
+            $n++
+            $label = $set[$h]
+            $algo = switch ($h.Length) { 32 {'MD5'} 40 {'SHA1'} 64 {'SHA256'} default {'?'} }
+            $short = if ($h.Length -gt 40) { $h.Substring(0,16) + '...' + $h.Substring($h.Length-8) } else { $h }
+            Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
+            Write-Host ("{0,-7}" -f $algo) -ForegroundColor DarkCyan -NoNewline
+            Write-Host $short -ForegroundColor Gray -NoNewline
+            if ($label) { Write-Host "  [$label]" -ForegroundColor DarkCyan } else { Write-Host "" }
+            if ($n -ge 50) {
+                Write-Host ("        ... and $($count - 50) more") -ForegroundColor DarkGray
+                break
+            }
         }
+        Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+        Write-Host "  $count hash(es)." -ForegroundColor DarkGray
     }
-    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
-    Write-Host "  $($script:IOCHashCount) hash(es) loaded - will be matched against on-disk binaries at run time." -ForegroundColor DarkGray
+
+    if ($haveComm) { & $printSet 'COMMUNITY hashes (from communitysavedIOCS.txt)' $script:CommunityHashSet $script:CommunityHashCount $script:CommunityHashFile }
+    if ($haveMan)  { & $printSet 'HASHES YOU ADDED' $script:IOCHashSet $script:IOCHashCount $script:IOCHashFile }
+    Write-Host ""
+    Write-Host "  Both lists are matched against on-disk binaries at run time." -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -709,9 +725,18 @@ function Show-ModuleMenu {
         Write-Host "(report.html)" -ForegroundColor DarkGray
 
         $iocOn   = [bool]$script:IOCHashFile
-        $iocMark = if ($iocOn) { (Ex "[^14]") } else { '[ ]' }
-        $iocClr  = if ($iocOn) { 'Green' } else { 'DarkGray' }
-        $iocNote = if ($iocOn) { "($($script:IOCHashCount) hashes loaded)" } else { '(prompts for hash list)' }
+        $commOn  = ($script:CommunityHashCount -gt 0)
+        $iocMark = if ($iocOn -or $commOn) { (Ex "[^14]") } else { '[ ]' }
+        $iocClr  = if ($iocOn -or $commOn) { 'Green' } else { 'DarkGray' }
+        # Build a note describing what's loaded from each source.
+        if ($iocOn -or $commOn) {
+            $parts = @()
+            if ($commOn) { $parts += "community $($script:CommunityHashCount)" }
+            if ($iocOn)  { $parts += "you-added $($script:IOCHashCount)" }
+            $iocNote = "($($parts -join ' + '))"
+        } else {
+            $iocNote = '(prompts for hash list)'
+        }
         Write-Host "   " -NoNewline
         Write-Host $iocMark -ForegroundColor $iocClr -NoNewline
         Write-Host "  " -NoNewline
@@ -719,8 +744,8 @@ function Show-ModuleMenu {
         Write-Host ("{0,-30}" -f 'Match hashes against IOC list') -ForegroundColor White -NoNewline
         Write-Host $iocNote -ForegroundColor DarkGray
 
-        # Only offer the list toggle once hashes are loaded
-        if ($iocOn) {
+        # Only offer the list toggle once SOME hashes are loaded (either source)
+        if ($iocOn -or $commOn) {
             $lMark = if ($script:ShowIOCList) { (Ex "[^14]") } else { '[ ]' }
             $lClr  = if ($script:ShowIOCList) { 'Green' } else { 'DarkGray' }
             $lNote = if ($script:ShowIOCList) { '(showing below)' } else { '(hidden)' }
@@ -1176,6 +1201,30 @@ function Show-DeadDragon {
     Write-Host ""
     Write-Flair "        The Dragon still lives! Choose a module to hunt." '1;91' 'Red'
     Write-Host ""
+}
+
+# ---------------------------------------------
+
+#  COMMUNITY IOC LIST (auto-loaded from the script folder)
+
+# ---------------------------------------------
+
+# Look for communitysavedIOCS.txt next to secgurd.ps1 and auto-load it. This file is meant to
+# live in the repo and be refreshed via 'git pull', so every run uses the latest community
+# hashes with no flags. It is kept separate from any manual -IOCHashes / pasted list.
+$scriptDir = $null
+if ($PSScriptRoot) { $scriptDir = $PSScriptRoot }
+elseif ($PSCommandPath) { $scriptDir = Split-Path -Parent $PSCommandPath }
+if ($scriptDir) {
+    $communityFile = Join-Path $scriptDir 'communitysavedIOCS.txt'
+    if (Test-Path $communityFile) {
+        $cset = Import-IOCHashes $communityFile
+        if ($cset.Count -gt 0) {
+            $script:CommunityHashSet  = $cset
+            $script:CommunityHashCount = $cset.Count
+            $script:CommunityHashFile  = $communityFile
+        }
+    }
 }
 
 # ---------------------------------------------
@@ -3085,10 +3134,10 @@ $hashLines += "Verify later with:  Get-FileHash <file> -Algorithm SHA256"
 $hashLines | Out-File (Join-Path $OutputPath '00_HASHES.txt') -Encoding UTF8 -Force
 
 # ---------------------------------------------
-#  00_IOC_MATCHES.txt   match on-disk binaries against a known-bad SHA-256 list
+#  IOC HASH MATCHING   community list + manual list, kept separate
 # ---------------------------------------------
 
-# Resolve the IOC list: interactive toggle wins; else the -IOCHashes CLI param.
+# Resolve the MANUAL list from the -IOCHashes CLI param if the menu didn't already load one.
 if (-not $script:IOCHashSet -and $IOCHashes) {
     if (Test-Path $IOCHashes) {
         $script:IOCHashSet = Import-IOCHashes $IOCHashes
@@ -3099,11 +3148,17 @@ if (-not $script:IOCHashSet -and $IOCHashes) {
     }
 }
 
-if ($script:IOCHashSet -and $script:IOCHashCount -gt 0) {
-    Write-Host (Ex "  *  Matching on-disk binaries against $($script:IOCHashCount) IOC hashes...") -ForegroundColor Cyan
+$haveCommunity = ($script:CommunityHashSet -and $script:CommunityHashCount -gt 0)
+$haveManual    = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
 
-    # Build the candidate set: real executables/DLLs from the high-signal locations a triage
-    # would care about. We hash these (not secgurd's own output) and compare to the IOC list.
+if ($haveCommunity -or $haveManual) {
+    # Friendly description of what we're matching against.
+    $srcDesc = @()
+    if ($haveCommunity) { $srcDesc += "community ($($script:CommunityHashCount))" }
+    if ($haveManual)    { $srcDesc += "ones you added ($($script:IOCHashCount))" }
+    Write-Host (Ex "  *  Matching on-disk binaries against $($srcDesc -join ' + ') hashes...") -ForegroundColor Cyan
+
+    # Candidate set: real executables/DLLs in high-signal locations + running process images.
     $scanRoots = @(
         "$env:TEMP", "$env:SystemRoot\Temp",
         "$env:PUBLIC", "$env:ProgramData",
@@ -3120,55 +3175,86 @@ if ($script:IOCHashSet -and $script:IOCHashCount -gt 0) {
                 ForEach-Object { $candidates.Add($_.FullName) }
         } catch {}
     }
-    # also include currently-running process images (catches things outside the scan roots)
     Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
         if ($_.Path) { $candidates.Add($_.Path) }
     }
 
-    # Determine which algorithms we actually need, based on the hash lengths in the list.
-    # 32 = MD5, 40 = SHA-1, 64 = SHA-256. Only compute what's present to avoid wasted hashing.
+    # Determine which algorithms are needed across BOTH lists (only hash what we must).
+    $allKeys = @()
+    if ($haveCommunity) { $allKeys += $script:CommunityHashSet.Keys }
+    if ($haveManual)    { $allKeys += $script:IOCHashSet.Keys }
     $algos = @()
-    $lengths = $script:IOCHashSet.Keys | ForEach-Object { $_.Length } | Sort-Object -Unique
+    $lengths = $allKeys | ForEach-Object { $_.Length } | Sort-Object -Unique
     if ($lengths -contains 32) { $algos += 'MD5' }
     if ($lengths -contains 40) { $algos += 'SHA1' }
     if ($lengths -contains 64) { $algos += 'SHA256' }
     if ($algos.Count -eq 0) { $algos = @('SHA256') }
 
+    # Prepare separate result buffers per source.
+    $commMatches = @()
+    $manMatches  = @()
     $seen = @{}
-    $matchLines = @()
-    $matchLines += (Ex "secgurd $($script:secgurdVersion) ^09 IOC Hash Matches")
-    $matchLines += ("=" * 78)
-    $matchLines += "IOC list  : $($script:IOCHashFile)  ($($script:IOCHashCount) hashes)"
-    $matchLines += "Algorithms: $($algos -join ', ')"
-    $matchLines += "Scanned   : Temp, AppData, Public, ProgramData, Downloads, Desktop, running procs"
-    $matchLines += ("-" * 78)
+    $scanned = 0
 
-    $matchCount = 0; $scanned = 0
     foreach ($path in $candidates) {
         if ($seen.ContainsKey($path)) { continue }
         $seen[$path] = $true
         $scanned++
         foreach ($algo in $algos) {
-            try {
-                $fh = (Get-FileHash $path -Algorithm $algo -ErrorAction Stop).Hash.ToUpper()
-            } catch { continue }
-            if ($script:IOCHashSet.ContainsKey($fh)) {
-                $matchCount++
-                $label = $script:IOCHashSet[$fh]
-                $matchLines += ("MATCH  {0}" -f $path)
-                $matchLines += ("       {0} ({1}){2}" -f $fh, $algo, $(if ($label) { "  [$label]" } else { '' }))
-                Add-Finding 'HIGH' '09' (Ex "IOC hash match ($algo): $path$(if($label){" ($label)"})") '00_IOC_MATCHES.txt'
-                break  # one match per file is enough
+            $fh = $null
+            try { $fh = (Get-FileHash $path -Algorithm $algo -ErrorAction Stop).Hash.ToUpper() } catch { continue }
+            $hitComm = $haveCommunity -and $script:CommunityHashSet.ContainsKey($fh)
+            $hitMan  = $haveManual    -and $script:IOCHashSet.ContainsKey($fh)
+            if ($hitComm) {
+                $label = $script:CommunityHashSet[$fh]
+                $commMatches += [PSCustomObject]@{ Path=$path; Hash=$fh; Algo=$algo; Label=$label }
+                Add-Finding 'HIGH' '09' (Ex "IOC match [community] ($algo): $path$(if($label){" ($label)"})") '00_IOC_MATCHES_community.txt'
             }
+            if ($hitMan) {
+                $label = $script:IOCHashSet[$fh]
+                $manMatches += [PSCustomObject]@{ Path=$path; Hash=$fh; Algo=$algo; Label=$label }
+                Add-Finding 'HIGH' '09' (Ex "IOC match [you added] ($algo): $path$(if($label){" ($label)"})") '00_IOC_MATCHES_manual.txt'
+            }
+            if ($hitComm -or $hitMan) { break }  # this file already flagged; next file
         }
     }
-    $matchLines += ("-" * 78)
-    $matchLines += "Files scanned: $scanned   Matches: $matchCount"
-    if ($matchCount -eq 0) { $matchLines += "(no on-disk binaries matched the IOC list)" }
-    $matchLines | Out-File (Join-Path $OutputPath '00_IOC_MATCHES.txt') -Encoding UTF8 -Force
 
-    if ($matchCount -gt 0) {
-        Write-Host (Ex "  ! $matchCount IOC MATCH(es) found - see 00_IOC_MATCHES.txt") -ForegroundColor Red
+    # Write a separate match file per source so you can always tell community vs. yours.
+    function Write-IOCMatchFile {
+        param($Title, $SourceFile, $Count, $Matches, $OutName)
+        $L = @()
+        $L += (Ex "secgurd $($script:secgurdVersion) ^09 IOC Hash Matches - $Title")
+        $L += ("=" * 78)
+        $L += "Source list : $SourceFile  ($Count hashes)"
+        $L += "Algorithms  : $($algos -join ', ')"
+        $L += "Scanned     : Temp, AppData, Public, ProgramData, Downloads, Desktop, running procs"
+        $L += ("-" * 78)
+        if ($Matches.Count -eq 0) {
+            $L += "(no on-disk binaries matched this list)"
+        } else {
+            foreach ($m in $Matches) {
+                $L += ("MATCH  {0}" -f $m.Path)
+                $L += ("       {0} ({1}){2}" -f $m.Hash, $m.Algo, $(if ($m.Label) { "  [$($m.Label)]" } else { '' }))
+            }
+        }
+        $L += ("-" * 78)
+        $L += "Files scanned: $scanned   Matches: $($Matches.Count)"
+        $L | Out-File (Join-Path $OutputPath $OutName) -Encoding UTF8 -Force
+    }
+
+    if ($haveCommunity) {
+        Write-IOCMatchFile 'community list' $script:CommunityHashFile $script:CommunityHashCount $commMatches '00_IOC_MATCHES_community.txt'
+    }
+    if ($haveManual) {
+        Write-IOCMatchFile 'ones you added' $script:IOCHashFile $script:IOCHashCount $manMatches '00_IOC_MATCHES_manual.txt'
+    }
+
+    $totalMatches = $commMatches.Count + $manMatches.Count
+    if ($totalMatches -gt 0) {
+        $parts = @()
+        if ($commMatches.Count) { $parts += "$($commMatches.Count) community" }
+        if ($manMatches.Count)  { $parts += "$($manMatches.Count) you-added" }
+        Write-Host (Ex "  ! IOC MATCH(es): $($parts -join ', ') - see 00_IOC_MATCHES_*.txt") -ForegroundColor Red
     } else {
         Write-Host (Ex "  [^14] No IOC matches ($scanned files scanned)") -ForegroundColor Green
     }
