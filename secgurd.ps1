@@ -74,6 +74,7 @@ param(
     [switch]$HtmlReport,
     [string]$IOCHashes,
     [int]$DaysBack = 30,
+    [switch]$MakeS1Paste,
     [switch]$Help
 )
 
@@ -114,7 +115,7 @@ function Ex {
     return $s
 }
 
-$script:secgurdVersion = 'v1.1'
+$script:secgurdVersion = 'v1.3'
 
 # ---------------------------------------------
 
@@ -138,6 +139,11 @@ $script:IOCHashFile = $null
 $script:IOCHashSet = $null
 $script:IOCHashCount = 0
 $script:ShowIOCList = $false
+# Community IOC list: auto-loaded from communitysavedIOCS.txt next to the script (refreshed
+# via git pull). Kept SEPARATE from the manual set above so matches can be labeled by source.
+$script:CommunityHashSet = $null
+$script:CommunityHashCount = 0
+$script:CommunityHashFile = $null
 # Lookback window (days) for all time-bounded collectors. Clamp to a sane 1..3650 range.
 if ($DaysBack -lt 1) { $DaysBack = 1 }
 if ($DaysBack -gt 3650) { $DaysBack = 3650 }
@@ -303,6 +309,7 @@ function Show-Help {
     Write-Host "    -HtmlReport           Also build a single-file report.html" -ForegroundColor Gray
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
+    Write-Host "    -MakeS1Paste          Print a copy/paste version for the SentinelOne shell" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  MENU COMMANDS" -ForegroundColor White
@@ -314,6 +321,7 @@ function Show-Help {
     Write-Host "    i                     Toggle: match hashes vs IOC list (prompts for file)" -ForegroundColor Gray
     Write-Host "    l                     Toggle: show the loaded IOC hash list in the menu" -ForegroundColor Gray
     Write-Host "    d                     Set lookback window in days (time-bounded collectors)" -ForegroundColor Gray
+    Write-Host "    s                     Make a copy/paste version for the SentinelOne shell" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
     Write-Host ""
@@ -491,50 +499,150 @@ function Import-IOCHashes {
 }
 
 function Show-IOCList {
-    # Print the currently-loaded IOC hashes with a green check, the source, and a count.
-    if (-not $script:IOCHashSet -or $script:IOCHashCount -eq 0) {
+    # Print the currently-loaded IOC hashes, grouped by source (community vs. ones you added).
+    $haveComm = ($script:CommunityHashSet -and $script:CommunityHashCount -gt 0)
+    $haveMan  = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
+    if (-not $haveComm -and -not $haveMan) {
         Write-Host ""
         Write-Host "  No IOC hashes loaded." -ForegroundColor DarkGray
         Write-Host ""
         return
     }
-    Write-Host ""
-    Write-Host "  " -NoNewline
-    Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
-    Write-Host "IOC hash matching ENABLED" -ForegroundColor White -NoNewline
-    Write-Host "   source: $($script:IOCHashFile)" -ForegroundColor DarkGray
-    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
-    $n = 0
-    foreach ($h in ($script:IOCHashSet.Keys | Sort-Object)) {
-        $n++
-        $label = $script:IOCHashSet[$h]
-        $algo = switch ($h.Length) { 32 {'MD5'} 40 {'SHA1'} 64 {'SHA256'} default {'?'} }
-        # only shorten long (SHA-256) hashes; show MD5/SHA-1 in full since they're already short
-        $short = if ($h.Length -gt 40) { $h.Substring(0,16) + '...' + $h.Substring($h.Length-8) } else { $h }
-        Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
-        Write-Host ("{0,-7}" -f $algo) -ForegroundColor DarkCyan -NoNewline
-        Write-Host $short -ForegroundColor Gray -NoNewline
-        if ($label) { Write-Host "  [$label]" -ForegroundColor DarkCyan } else { Write-Host "" }
-        if ($n -ge 50) {
-            Write-Host ("        ... and $($script:IOCHashCount - 50) more") -ForegroundColor DarkGray
-            break
+
+    # Inner helper to print one source's hashes (capped at 50 for readability).
+    $printSet = {
+        param($title, $set, $count, $src)
+        Write-Host ""
+        Write-Host "  " -NoNewline
+        Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
+        Write-Host $title -ForegroundColor White -NoNewline
+        Write-Host "   source: $src" -ForegroundColor DarkGray
+        Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+        $n = 0
+        foreach ($h in ($set.Keys | Sort-Object)) {
+            $n++
+            $label = $set[$h]
+            $algo = switch ($h.Length) { 32 {'MD5'} 40 {'SHA1'} 64 {'SHA256'} default {'?'} }
+            $short = if ($h.Length -gt 40) { $h.Substring(0,16) + '...' + $h.Substring($h.Length-8) } else { $h }
+            Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
+            Write-Host ("{0,-7}" -f $algo) -ForegroundColor DarkCyan -NoNewline
+            Write-Host $short -ForegroundColor Gray -NoNewline
+            if ($label) { Write-Host "  [$label]" -ForegroundColor DarkCyan } else { Write-Host "" }
+            if ($n -ge 50) {
+                Write-Host ("        ... and $($count - 50) more") -ForegroundColor DarkGray
+                break
+            }
         }
+        Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+        Write-Host "  $count hash(es)." -ForegroundColor DarkGray
     }
-    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
-    Write-Host "  $($script:IOCHashCount) hash(es) loaded - will be matched against on-disk binaries at run time." -ForegroundColor DarkGray
+
+    if ($haveComm) { & $printSet 'COMMUNITY hashes (from communitysavedIOCS.txt)' $script:CommunityHashSet $script:CommunityHashCount $script:CommunityHashFile }
+    if ($haveMan)  { & $printSet 'HASHES YOU ADDED' $script:IOCHashSet $script:IOCHashCount $script:IOCHashFile }
+    Write-Host ""
+    Write-Host "  Both lists are matched against on-disk binaries at run time." -ForegroundColor DarkGray
     Write-Host ""
 }
 
+function Show-S1PasteVersion {
+    # Generate a SentinelOne-remote-shell-ready, copy/paste version of THIS script and put it
+    # on the CLIPBOARD. secgurd is already wrap-safe (no internal here-strings), so we read our
+    # own source, wrap it in an outer here-string + a ScriptBlock invoke that shows the menu,
+    # and copy the whole thing. (Printing the full block to the console isn't workable - it's
+    # thousands of lines and scrolls out of the buffer.) A file fallback is also written.
+
+    $src = $null
+    if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
+        try { $src = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop } catch {}
+    }
+    if (-not $src) {
+        # running via iex with no file on disk - use the in-memory definition
+        try { $src = $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text } catch {}
+    }
+    if (-not $src) {
+        Write-Host "  Could not read secgurd's own source to build the paste version." -ForegroundColor Yellow
+        Write-Host "  Run it from the .ps1 file (not piped) and try again." -ForegroundColor DarkGray
+        return
+    }
+
+    # Safety: a literal '@ at the start of a line inside the source would close the outer
+    # here-string early. secgurd has none, but guard anyway so we never emit a broken block.
+    if ($src -match "(?m)^'@") {
+        Write-Host "  This build contains a line starting with '@ which would break the wrapper." -ForegroundColor Yellow
+        Write-Host "  Paste version not generated." -ForegroundColor DarkGray
+        return
+    }
+
+    $header = "`$s = @'"
+    $footer = "'@`r`n`$sb = [ScriptBlock]::Create(`$s); Clear-Host; & `$sb"
+    $block  = $header + "`r`n" + $src.TrimEnd() + "`r`n" + $footer
+    $lineCount = ($block -split "`r?`n").Count
+
+    # Always write a file fallback first (so there's a copy even if clipboard fails).
+    $outFile = Join-Path $env:TEMP "secgurd_s1_paste.txt"
+    $wrote = $false
+    try { $block | Out-File -FilePath $outFile -Encoding UTF8 -Force; $wrote = $true } catch {}
+
+    # Primary action: copy to clipboard. Try Set-Clipboard, then a clip.exe fallback.
+    $copied = $false
+    if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
+        try { Set-Clipboard -Value $block -ErrorAction Stop; $copied = $true } catch {}
+    }
+    if (-not $copied) {
+        # Fallback for hosts without Set-Clipboard: pipe through clip.exe
+        try { $block | clip.exe; $copied = $true } catch {}
+    }
+
+    Clear-Host
+    Write-Host ""
+    Write-Host "  ============================================================" -ForegroundColor DarkGray
+    Write-Host "   SentinelOne remote-shell paste version" -ForegroundColor Cyan
+    Write-Host "  ============================================================" -ForegroundColor DarkGray
+    Write-Host ""
+    if ($copied) {
+        Write-Host (Ex "  [^14] Copied to clipboard") -ForegroundColor Green -NoNewline
+        Write-Host "  ($lineCount lines)" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Paste it straight into the SentinelOne Remote Shell." -ForegroundColor Gray
+        Write-Host "  It wraps secgurd in a here-string and runs it - the interactive" -ForegroundColor Gray
+        Write-Host "  menu will appear in the shell." -ForegroundColor Gray
+    } else {
+        Write-Host (Ex "  ^16 Clipboard not available in this session.") -ForegroundColor Yellow
+        Write-Host "  Use the saved file instead (below)." -ForegroundColor Gray
+    }
+    Write-Host ""
+    if ($wrote) {
+        Write-Host "  A copy was also saved to:" -ForegroundColor DarkGray
+        Write-Host "    $outFile" -ForegroundColor White
+        Write-Host "  Open it with:  notepad `"$outFile`"" -ForegroundColor DarkGray
+        Write-Host ""
+    }
+}
+
 function Show-ModuleMenu {
-    # If we're not running interactively (e.g. piped via iex over remote shell with no TTY),
+    # Show the interactive menu whenever we can read keyboard input. We intentionally do NOT
+    # treat S1's remote shell (ServerRemoteHost) as non-interactive - it supports Read-Host
+    # fine. Use -Auto (or -Modules) for true headless runs; that path never reaches this
+    # function. The only case we still guard is a genuinely input-less pipeline (e.g. content
+    # piped straight into powershell with a redirected/closed stdin), which would deadlock on
+    # Read-Host - detected by attempting a non-blocking check below.
 
-    # fall through and run everything. Prevents Read-Host deadlock.
+    $canRead = $true
+    try {
+        # If stdin is redirected AND not a console, Read-Host can't get input -> would hang.
+        if ([Console]::IsInputRedirected -and -not [Environment]::UserInteractive) {
+            $canRead = $false
+        }
+    } catch {
+        # [Console] may be unavailable in some hosts; assume we can read and let the menu try.
+        $canRead = $true
+    }
 
-    if (-not [Environment]::UserInteractive -or $Host.Name -eq 'ServerRemoteHost') {
+    if (-not $canRead) {
         Write-Host ""
-        Write-Host (Ex "  ^16  Non-interactive session detected ^09 running all modules.") -ForegroundColor Yellow
+        Write-Host (Ex "  ^16  No interactive input available ^09 running all modules.") -ForegroundColor Yellow
+        Write-Host (Ex "       (use -Auto for headless runs, or -Modules to pick specific ones)") -ForegroundColor DarkGray
         Write-Host ""
-        # No menu available to choose from, so enable everything.
         foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
         $script:ProceedWithRun = $true
         return
@@ -617,9 +725,18 @@ function Show-ModuleMenu {
         Write-Host "(report.html)" -ForegroundColor DarkGray
 
         $iocOn   = [bool]$script:IOCHashFile
-        $iocMark = if ($iocOn) { (Ex "[^14]") } else { '[ ]' }
-        $iocClr  = if ($iocOn) { 'Green' } else { 'DarkGray' }
-        $iocNote = if ($iocOn) { "($($script:IOCHashCount) hashes loaded)" } else { '(prompts for hash list)' }
+        $commOn  = ($script:CommunityHashCount -gt 0)
+        $iocMark = if ($iocOn -or $commOn) { (Ex "[^14]") } else { '[ ]' }
+        $iocClr  = if ($iocOn -or $commOn) { 'Green' } else { 'DarkGray' }
+        # Build a note describing what's loaded from each source.
+        if ($iocOn -or $commOn) {
+            $parts = @()
+            if ($commOn) { $parts += "community $($script:CommunityHashCount)" }
+            if ($iocOn)  { $parts += "you-added $($script:IOCHashCount)" }
+            $iocNote = "($($parts -join ' + '))"
+        } else {
+            $iocNote = '(prompts for hash list)'
+        }
         Write-Host "   " -NoNewline
         Write-Host $iocMark -ForegroundColor $iocClr -NoNewline
         Write-Host "  " -NoNewline
@@ -627,8 +744,8 @@ function Show-ModuleMenu {
         Write-Host ("{0,-30}" -f 'Match hashes against IOC list') -ForegroundColor White -NoNewline
         Write-Host $iocNote -ForegroundColor DarkGray
 
-        # Only offer the list toggle once hashes are loaded
-        if ($iocOn) {
+        # Only offer the list toggle once SOME hashes are loaded (either source)
+        if ($iocOn -or $commOn) {
             $lMark = if ($script:ShowIOCList) { (Ex "[^14]") } else { '[ ]' }
             $lClr  = if ($script:ShowIOCList) { 'Green' } else { 'DarkGray' }
             $lNote = if ($script:ShowIOCList) { '(showing below)' } else { '(hidden)' }
@@ -646,6 +763,13 @@ function Show-ModuleMenu {
         Write-Host ("{0,-4}" -f 'd') -ForegroundColor Yellow -NoNewline
         Write-Host ("{0,-30}" -f 'Lookback window (days)') -ForegroundColor White -NoNewline
         Write-Host "(currently $($script:DaysBack)d)" -ForegroundColor DarkGray
+
+        Write-Host "   " -NoNewline
+        Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f 's') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-30}" -f 'Make SentinelOne paste version') -ForegroundColor White -NoNewline
+        Write-Host "(copy/paste for S1 shell)" -ForegroundColor DarkGray
 
         Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
@@ -819,6 +943,14 @@ function Show-ModuleMenu {
             } else {
                 $pendingMsg = "Not a number - lookback unchanged ($($script:DaysBack)d)"
             }
+            Clear-Host; Show-secgurdBannerCompact
+            continue
+        }
+
+        if ($cmd -eq 's') {
+            Show-S1PasteVersion
+            Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
+            Read-Host | Out-Null
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -1069,6 +1201,41 @@ function Show-DeadDragon {
     Write-Host ""
     Write-Flair "        The Dragon still lives! Choose a module to hunt." '1;91' 'Red'
     Write-Host ""
+}
+
+# ---------------------------------------------
+
+#  COMMUNITY IOC LIST (auto-loaded from the script folder)
+
+# ---------------------------------------------
+
+# Look for communitysavedIOCS.txt next to secgurd.ps1 and auto-load it. This file is meant to
+# live in the repo and be refreshed via 'git pull', so every run uses the latest community
+# hashes with no flags. It is kept separate from any manual -IOCHashes / pasted list.
+$scriptDir = $null
+if ($PSScriptRoot) { $scriptDir = $PSScriptRoot }
+elseif ($PSCommandPath) { $scriptDir = Split-Path -Parent $PSCommandPath }
+if ($scriptDir) {
+    $communityFile = Join-Path $scriptDir 'communitysavedIOCS.txt'
+    if (Test-Path $communityFile) {
+        $cset = Import-IOCHashes $communityFile
+        if ($cset.Count -gt 0) {
+            $script:CommunityHashSet  = $cset
+            $script:CommunityHashCount = $cset.Count
+            $script:CommunityHashFile  = $communityFile
+        }
+    }
+}
+
+# ---------------------------------------------
+
+#  S1 PASTE-VERSION GENERATOR (CLI)
+
+# ---------------------------------------------
+
+if ($MakeS1Paste) {
+    Show-S1PasteVersion
+    return
 }
 
 # ---------------------------------------------
@@ -2747,59 +2914,57 @@ if ($script:HtmlReport) {
     [void]$sb.AppendLine('<meta name="viewport" content="width=device-width, initial-scale=1">')
     [void]$sb.AppendLine("<title>secgurd report - $env:COMPUTERNAME</title>")
     [void]$sb.AppendLine('<style>')
-    [void]$sb.AppendLine(@'
-:root{--bg:#0e1116;--panel:#161b22;--ink:#c9d1d9;--muted:#8b949e;--line:#30363d;--gold:#d8b24a;--hi:#f85149;--med:#d29922;--info:#8b949e;--accent:#58a6ff}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-header{padding:24px 28px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#11161d,#0e1116)}
-h1{margin:0;font-size:22px;letter-spacing:.08em;color:var(--gold)}
-.logo{margin:0;font:11px/1.18 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow-x:auto}
-.logo .gold{color:#e7c44d}
-.logo .hilt{color:#f0f0f0}
-.logo .tip{color:#e1372d}
-.logo .dim{color:#3a4350}
-.ver{color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-top:2px}
-.tag{color:var(--hi);font-weight:600;font-size:13px;margin-top:4px}
-.meta{display:flex;flex-wrap:wrap;gap:18px;margin-top:14px;font-size:13px;color:var(--muted)}
-.meta b{color:var(--ink);font-weight:600}
-.wrap{max-width:1100px;margin:0 auto;padding:24px 28px}
-h2{font-size:15px;letter-spacing:.05em;color:var(--accent);border-bottom:1px solid var(--line);padding-bottom:6px;margin:32px 0 14px}
-.findings{display:grid;gap:8px}
-.f{padding:10px 12px;border-radius:8px;border-left:4px solid var(--line);background:var(--panel);display:block;color:inherit;text-decoration:none}
-.f.HIGH{border-left-color:var(--hi)}.f.MED{border-left-color:var(--med)}.f.INFO{border-left-color:var(--info)}
-a.f{cursor:pointer;transition:background .12s,transform .12s}
-a.f:hover{background:#1c232c;transform:translateX(2px)}
-a.f .go{float:right;font-size:11px;color:var(--muted);opacity:0;transition:opacity .12s}
-a.f:hover .go{opacity:1}
-/* artifact highlight when jumped-to from a finding */
-details.hl-HIGH{border-color:var(--hi);box-shadow:0 0 0 1px var(--hi),0 0 16px rgba(248,81,73,.25)}
-details.hl-MED{border-color:var(--med);box-shadow:0 0 0 1px var(--med),0 0 16px rgba(210,153,34,.25)}
-details.hl-INFO{border-color:var(--info);box-shadow:0 0 0 1px var(--info),0 0 16px rgba(139,148,158,.25)}
-.modhdr.hl-HIGH{color:var(--hi)}.modhdr.hl-MED{color:var(--med)}.modhdr.hl-INFO{color:var(--gold)}
-.sev{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;margin-right:8px;vertical-align:1px}
-.sev.HIGH{background:rgba(248,81,73,.18);color:#ff7b72}.sev.MED{background:rgba(210,153,34,.18);color:#e3b341}.sev.INFO{background:rgba(139,148,158,.18);color:#adbac7}
-.none{color:var(--muted);font-style:italic}
-details{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:8px 0;overflow:hidden}
-summary{cursor:pointer;padding:10px 14px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center}
-summary::-webkit-details-marker{display:none}
-summary:hover{background:#1c232c}
-summary .sz{color:var(--muted);font-weight:400;font-size:12px}
-details.empty summary{color:var(--muted)}
-.badge{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:rgba(139,148,158,.14);border:1px solid var(--line);border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:1px}
-.badge.err{color:#b08a86;background:rgba(176,138,134,.10);border-color:rgba(176,138,134,.30)}
-.nodata{padding:14px 16px;border-top:1px solid var(--line);color:var(--muted);font-style:italic;font-size:13px}
-details.errored summary{color:#b6938f}
-.errbox{padding:14px 16px;border-top:1px solid rgba(176,138,134,.25);color:#a98e8a;font-size:13px;background:rgba(176,138,134,.05)}
-.errbox b{color:#c79a95}
-pre{margin:0;padding:14px 16px;border-top:1px solid var(--line);background:#0b0f14;color:#c9d1d9;font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto}
-.modhdr{margin-top:26px;color:var(--gold);font-size:13px;letter-spacing:.1em;text-transform:uppercase}
-footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-top:1px solid var(--line);margin-top:30px}
-.filter{margin:10px 0 4px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.filter button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px}
-.filter button:hover{border-color:var(--accent)}
-.filter .clearbtn{margin-left:auto;color:var(--muted)}
-.filter .clearbtn:hover{border-color:var(--muted);color:var(--ink)}
-'@)
+    [void]$sb.AppendLine(':root{--bg:#0e1116;--panel:#161b22;--ink:#c9d1d9;--muted:#8b949e;--line:#30363d;--gold:#d8b24a;--hi:#f85149;--med:#d29922;--info:#8b949e;--accent:#58a6ff}')
+    [void]$sb.AppendLine('*{box-sizing:border-box}')
+    [void]$sb.AppendLine('body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}')
+    [void]$sb.AppendLine('header{padding:24px 28px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#11161d,#0e1116)}')
+    [void]$sb.AppendLine('h1{margin:0;font-size:22px;letter-spacing:.08em;color:var(--gold)}')
+    [void]$sb.AppendLine('.logo{margin:0;font:11px/1.18 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow-x:auto}')
+    [void]$sb.AppendLine('.logo .gold{color:#e7c44d}')
+    [void]$sb.AppendLine('.logo .hilt{color:#f0f0f0}')
+    [void]$sb.AppendLine('.logo .tip{color:#e1372d}')
+    [void]$sb.AppendLine('.logo .dim{color:#3a4350}')
+    [void]$sb.AppendLine('.ver{color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-top:2px}')
+    [void]$sb.AppendLine('.tag{color:var(--hi);font-weight:600;font-size:13px;margin-top:4px}')
+    [void]$sb.AppendLine('.meta{display:flex;flex-wrap:wrap;gap:18px;margin-top:14px;font-size:13px;color:var(--muted)}')
+    [void]$sb.AppendLine('.meta b{color:var(--ink);font-weight:600}')
+    [void]$sb.AppendLine('.wrap{max-width:1100px;margin:0 auto;padding:24px 28px}')
+    [void]$sb.AppendLine('h2{font-size:15px;letter-spacing:.05em;color:var(--accent);border-bottom:1px solid var(--line);padding-bottom:6px;margin:32px 0 14px}')
+    [void]$sb.AppendLine('.findings{display:grid;gap:8px}')
+    [void]$sb.AppendLine('.f{padding:10px 12px;border-radius:8px;border-left:4px solid var(--line);background:var(--panel);display:block;color:inherit;text-decoration:none}')
+    [void]$sb.AppendLine('.f.HIGH{border-left-color:var(--hi)}.f.MED{border-left-color:var(--med)}.f.INFO{border-left-color:var(--info)}')
+    [void]$sb.AppendLine('a.f{cursor:pointer;transition:background .12s,transform .12s}')
+    [void]$sb.AppendLine('a.f:hover{background:#1c232c;transform:translateX(2px)}')
+    [void]$sb.AppendLine('a.f .go{float:right;font-size:11px;color:var(--muted);opacity:0;transition:opacity .12s}')
+    [void]$sb.AppendLine('a.f:hover .go{opacity:1}')
+    [void]$sb.AppendLine('/* artifact highlight when jumped-to from a finding */')
+    [void]$sb.AppendLine('details.hl-HIGH{border-color:var(--hi);box-shadow:0 0 0 1px var(--hi),0 0 16px rgba(248,81,73,.25)}')
+    [void]$sb.AppendLine('details.hl-MED{border-color:var(--med);box-shadow:0 0 0 1px var(--med),0 0 16px rgba(210,153,34,.25)}')
+    [void]$sb.AppendLine('details.hl-INFO{border-color:var(--info);box-shadow:0 0 0 1px var(--info),0 0 16px rgba(139,148,158,.25)}')
+    [void]$sb.AppendLine('.modhdr.hl-HIGH{color:var(--hi)}.modhdr.hl-MED{color:var(--med)}.modhdr.hl-INFO{color:var(--gold)}')
+    [void]$sb.AppendLine('.sev{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;margin-right:8px;vertical-align:1px}')
+    [void]$sb.AppendLine('.sev.HIGH{background:rgba(248,81,73,.18);color:#ff7b72}.sev.MED{background:rgba(210,153,34,.18);color:#e3b341}.sev.INFO{background:rgba(139,148,158,.18);color:#adbac7}')
+    [void]$sb.AppendLine('.none{color:var(--muted);font-style:italic}')
+    [void]$sb.AppendLine('details{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:8px 0;overflow:hidden}')
+    [void]$sb.AppendLine('summary{cursor:pointer;padding:10px 14px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center}')
+    [void]$sb.AppendLine('summary::-webkit-details-marker{display:none}')
+    [void]$sb.AppendLine('summary:hover{background:#1c232c}')
+    [void]$sb.AppendLine('summary .sz{color:var(--muted);font-weight:400;font-size:12px}')
+    [void]$sb.AppendLine('details.empty summary{color:var(--muted)}')
+    [void]$sb.AppendLine('.badge{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:rgba(139,148,158,.14);border:1px solid var(--line);border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:1px}')
+    [void]$sb.AppendLine('.badge.err{color:#b08a86;background:rgba(176,138,134,.10);border-color:rgba(176,138,134,.30)}')
+    [void]$sb.AppendLine('.nodata{padding:14px 16px;border-top:1px solid var(--line);color:var(--muted);font-style:italic;font-size:13px}')
+    [void]$sb.AppendLine('details.errored summary{color:#b6938f}')
+    [void]$sb.AppendLine('.errbox{padding:14px 16px;border-top:1px solid rgba(176,138,134,.25);color:#a98e8a;font-size:13px;background:rgba(176,138,134,.05)}')
+    [void]$sb.AppendLine('.errbox b{color:#c79a95}')
+    [void]$sb.AppendLine('pre{margin:0;padding:14px 16px;border-top:1px solid var(--line);background:#0b0f14;color:#c9d1d9;font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto}')
+    [void]$sb.AppendLine('.modhdr{margin-top:26px;color:var(--gold);font-size:13px;letter-spacing:.1em;text-transform:uppercase}')
+    [void]$sb.AppendLine('footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-top:1px solid var(--line);margin-top:30px}')
+    [void]$sb.AppendLine('.filter{margin:10px 0 4px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}')
+    [void]$sb.AppendLine('.filter button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px}')
+    [void]$sb.AppendLine('.filter button:hover{border-color:var(--accent)}')
+    [void]$sb.AppendLine('.filter .clearbtn{margin-left:auto;color:var(--muted)}')
+    [void]$sb.AppendLine('.filter .clearbtn:hover{border-color:var(--muted);color:var(--ink)}')
     [void]$sb.AppendLine('</style></head><body>')
 
     # Header
@@ -2969,10 +3134,10 @@ $hashLines += "Verify later with:  Get-FileHash <file> -Algorithm SHA256"
 $hashLines | Out-File (Join-Path $OutputPath '00_HASHES.txt') -Encoding UTF8 -Force
 
 # ---------------------------------------------
-#  00_IOC_MATCHES.txt   match on-disk binaries against a known-bad SHA-256 list
+#  IOC HASH MATCHING   community list + manual list, kept separate
 # ---------------------------------------------
 
-# Resolve the IOC list: interactive toggle wins; else the -IOCHashes CLI param.
+# Resolve the MANUAL list from the -IOCHashes CLI param if the menu didn't already load one.
 if (-not $script:IOCHashSet -and $IOCHashes) {
     if (Test-Path $IOCHashes) {
         $script:IOCHashSet = Import-IOCHashes $IOCHashes
@@ -2983,11 +3148,17 @@ if (-not $script:IOCHashSet -and $IOCHashes) {
     }
 }
 
-if ($script:IOCHashSet -and $script:IOCHashCount -gt 0) {
-    Write-Host (Ex "  *  Matching on-disk binaries against $($script:IOCHashCount) IOC hashes...") -ForegroundColor Cyan
+$haveCommunity = ($script:CommunityHashSet -and $script:CommunityHashCount -gt 0)
+$haveManual    = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
 
-    # Build the candidate set: real executables/DLLs from the high-signal locations a triage
-    # would care about. We hash these (not secgurd's own output) and compare to the IOC list.
+if ($haveCommunity -or $haveManual) {
+    # Friendly description of what we're matching against.
+    $srcDesc = @()
+    if ($haveCommunity) { $srcDesc += "community ($($script:CommunityHashCount))" }
+    if ($haveManual)    { $srcDesc += "ones you added ($($script:IOCHashCount))" }
+    Write-Host (Ex "  *  Matching on-disk binaries against $($srcDesc -join ' + ') hashes...") -ForegroundColor Cyan
+
+    # Candidate set: real executables/DLLs in high-signal locations + running process images.
     $scanRoots = @(
         "$env:TEMP", "$env:SystemRoot\Temp",
         "$env:PUBLIC", "$env:ProgramData",
@@ -3004,55 +3175,86 @@ if ($script:IOCHashSet -and $script:IOCHashCount -gt 0) {
                 ForEach-Object { $candidates.Add($_.FullName) }
         } catch {}
     }
-    # also include currently-running process images (catches things outside the scan roots)
     Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
         if ($_.Path) { $candidates.Add($_.Path) }
     }
 
-    # Determine which algorithms we actually need, based on the hash lengths in the list.
-    # 32 = MD5, 40 = SHA-1, 64 = SHA-256. Only compute what's present to avoid wasted hashing.
+    # Determine which algorithms are needed across BOTH lists (only hash what we must).
+    $allKeys = @()
+    if ($haveCommunity) { $allKeys += $script:CommunityHashSet.Keys }
+    if ($haveManual)    { $allKeys += $script:IOCHashSet.Keys }
     $algos = @()
-    $lengths = $script:IOCHashSet.Keys | ForEach-Object { $_.Length } | Sort-Object -Unique
+    $lengths = $allKeys | ForEach-Object { $_.Length } | Sort-Object -Unique
     if ($lengths -contains 32) { $algos += 'MD5' }
     if ($lengths -contains 40) { $algos += 'SHA1' }
     if ($lengths -contains 64) { $algos += 'SHA256' }
     if ($algos.Count -eq 0) { $algos = @('SHA256') }
 
+    # Prepare separate result buffers per source.
+    $commMatches = @()
+    $manMatches  = @()
     $seen = @{}
-    $matchLines = @()
-    $matchLines += (Ex "secgurd $($script:secgurdVersion) ^09 IOC Hash Matches")
-    $matchLines += ("=" * 78)
-    $matchLines += "IOC list  : $($script:IOCHashFile)  ($($script:IOCHashCount) hashes)"
-    $matchLines += "Algorithms: $($algos -join ', ')"
-    $matchLines += "Scanned   : Temp, AppData, Public, ProgramData, Downloads, Desktop, running procs"
-    $matchLines += ("-" * 78)
+    $scanned = 0
 
-    $matchCount = 0; $scanned = 0
     foreach ($path in $candidates) {
         if ($seen.ContainsKey($path)) { continue }
         $seen[$path] = $true
         $scanned++
         foreach ($algo in $algos) {
-            try {
-                $fh = (Get-FileHash $path -Algorithm $algo -ErrorAction Stop).Hash.ToUpper()
-            } catch { continue }
-            if ($script:IOCHashSet.ContainsKey($fh)) {
-                $matchCount++
-                $label = $script:IOCHashSet[$fh]
-                $matchLines += ("MATCH  {0}" -f $path)
-                $matchLines += ("       {0} ({1}){2}" -f $fh, $algo, $(if ($label) { "  [$label]" } else { '' }))
-                Add-Finding 'HIGH' '09' (Ex "IOC hash match ($algo): $path$(if($label){" ($label)"})") '00_IOC_MATCHES.txt'
-                break  # one match per file is enough
+            $fh = $null
+            try { $fh = (Get-FileHash $path -Algorithm $algo -ErrorAction Stop).Hash.ToUpper() } catch { continue }
+            $hitComm = $haveCommunity -and $script:CommunityHashSet.ContainsKey($fh)
+            $hitMan  = $haveManual    -and $script:IOCHashSet.ContainsKey($fh)
+            if ($hitComm) {
+                $label = $script:CommunityHashSet[$fh]
+                $commMatches += [PSCustomObject]@{ Path=$path; Hash=$fh; Algo=$algo; Label=$label }
+                Add-Finding 'HIGH' '09' (Ex "IOC match [community] ($algo): $path$(if($label){" ($label)"})") '00_IOC_MATCHES_community.txt'
             }
+            if ($hitMan) {
+                $label = $script:IOCHashSet[$fh]
+                $manMatches += [PSCustomObject]@{ Path=$path; Hash=$fh; Algo=$algo; Label=$label }
+                Add-Finding 'HIGH' '09' (Ex "IOC match [you added] ($algo): $path$(if($label){" ($label)"})") '00_IOC_MATCHES_manual.txt'
+            }
+            if ($hitComm -or $hitMan) { break }  # this file already flagged; next file
         }
     }
-    $matchLines += ("-" * 78)
-    $matchLines += "Files scanned: $scanned   Matches: $matchCount"
-    if ($matchCount -eq 0) { $matchLines += "(no on-disk binaries matched the IOC list)" }
-    $matchLines | Out-File (Join-Path $OutputPath '00_IOC_MATCHES.txt') -Encoding UTF8 -Force
 
-    if ($matchCount -gt 0) {
-        Write-Host (Ex "  ! $matchCount IOC MATCH(es) found - see 00_IOC_MATCHES.txt") -ForegroundColor Red
+    # Write a separate match file per source so you can always tell community vs. yours.
+    function Write-IOCMatchFile {
+        param($Title, $SourceFile, $Count, $Matches, $OutName)
+        $L = @()
+        $L += (Ex "secgurd $($script:secgurdVersion) ^09 IOC Hash Matches - $Title")
+        $L += ("=" * 78)
+        $L += "Source list : $SourceFile  ($Count hashes)"
+        $L += "Algorithms  : $($algos -join ', ')"
+        $L += "Scanned     : Temp, AppData, Public, ProgramData, Downloads, Desktop, running procs"
+        $L += ("-" * 78)
+        if ($Matches.Count -eq 0) {
+            $L += "(no on-disk binaries matched this list)"
+        } else {
+            foreach ($m in $Matches) {
+                $L += ("MATCH  {0}" -f $m.Path)
+                $L += ("       {0} ({1}){2}" -f $m.Hash, $m.Algo, $(if ($m.Label) { "  [$($m.Label)]" } else { '' }))
+            }
+        }
+        $L += ("-" * 78)
+        $L += "Files scanned: $scanned   Matches: $($Matches.Count)"
+        $L | Out-File (Join-Path $OutputPath $OutName) -Encoding UTF8 -Force
+    }
+
+    if ($haveCommunity) {
+        Write-IOCMatchFile 'community list' $script:CommunityHashFile $script:CommunityHashCount $commMatches '00_IOC_MATCHES_community.txt'
+    }
+    if ($haveManual) {
+        Write-IOCMatchFile 'ones you added' $script:IOCHashFile $script:IOCHashCount $manMatches '00_IOC_MATCHES_manual.txt'
+    }
+
+    $totalMatches = $commMatches.Count + $manMatches.Count
+    if ($totalMatches -gt 0) {
+        $parts = @()
+        if ($commMatches.Count) { $parts += "$($commMatches.Count) community" }
+        if ($manMatches.Count)  { $parts += "$($manMatches.Count) you-added" }
+        Write-Host (Ex "  ! IOC MATCH(es): $($parts -join ', ') - see 00_IOC_MATCHES_*.txt") -ForegroundColor Red
     } else {
         Write-Host (Ex "  [^14] No IOC matches ($scanned files scanned)") -ForegroundColor Green
     }
