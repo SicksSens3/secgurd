@@ -1,0 +1,17 @@
+# secgurd community IOC list
+# ---------------------------------------------------------------------------
+# This file is auto-loaded by secgurd at runtime (it lives next to secgurd.ps1).
+# Update it with `git pull` to get the latest community hashes - no flags needed.
+#
+# It is kept SEPARATE from any hashes you add manually (-IOCHashes / the 'i' menu),
+# so matches are labeled [community] vs [you added] and written to separate files.
+#
+# Format: one hash per line. MD5 (32), SHA-1 (40), or SHA-256 (64) hex. An optional
+#         label after a comma is shown on a match:   <hash>,<label>
+# Lines starting with # are comments and are ignored.
+#
+# If you enabled the "Refresh community IOC list" GitHub Action, this file is
+# regenerated daily from abuse.ch MalwareBazaar. Otherwise, add hashes by hand below.
+# ---------------------------------------------------------------------------
+
+# (no hashes yet - add some, or let the GitHub Action populate this file)
