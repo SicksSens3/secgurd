@@ -736,11 +736,13 @@ function Show-S1ChunkedPaste {
 }
 
 function Show-S1Compressed {
-    # Compressed SINGLE paste. Gzip the script then Base64 it - roughly one third the size of
-    # the plain text, so the whole thing fits in one paste even on size-limited shells. The
-    # pasted block is a short decompress-write-run wrapper plus the blob. NOTE: this DOES use a
-    # FromBase64String + GzipStream decode, which is a stronger pattern than plain text - test it
-    # on one box first; if your EDR flags it, fall back to the chunked plain-text option.
+    # Compressed SINGLE paste, with IOC lists bundled in. Gzip the script (and the community +
+    # manual hash lists, if present) then Base64 it - roughly one third the size of plain text,
+    # so it fits in one paste even on size-limited shells. On the target, the wrapper decompresses
+    # and writes secgurd.ps1 PLUS communitysavedIOCS.txt (and any manual list) into %TEMP% so the
+    # IOC auto-load works on an air-gapped box, then runs the script.
+    # NOTE: uses FromBase64String + GzipStream decode (stronger pattern than plain text). If your
+    # EDR flags it, fall back to the chunked plain-text option [2].
 
     $src = $null
     if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
@@ -754,26 +756,68 @@ function Show-S1Compressed {
         return
     }
 
-    # Gzip-compress the UTF-8 source in memory, then Base64-encode.
-    $srcBytes = [Text.Encoding]::UTF8.GetBytes($src)
+    # Build a multi-file container. Each file is preceded by a marker line. The marker is
+    # assembled from fragments at runtime so the literal full marker never appears in this
+    # script's own source (otherwise packing secgurd would embed false separators).
+    $MK = ('<' * 3) + 'SG' + 'FILE' + ':'
+    $END = ('>' * 3)
+    $container = New-Object System.Text.StringBuilder
+    [void]$container.AppendLine($MK + 'secgurd.ps1' + $END)
+    [void]$container.Append($src)
+    if (-not $src.EndsWith("`n")) { [void]$container.AppendLine('') }
+
+    $bundled = @('secgurd.ps1')
+    # community list (rides along so the air-gapped box gets current IOCs)
+    if ($script:CommunityHashFile -and (Test-Path $script:CommunityHashFile)) {
+        try {
+            $cTxt = Get-Content -LiteralPath $script:CommunityHashFile -Raw -ErrorAction Stop
+            [void]$container.AppendLine($MK + 'communitysavedIOCS.txt' + $END)
+            [void]$container.Append($cTxt)
+            if (-not $cTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
+            $bundled += "communitysavedIOCS.txt ($($script:CommunityHashCount) hashes)"
+        } catch {}
+    }
+    # manual list (whatever you loaded via -IOCHashes / the i menu)
+    if ($script:IOCHashFile -and (Test-Path $script:IOCHashFile)) {
+        try {
+            $mTxt = Get-Content -LiteralPath $script:IOCHashFile -Raw -ErrorAction Stop
+            [void]$container.AppendLine($MK + 'manualIOCS.txt' + $END)
+            [void]$container.Append($mTxt)
+            if (-not $mTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
+            $bundled += "manualIOCS.txt ($($script:IOCHashCount) hashes)"
+        } catch {}
+    }
+
+    # Gzip-compress the whole container, then Base64-encode.
+    $bytes = [Text.Encoding]::UTF8.GetBytes($container.ToString())
     $ms = New-Object System.IO.MemoryStream
     $gz = New-Object System.IO.Compression.GzipStream($ms, [System.IO.Compression.CompressionMode]::Compress)
-    $gz.Write($srcBytes, 0, $srcBytes.Length)
+    $gz.Write($bytes, 0, $bytes.Length)
     $gz.Close()
     $b64 = [Convert]::ToBase64String($ms.ToArray())
     $ms.Dispose()
 
-    $tgtPs1 = '$env:TEMP\secgurd.ps1'
-
-    # The paste block: store the blob, decompress to the .ps1, run it.
-    # Built as one line so it pastes cleanly. Uses $env:TEMP on the target.
+    # The paste block: decompress the container, split on markers, write each file to %TEMP%,
+    # then run secgurd.ps1. Manual list (if present) is passed via -IOCHashes; the community
+    # list is auto-loaded because it sits next to secgurd.ps1 in %TEMP%.
+    # The target rebuilds the marker from fragments at runtime (same as the pack side) so the
+    # literal full marker never appears in this script's own source.
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append('$b=')
     [void]$sb.Append("'$b64'")
-    [void]$sb.Append('; $d=[IO.Compression.GzipStream]::new([IO.MemoryStream]::new([Convert]::FromBase64String($b)),[IO.Compression.CompressionMode]::Decompress); ')
-    [void]$sb.Append('$o=[IO.MemoryStream]::new(); $d.CopyTo($o); ')
-    [void]$sb.Append("[IO.File]::WriteAllBytes(`"$tgtPs1`",`$o.ToArray()); ")
-    [void]$sb.Append("powershell -ExecutionPolicy Bypass -File `"$tgtPs1`"")
+    [void]$sb.Append('; $g=[IO.Compression.GzipStream]::new([IO.MemoryStream]::new([Convert]::FromBase64String($b)),[IO.Compression.CompressionMode]::Decompress); ')
+    [void]$sb.Append('$o=[IO.MemoryStream]::new(); $g.CopyTo($o); $t=[Text.Encoding]::UTF8.GetString($o.ToArray()); ')
+    # rebuild marker + end-token from fragments (mirrors the pack side)
+    [void]$sb.Append('$mk=(''<''*3)+''SG''+''FILE''+'':''; $en=(''>''*3); ')
+    [void]$sb.Append('$parts=$t -split [regex]::Escape($mk); ')
+    [void]$sb.Append('foreach($p in $parts){ if(-not $p){continue}; ')
+    [void]$sb.Append('$nl=$p.IndexOf($en); if($nl -lt 0){continue}; ')
+    [void]$sb.Append('$fn=$p.Substring(0,$nl); $body=$p.Substring($nl+$en.Length); if($body.StartsWith("`r`n")){$body=$body.Substring(2)}elseif($body.StartsWith("`n")){$body=$body.Substring(1)}; ')
+    [void]$sb.Append('[IO.File]::WriteAllText((Join-Path $env:TEMP $fn),$body) }; ')
+    [void]$sb.Append('$man=Join-Path $env:TEMP "manualIOCS.txt"; ')
+    [void]$sb.Append('$sg=Join-Path $env:TEMP "secgurd.ps1"; ')
+    [void]$sb.Append('if(Test-Path $man){ powershell -ExecutionPolicy Bypass -File $sg -IOCHashes $man } ')
+    [void]$sb.Append('else{ powershell -ExecutionPolicy Bypass -File $sg }')
     $block = $sb.ToString()
 
     # Save a file fallback.
@@ -791,21 +835,24 @@ function Show-S1Compressed {
     Clear-Host
     Write-Host ""
     Write-Host "  ============================================================" -ForegroundColor DarkGray
-    Write-Host "   Compressed single paste" -ForegroundColor Cyan
+    Write-Host "   Compressed single paste  (with IOC lists bundled)" -ForegroundColor Cyan
     Write-Host "  ============================================================" -ForegroundColor DarkGray
     $kb = [Math]::Round($block.Length / 1KB)
     if ($copied) {
         Write-Host (Ex "  [^14] Copied to clipboard") -ForegroundColor Green -NoNewline
         Write-Host "  (~$kb KB, one paste)" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "  Paste the single block into the S1 shell and press Enter." -ForegroundColor Gray
-        Write-Host "  It decompresses secgurd to %TEMP%\secgurd.ps1 and runs it (menu appears)." -ForegroundColor Gray
     } else {
         Write-Host (Ex "  ^16 Clipboard not available - use the saved file below.") -ForegroundColor Yellow
     }
     Write-Host ""
-    Write-Host "  NOTE: this uses gzip+Base64 decode. If your EDR flags it, use option [2]" -ForegroundColor DarkGray
-    Write-Host "  (chunked plain text) instead - same result, no encoding." -ForegroundColor DarkGray
+    Write-Host "  Bundled into the paste:" -ForegroundColor Gray
+    foreach ($b in $bundled) { Write-Host "    - $b" -ForegroundColor DarkGray }
+    Write-Host ""
+    Write-Host "  Paste the single block into the S1 shell and press Enter. It unpacks" -ForegroundColor Gray
+    Write-Host "  secgurd + the IOC list(s) into %TEMP% and runs it - IOC matching works" -ForegroundColor Gray
+    Write-Host "  offline, no git pull needed on the target." -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  NOTE: gzip+Base64 decode. If your EDR flags it, use option [2] instead." -ForegroundColor DarkGray
     Write-Host ""
     if ($wrote) {
         Write-Host "  Also saved to: $outFile" -ForegroundColor DarkGray
