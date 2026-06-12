@@ -73,6 +73,7 @@ param(
     [switch]$WithSignatures,
     [switch]$HtmlReport,
     [string]$IOCHashes,
+    [string]$CommunityIOCHashes,
     [int]$DaysBack = 30,
     [switch]$MakeS1Paste,
     [int]$S1ChunkSize = 0,
@@ -309,6 +310,7 @@ function Show-Help {
     Write-Host "    -WithSignatures       Verify Authenticode signatures (slow, may stall offline)" -ForegroundColor Gray
     Write-Host "    -HtmlReport           Also build a single-file report.html" -ForegroundColor Gray
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
+    Write-Host "    -CommunityIOCHashes <file>  Explicit path to the community list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
     Write-Host "    -MakeS1Paste          Copy a paste-ready version for the SentinelOne shell" -ForegroundColor Gray
     Write-Host "    -S1ChunkSize <N>      With -MakeS1Paste: chunked paste (N chars) for size-limited shells" -ForegroundColor Gray
@@ -816,9 +818,12 @@ function Show-S1Compressed {
     [void]$sb.Append('$fp=Join-Path $env:TEMP $fn; [IO.File]::WriteAllText($fp,$body); $wrote+=("{0} ({1:N0} bytes)" -f $fn,(Get-Item $fp).Length) }; ')
     [void]$sb.Append('Write-Host ""; Write-Host ("  unpacked to {0}:" -f $env:TEMP) -ForegroundColor Cyan; foreach($w in $wrote){ Write-Host "    + $w" -ForegroundColor DarkGray }; Write-Host ""; ')
     [void]$sb.Append('$man=Join-Path $env:TEMP "manualIOCS.txt"; ')
+    [void]$sb.Append('$com=Join-Path $env:TEMP "communitysavedIOCS.txt"; ')
     [void]$sb.Append('$sg=Join-Path $env:TEMP "secgurd.ps1"; ')
-    [void]$sb.Append('if(Test-Path $man){ powershell -ExecutionPolicy Bypass -File $sg -IOCHashes $man } ')
-    [void]$sb.Append('else{ powershell -ExecutionPolicy Bypass -File $sg }')
+    [void]$sb.Append('$al=@("-ExecutionPolicy","Bypass","-File",$sg); ')
+    [void]$sb.Append('if(Test-Path $com){$al+=@("-CommunityIOCHashes",$com)}; ')
+    [void]$sb.Append('if(Test-Path $man){$al+=@("-IOCHashes",$man)}; ')
+    [void]$sb.Append('& powershell $al')
     $block = $sb.ToString()
 
     # Save a file fallback.
@@ -1472,21 +1477,27 @@ function Show-DeadDragon {
 
 # ---------------------------------------------
 
-# Look for communitysavedIOCS.txt next to secgurd.ps1 and auto-load it. This file is meant to
-# live in the repo and be refreshed via 'git pull', so every run uses the latest community
-# hashes with no flags. It is kept separate from any manual -IOCHashes / pasted list.
-$scriptDir = $null
-if ($PSScriptRoot) { $scriptDir = $PSScriptRoot }
-elseif ($PSCommandPath) { $scriptDir = Split-Path -Parent $PSCommandPath }
-if ($scriptDir) {
-    $communityFile = Join-Path $scriptDir 'communitysavedIOCS.txt'
-    if (Test-Path $communityFile) {
-        $cset = Import-IOCHashes $communityFile
-        if ($cset.Count -gt 0) {
-            $script:CommunityHashSet  = $cset
-            $script:CommunityHashCount = $cset.Count
-            $script:CommunityHashFile  = $communityFile
-        }
+# Look for the community list. Priority: an explicit -CommunityIOCHashes path (used by the
+# bundled S1 paste so it doesn't depend on $PSScriptRoot resolving), then communitysavedIOCS.txt
+# sitting next to secgurd.ps1 (the normal git-pull case). Kept separate from the manual list.
+$communityFile = $null
+if ($CommunityIOCHashes -and (Test-Path $CommunityIOCHashes)) {
+    $communityFile = $CommunityIOCHashes
+} else {
+    $scriptDir = $null
+    if ($PSScriptRoot) { $scriptDir = $PSScriptRoot }
+    elseif ($PSCommandPath) { $scriptDir = Split-Path -Parent $PSCommandPath }
+    if ($scriptDir) {
+        $cand = Join-Path $scriptDir 'communitysavedIOCS.txt'
+        if (Test-Path $cand) { $communityFile = $cand }
+    }
+}
+if ($communityFile) {
+    $cset = Import-IOCHashes $communityFile
+    if ($cset.Count -gt 0) {
+        $script:CommunityHashSet   = $cset
+        $script:CommunityHashCount = $cset.Count
+        $script:CommunityHashFile  = $communityFile
     }
 }
 
