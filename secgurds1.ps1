@@ -115,7 +115,7 @@ function Ex {
     return $s
 }
 
-$script:secgurdVersion = 'v1.1'
+$script:secgurdVersion = 'v1.3'
 
 # ---------------------------------------------
 
@@ -529,11 +529,11 @@ function Show-IOCList {
 }
 
 function Show-S1PasteVersion {
-    # Generate a SentinelOne-remote-shell-ready, copy/paste version of THIS script.
-    # secgurd is already wrap-safe (no internal here-strings), so we just read our own source
-    # and wrap it in an outer here-string + a ScriptBlock invoke that shows the menu.
-    # Printed to the console so it can be copied straight to another machine (no file needed),
-    # with a file fallback written alongside in case the console copy is awkward.
+    # Generate a SentinelOne-remote-shell-ready, copy/paste version of THIS script and put it
+    # on the CLIPBOARD. secgurd is already wrap-safe (no internal here-strings), so we read our
+    # own source, wrap it in an outer here-string + a ScriptBlock invoke that shows the menu,
+    # and copy the whole thing. (Printing the full block to the console isn't workable - it's
+    # thousands of lines and scrolls out of the buffer.) A file fallback is also written.
 
     $src = $null
     if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
@@ -560,35 +560,45 @@ function Show-S1PasteVersion {
     $header = "`$s = @'"
     $footer = "'@`r`n`$sb = [ScriptBlock]::Create(`$s); Clear-Host; & `$sb"
     $block  = $header + "`r`n" + $src.TrimEnd() + "`r`n" + $footer
+    $lineCount = ($block -split "`r?`n").Count
 
-    # File fallback (best-effort; console is the primary delivery).
+    # Always write a file fallback first (so there's a copy even if clipboard fails).
     $outFile = Join-Path $env:TEMP "secgurd_s1_paste.txt"
     $wrote = $false
     try { $block | Out-File -FilePath $outFile -Encoding UTF8 -Force; $wrote = $true } catch {}
+
+    # Primary action: copy to clipboard. Try Set-Clipboard, then a clip.exe fallback.
+    $copied = $false
+    if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
+        try { Set-Clipboard -Value $block -ErrorAction Stop; $copied = $true } catch {}
+    }
+    if (-not $copied) {
+        # Fallback for hosts without Set-Clipboard: pipe through clip.exe
+        try { $block | clip.exe; $copied = $true } catch {}
+    }
 
     Clear-Host
     Write-Host ""
     Write-Host "  ============================================================" -ForegroundColor DarkGray
     Write-Host "   SentinelOne remote-shell paste version" -ForegroundColor Cyan
     Write-Host "  ============================================================" -ForegroundColor DarkGray
-    Write-Host "  Select everything between the lines below, copy it, and paste" -ForegroundColor Gray
-    Write-Host "  into the S1 Remote Shell. It wraps secgurd in a here-string and" -ForegroundColor Gray
-    Write-Host "  runs it - the interactive menu will appear in the shell." -ForegroundColor Gray
-    if ($wrote) {
-        Write-Host "  (Also saved to: $outFile)" -ForegroundColor DarkGray
+    Write-Host ""
+    if ($copied) {
+        Write-Host (Ex "  [^14] Copied to clipboard") -ForegroundColor Green -NoNewline
+        Write-Host "  ($lineCount lines)" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "  Paste it straight into the SentinelOne Remote Shell." -ForegroundColor Gray
+        Write-Host "  It wraps secgurd in a here-string and runs it - the interactive" -ForegroundColor Gray
+        Write-Host "  menu will appear in the shell." -ForegroundColor Gray
+    } else {
+        Write-Host (Ex "  ^16 Clipboard not available in this session.") -ForegroundColor Yellow
+        Write-Host "  Use the saved file instead (below)." -ForegroundColor Gray
     }
     Write-Host ""
-    Write-Host "  vvvvvvvvvvvvvvvvvvvvvvvvvv  COPY FROM HERE  vvvvvvvvvvvvvvvvvvvvvvvvvv" -ForegroundColor DarkGreen
-    Write-Host ""
-    # Print the raw block with no coloring/formatting so a copy is clean.
-    [Console]::Out.Write($block)
-    Write-Host ""
-    Write-Host ""
-    Write-Host "  ^^^^^^^^^^^^^^^^^^^^^^^^^^^  COPY TO HERE  ^^^^^^^^^^^^^^^^^^^^^^^^^^^" -ForegroundColor DarkGreen
-    Write-Host ""
     if ($wrote) {
-        Write-Host "  Tip: if copying from the console is awkward, open the saved file instead:" -ForegroundColor DarkGray
-        Write-Host "       notepad `"$outFile`"" -ForegroundColor DarkGray
+        Write-Host "  A copy was also saved to:" -ForegroundColor DarkGray
+        Write-Host "    $outFile" -ForegroundColor White
+        Write-Host "  Open it with:  notepad `"$outFile`"" -ForegroundColor DarkGray
         Write-Host ""
     }
 }
