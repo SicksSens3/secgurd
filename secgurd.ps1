@@ -36,6 +36,13 @@
     Lookback window in days for all time-bounded collectors (event logs, recently-modified
     files, the timeline, and new-account / modified-binary findings). Default 30. Use a
     larger value (e.g. 90) for suspected long-dwell compromises, smaller for fresh incidents.
+.PARAMETER Find
+    A name or string to filter ALL collected output by (case-insensitive). When set, every
+    artifact file keeps only the lines that contain the string - and the section header above
+    them - so you see just the items named after, pointing at, or signed by that string. Use it
+    to scope a run to a single known-bad artifact, e.g. -Find SmartPDF surfaces only the
+    scheduled tasks, run keys, services, processes and files that reference SmartPDF. Findings
+    are filtered the same way. Leave unset to collect everything (default).
 .PARAMETER Help
     Show usage and exit.
 .EXAMPLE
@@ -75,6 +82,7 @@ param(
     [string]$IOCHashes,
     [string]$CommunityIOCHashes,
     [int]$DaysBack = 30,
+    [string]$Find,
     [switch]$MakeS1Paste,
     [int]$S1ChunkSize = 0,
     [switch]$Help
@@ -140,7 +148,6 @@ $script:HtmlReport = [bool]$HtmlReport
 $script:IOCHashFile = $null
 $script:IOCHashSet = $null
 $script:IOCHashCount = 0
-$script:ShowIOCList = $false
 # Community IOC list: auto-loaded from communitysavedIOCS.txt next to the script (refreshed
 # via git pull). Kept SEPARATE from the manual set above so matches can be labeled by source.
 $script:CommunityHashSet = $null
@@ -163,6 +170,11 @@ $script:TrustedPathRx = '(?i)\\(Windows Defender|Windows Defender Advanced Threa
 if ($DaysBack -lt 1) { $DaysBack = 1 }
 if ($DaysBack -gt 3650) { $DaysBack = 3650 }
 $script:DaysBack = $DaysBack
+
+# Optional output filter: when set, every artifact (and finding) is reduced to only the
+# lines/items that contain this string. Seeded from -Find; also settable in the menu via 'f'.
+$script:FindFilter = $null
+if ($Find -and $Find.Trim()) { $script:FindFilter = $Find.Trim() }
 
 # Force UTF-8 output so box-drawing chars render correctly
 
@@ -325,6 +337,7 @@ function Show-Help {
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
     Write-Host "    -CommunityIOCHashes <file>  Explicit path to the community list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
+    Write-Host "    -Find <string>        Filter ALL output to lines/items containing <string> (e.g. SmartPDF)" -ForegroundColor Gray
     Write-Host "    -MakeS1Paste          Copy a paste-ready version for the SentinelOne shell" -ForegroundColor Gray
     Write-Host "    -S1ChunkSize <N>      With -MakeS1Paste: chunked paste (N chars) for size-limited shells" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
@@ -335,10 +348,10 @@ function Show-Help {
     Write-Host "    qa / net / ps         Apply a preset" -ForegroundColor Gray
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
     Write-Host "    h                     Toggle: build + open HTML report" -ForegroundColor Gray
-    Write-Host "    i                     Toggle: match hashes vs IOC list (prompts for file)" -ForegroundColor Gray
-    Write-Host "    l                     Toggle: show the loaded IOC hash list in the menu" -ForegroundColor Gray
+    Write-Host "    i                     Toggle: match hashes vs IOC list (load/paste/list under here)" -ForegroundColor Gray
     Write-Host "    d                     Set lookback window in days (time-bounded collectors)" -ForegroundColor Gray
-    Write-Host "    s                     S1 paste version - single or chunked (air-gapped shells)" -ForegroundColor Gray
+    Write-Host "    f                     Find/filter: scope all output to a name/string (blank clears)" -ForegroundColor Gray
+    Write-Host "    p                     Pastable version for remote shells - single/chunked/compressed" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
     Write-Host ""
@@ -971,7 +984,7 @@ function Show-ModuleMenu {
         Write-Host $ofMark -ForegroundColor $ofClr -NoNewline
         Write-Host "  " -NoNewline
         Write-Host ("{0,-4}" -f 'o') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-30}" -f 'Open output folder when done') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-36}" -f 'Open output folder when done') -ForegroundColor White -NoNewline
         Write-Host "(local/RDP only)" -ForegroundColor DarkGray
 
         $hrOn   = $script:HtmlReport
@@ -981,7 +994,7 @@ function Show-ModuleMenu {
         Write-Host $hrMark -ForegroundColor $hrClr -NoNewline
         Write-Host "  " -NoNewline
         Write-Host ("{0,-4}" -f 'h') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-30}" -f 'Build + open HTML report') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-36}" -f 'Build + open HTML report') -ForegroundColor White -NoNewline
         Write-Host "(report.html)" -ForegroundColor DarkGray
 
         $iocOn   = [bool]$script:IOCHashFile
@@ -1001,44 +1014,37 @@ function Show-ModuleMenu {
         Write-Host $iocMark -ForegroundColor $iocClr -NoNewline
         Write-Host "  " -NoNewline
         Write-Host ("{0,-4}" -f 'i') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-30}" -f 'Match hashes against IOC list') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-36}" -f 'Match hashes against IOC list') -ForegroundColor White -NoNewline
         Write-Host $iocNote -ForegroundColor DarkGray
 
-        # Only offer the list toggle once SOME hashes are loaded (either source)
-        if ($iocOn -or $commOn) {
-            $lMark = if ($script:ShowIOCList) { (Ex "[^14]") } else { '[ ]' }
-            $lClr  = if ($script:ShowIOCList) { 'Green' } else { 'DarkGray' }
-            $lNote = if ($script:ShowIOCList) { '(showing below)' } else { '(hidden)' }
-            Write-Host "   " -NoNewline
-            Write-Host $lMark -ForegroundColor $lClr -NoNewline
-            Write-Host "  " -NoNewline
-            Write-Host ("{0,-4}" -f 'l') -ForegroundColor Yellow -NoNewline
-            Write-Host ("{0,-30}" -f 'Show IOC hash list in menu') -ForegroundColor White -NoNewline
-            Write-Host $lNote -ForegroundColor DarkGray
-        }
+        $fOn   = [bool]$script:FindFilter
+        $fMark = if ($fOn) { (Ex "[^14]") } else { '[ ]' }
+        $fClr  = if ($fOn) { 'Green' } else { 'DarkGray' }
+        $fNote = if ($fOn) { "(filtering to '$($script:FindFilter)')" } else { '(off - shows everything)' }
+        Write-Host "   " -NoNewline
+        Write-Host $fMark -ForegroundColor $fClr -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f 'f') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-36}" -f 'Find: filter all output by name') -ForegroundColor White -NoNewline
+        Write-Host $fNote -ForegroundColor DarkGray
 
         Write-Host "   " -NoNewline
         Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
         Write-Host "  " -NoNewline
         Write-Host ("{0,-4}" -f 'd') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-30}" -f 'Lookback window (days)') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-36}" -f 'Lookback window (days)') -ForegroundColor White -NoNewline
         Write-Host "(currently $($script:DaysBack)d)" -ForegroundColor DarkGray
 
         Write-Host "   " -NoNewline
         Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
         Write-Host "  " -NoNewline
-        Write-Host ("{0,-4}" -f 's') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-30}" -f 'Make SentinelOne paste version') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-4}" -f 'p') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-36}" -f 'Pastable version for remote shells') -ForegroundColor White -NoNewline
         Write-Host "(copy/paste for S1 shell)" -ForegroundColor DarkGray
 
         Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
-
-        # Inline IOC hash list (toggled with 'l')
-        if ($script:ShowIOCList -and $script:IOCHashSet -and $script:IOCHashCount -gt 0) {
-            Show-IOCList
-        }
 
         $count = ($script:SelectedModules.Values | Where-Object { $_ }).Count
         $total = $script:ModuleCatalogue.Count
@@ -1114,7 +1120,7 @@ function Show-ModuleMenu {
 
             if ($how -eq 'x') {
                 if ($iocLoaded) {
-                    $script:IOCHashFile = $null; $script:IOCHashSet = $null; $script:IOCHashCount = 0; $script:ShowIOCList = $false
+                    $script:IOCHashFile = $null; $script:IOCHashSet = $null; $script:IOCHashCount = 0
                     $pendingMsg = "IOC hash matching: OFF"
                 } else {
                     $pendingMsg = "Nothing to turn off - no hashes loaded."
@@ -1174,13 +1180,27 @@ function Show-ModuleMenu {
             continue
         }
 
-        if ($cmd -eq 'l') {
-            if (-not $script:IOCHashSet -or $script:IOCHashCount -eq 0) {
-                $pendingMsg = "No IOC hashes loaded - press 'i' to add some first."
+        if ($cmd -eq 'f') {
+            Write-Host ""
+            Write-Host "  Find / filter all output by a name or string." -ForegroundColor Cyan
+            Write-Host "  Every artifact keeps only the lines that contain it (plus the section" -ForegroundColor DarkGray
+            Write-Host "  header above them), and findings are filtered the same way. Case-insensitive." -ForegroundColor DarkGray
+            if ($script:FindFilter) {
+                Write-Host "  Currently filtering to: '$($script:FindFilter)'" -ForegroundColor Green
+            }
+            Write-Host "  Enter a string (e.g. SmartPDF), or blank to clear and show everything:" -ForegroundColor Cyan
+            Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+            $fIn = (Read-Host).Trim()
+            if ($fIn -eq '') {
+                if ($script:FindFilter) {
+                    $script:FindFilter = $null
+                    $pendingMsg = "Find filter cleared - all output will be collected."
+                } else {
+                    $pendingMsg = "Find filter still off - all output will be collected."
+                }
             } else {
-                $script:ShowIOCList = -not $script:ShowIOCList
-                $state = if ($script:ShowIOCList) { 'shown' } else { 'hidden' }
-                $pendingMsg = "IOC list $state in menu"
+                $script:FindFilter = $fIn
+                $pendingMsg = "Find filter set: all output scoped to '$fIn'."
             }
             Clear-Host; Show-secgurdBannerCompact
             continue
@@ -1207,7 +1227,7 @@ function Show-ModuleMenu {
             continue
         }
 
-        if ($cmd -eq 's') {
+        if ($cmd -eq 'p') {
             Write-Host ""
             Write-Host "  SentinelOne / remote-shell paste:" -ForegroundColor Cyan
             Write-Host "    [1] " -ForegroundColor Yellow -NoNewline
@@ -1595,6 +1615,13 @@ function Add-Finding {
     # Severity: HIGH / MED / INFO. Artifact (optional) is the exact .txt filename this
     # finding points at, so the HTML report can highlight just that file (not the whole module).
     # We encode it inside the stored string as {file:NAME} and strip it before display.
+
+    # When a find filter is active, suppress findings whose message doesn't mention the term,
+    # so the summary stays scoped to the hunted artifact (e.g. only SmartPDF-related flags).
+    if ($script:FindFilter -and $Message.IndexOf($script:FindFilter, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        return
+    }
+
     $tag = if ($Artifact) { " {file:$Artifact}" } else { '' }
     $script:Findings.Add("[$Severity] ($Module) $Message$tag")
     $color = switch ($Severity) {
@@ -1612,6 +1639,43 @@ function Add-Finding {
     Write-Host $Message -ForegroundColor $color
 }
 
+
+function Select-FilteredOutput {
+    # Reduce already-rendered artifact text to just the lines containing $Term, keeping the
+    # Write-Section header (the "===" / title / "===" triple) above any section that has a hit.
+    # Sections with no matching line are dropped entirely. Matching is case-insensitive and
+    # treats $Term literally (no wildcard/regex interpretation). Returns an array of lines;
+    # if nothing matched anywhere, a single "(no matches...)" line so the file isn't blank.
+    param([string[]]$Lines, [string]$Term)
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $pendingHeader = $null      # the 3-line Write-Section header awaiting a match below it
+    $sectionEmitted = $false    # has the current section's header already been flushed?
+    $anyMatch = $false
+
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $ln = $Lines[$i]
+        # Detect a Write-Section header: a bar line, a title, then another bar line.
+        if ($ln -match '^={10,}$' -and ($i + 2) -lt $Lines.Count -and $Lines[$i + 2] -match '^={10,}$') {
+            $pendingHeader = @($Lines[$i], $Lines[$i + 1], $Lines[$i + 2])
+            $sectionEmitted = $false
+            $i += 2
+            continue
+        }
+        if ($ln.IndexOf($Term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            if ($pendingHeader -and -not $sectionEmitted) {
+                if ($out.Count -gt 0) { $out.Add('') }   # blank line between emitted sections
+                foreach ($h in $pendingHeader) { $out.Add($h) }
+                $sectionEmitted = $true
+            }
+            $out.Add($ln)
+            $anyMatch = $true
+        }
+    }
+
+    if (-not $anyMatch) { return ,@("(no matches for '$Term')") }
+    return $out.ToArray()
+}
 
 function Save-Output {
     param([string]$FileName, [scriptblock]$Block)
@@ -1640,6 +1704,15 @@ function Save-Output {
 
     try {
         $result = & $Block
+        if ($script:FindFilter) {
+            # Render to text exactly as it would land on disk, then keep only the lines that
+            # contain the filter term (with their section headers). Render to one string and
+            # split on newlines (Out-String -Stream leaves Write-Section's embedded newlines
+            # un-split); wide width so table rows aren't truncated and a far-column match still
+            # counts.
+            $rendered = @(($result | Out-String -Width 4096) -split "`r`n|`r|`n")
+            $result = Select-FilteredOutput -Lines $rendered -Term $script:FindFilter
+        }
         $result | Out-File -FilePath $file -Encoding UTF8 -Force
         $sw.Stop()
         $secs = ('{0,6:N1}s' -f ($sw.ElapsedMilliseconds / 1000))
@@ -1694,6 +1767,10 @@ if (-not $script:TotalArtifacts) { $script:TotalArtifacts = 1 }
 
 Write-Host ""
 Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  running triage  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
+if ($script:FindFilter) {
+    Write-Host ""
+    Write-Host (Ex "  ^17 find filter active ^09 output scoped to '$($script:FindFilter)' (case-insensitive)") -ForegroundColor Cyan
+}
 Write-Host ""
 
 # ---------------------------------------------
@@ -3128,6 +3205,7 @@ $indexLines += "Finished    : $($runEnd.ToString('yyyy-MM-dd HH:mm:ss'))"
 $indexLines += "Duration    : $elapsedStr"
 $indexLines += "Modules run : $selectedIds"
 $indexLines += "Lookback    : $($script:DaysBack) days"
+if ($script:FindFilter) { $indexLines += "Find filter : '$($script:FindFilter)' (output scoped to lines containing this)" }
 $indexLines += "Collected   : $($script:CollectedCount) files"
 $indexLines += "Errors      : $($script:ErrorCount)"
 $indexLines += ""
@@ -3147,6 +3225,7 @@ $summaryLines += "Host     : $env:COMPUTERNAME    User: $env:USERDOMAIN\$env:USE
 $summaryLines += "When     : $($script:RunStart.ToString('yyyy-MM-dd HH:mm:ss'))   Duration: $elapsedStr"
 $summaryLines += "Admin    : $isAdminNow"
 $summaryLines += "Collected: $($script:CollectedCount) files   Errors: $($script:ErrorCount)"
+if ($script:FindFilter) { $summaryLines += "Filter   : output scoped to '$($script:FindFilter)' (findings below limited to it)" }
 $summaryLines += ""
 $summaryLines += (Ex "FINDINGS (auto-flagged ^09 verify before acting)")
 $summaryLines += ("-" * 60)
@@ -3167,6 +3246,8 @@ $summaryLines | Out-File (Join-Path $OutputPath '00_SUMMARY.txt') -Encoding UTF8
 Write-Host (Ex "  *  Building timeline...") -ForegroundColor Cyan
 $timeline = New-Object System.Collections.Generic.List[object]
 function Add-TL { param($Time, $Source, $Detail)
+    # Honour the find filter so a scoped run's timeline only shows matching events.
+    if ($script:FindFilter -and "$Source $Detail".IndexOf($script:FindFilter, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return }
     if ($Time -is [string]) { $t = $null; [void][datetime]::TryParse($Time, [ref]$t) } else { $t = $Time }
     if ($t) { $timeline.Add([PSCustomObject]@{ Time=$t; Source=$Source; Detail=$Detail }) }
 }

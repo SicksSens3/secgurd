@@ -63,6 +63,7 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 - **Findings engine** — auto-flags high-signal indicators (HIGH / MED / INFO) as it runs: WMI event consumers, IFEO debugger hijacks, accessibility backdoors, encoded PowerShell, suspicious parent→child process chains, services/tasks running from writable paths, unquoted service paths, rogue remote-access tools, Defender exclusions on temp paths, and more.
 - **Rogue RMM detection** — hunts ~18 remote-access tool families (ScreenConnect/ConnectWise, AnyDesk, TeamViewer, Atera, Splashtop, MeshCentral, NetSupport, etc.) and flags suspicious context (writable-path installs, ScreenConnect instance folders + relay host).
 - **Local IOC hash matching** — match on-disk binaries against your own list of known-bad MD5 / SHA-1 / SHA-256 hashes. Fully offline; no API key, no third-party disclosure.
+- **Targeted find / scoping** — point a run at a single known artifact (`-Find SmartPDF` or the `f` menu option) and every output is reduced to just the items that name, point at, or are signed by that string — across tasks, run keys, services, processes, files and findings. Case-insensitive.
 - **Event timeline** — chronological merge of logons, log clears, new services, scheduled tasks, and recent file modifications.
 - **SHA-256 evidence manifest** — hashes every output file for chain-of-custody / tamper evidence.
 
@@ -131,7 +132,8 @@ Remove-Item "$env:TEMP\secgurd*" -Recurse -Force -ErrorAction SilentlyContinue
 ```
 secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
             [-OpenWhenDone] [-HtmlReport] [-WithOwners] [-WithSignatures]
-            [-IOCHashes <file>] [-DaysBack <N>] [-Cleanup] [-MakeS1Paste] [-Help]
+            [-IOCHashes <file>] [-DaysBack <N>] [-Find <string>] [-Cleanup]
+            [-MakeS1Paste] [-Help]
 ```
 
 ### Parameters
@@ -148,6 +150,7 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 | `-WithSignatures` | Verify Authenticode signatures of service binaries / loaded DLLs (slower; can stall offline). |
 | `-IOCHashes <file>` | Match on-disk binaries against an MD5/SHA-1/SHA-256 IOC hash list. |
 | `-DaysBack <N>` | Lookback window in days for time-bounded collectors (default 30). |
+| `-Find <string>` | Scope **all** output to lines/items containing `<string>` (case-insensitive) — see [Targeted find](#targeted-find--scoping-a-run-to-one-artifact). |
 | `-Cleanup` | Find and remove previous secgurd output folders (requires typing `DELETE` to confirm). |
 | `-MakeS1Paste` | Print a copy/paste-ready version for the SentinelOne remote shell. |
 | `-Help` | Show usage and exit. |
@@ -163,6 +166,10 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 
 # 90-day lookback for a suspected long-dwell compromise, with IOC matching
 .\secgurd.ps1 -Auto -DaysBack 90 -IOCHashes C:\ioc\badhashes.txt
+
+# Scope an entire run to one known-bad artifact (e.g. the "SmartPDF" bundler):
+# every file keeps only the tasks, run keys, services, processes and paths that mention it
+.\secgurd.ps1 -Auto -Find SmartPDF
 
 # Clean up old collections
 .\secgurd.ps1 -Cleanup
@@ -182,9 +189,9 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `o` | Toggle: open output folder when done |
 | `h` | Toggle: build + open the HTML report |
 | `i` | IOC hashes — load from file `[f]`, paste `[p]`, list `[l]`, or turn off `[x]` |
-| `l` | Toggle: show the loaded IOC hash list in the menu |
+| `f` | Find — scope all output to a name/string (enter a term, or blank to clear) |
 | `d` | Set the lookback window (days) |
-| `s` | Make a copy/paste version for the SentinelOne shell |
+| `p` | Pastable version for remote shells (single / chunked / compressed) |
 | `r` | Run the selected modules |
 | `?` | Help |
 | `q` | Quit |
@@ -220,6 +227,26 @@ Everything is **fully offline** — no API key, no internet on the target. Hashe
 ### Keeping the community list fresh automatically
 
 The repo includes a GitHub Action (`.github/workflows/refresh-iocs.yml`) that, once a day, fetches a free public malware-hash feed (abuse.ch MalwareBazaar) **in GitHub's cloud** and commits the refreshed `communitysavedIOCS.txt` back to the repo. Your endpoints never touch the internet — only GitHub does the fetching. Then your next `git pull` picks up the new hashes. You can also trigger it manually from the repo's **Actions** tab ("Run workflow").
+
+---
+
+## Targeted find — scoping a run to one artifact
+
+Sometimes you already know *what* you're hunting — a named bundler, a dropper filename, a rogue signer — and you don't want to wade through every benign task and registry value to find it. `-Find` (or the `f` menu option) scopes the **entire run** to a single string.
+
+```powershell
+# A known trojan/bundler "SmartPDF" is on the box — show only what touches it
+.\secgurd.ps1 -Auto -Find SmartPDF
+```
+
+With a find filter active, every artifact file keeps only the lines that contain the string — **plus the section header above them** — and drops sections with no hits entirely. So instead of *all* scheduled tasks, you see only the task named after / running `SmartPDF`; instead of *all* run keys, only the value pointing at it; and the same for services, processes, loaded DLLs, file paths, and so on. The auto-flagged **findings** and the **event timeline** are filtered the same way, so `00_SUMMARY.txt` shows only the related leads.
+
+- **Case-insensitive.** `-Find smartpdf`, `SmartPDF`, and `SMARTPDF` all match the same items — capitalization never causes a miss.
+- **Matches anywhere on the line** — filename, full path, signer, service name, command line, registry value name or data.
+- **Set it any way:** the `-Find <string>` flag (works with `-Auto`, `-Modules`, and the paste versions), or interactively with the `f` menu command (enter a term to scope, or leave it blank to clear and collect everything again).
+- The active filter is recorded in `00_INDEX.txt` and `00_SUMMARY.txt` so the scope of the collection is always documented.
+
+> Find is a **scoping** tool, not a detector — it narrows what's shown, it doesn't decide what's malicious. Clear it (blank `f`, or omit `-Find`) for a full-coverage sweep.
 
 ---
 
@@ -260,7 +287,7 @@ If you're authorized on the environment:
 
 The S1 remote shell often can't paste, runs non-interactively, and chokes on download-and-run. Secgurd handles this:
 
-- Run secgurd on your own box and press **`s`** (or use `-MakeS1Paste`). It prints a copy/paste-ready block (the whole tool wrapped in a here-string + invoke).
+- Run secgurd on your own box and press **`p`** (or use `-MakeS1Paste`). It offers a single full-text paste, a chunked plain-text paste for size-limited shells, or a compressed single paste — each a copy/paste-ready block (the whole tool wrapped in a here-string + invoke).
 - Copy that block, paste it into the S1 Remote Shell, and the interactive menu appears there.
 
 The script is "wrap-safe" (no internal here-strings), so this paste method works on every version without hand-editing.
