@@ -1651,6 +1651,7 @@ function Select-FilteredOutput {
     $out = New-Object System.Collections.Generic.List[string]
     $pendingHeader = $null      # the 3-line Write-Section header awaiting a match below it
     $sectionEmitted = $false    # has the current section's header already been flushed?
+    $lastWasItem = $false       # was the previous emitted line a matched item (not a header)?
     $anyMatch = $false
 
     for ($i = 0; $i -lt $Lines.Count; $i++) {
@@ -1667,8 +1668,12 @@ function Select-FilteredOutput {
                 if ($out.Count -gt 0) { $out.Add('') }   # blank line between emitted sections
                 foreach ($h in $pendingHeader) { $out.Add($h) }
                 $sectionEmitted = $true
+                $lastWasItem = $false                    # header -> first item: no blank between
+            } elseif ($lastWasItem) {
+                $out.Add('')                             # blank line between consecutive items
             }
             $out.Add($ln)
+            $lastWasItem = $true
             $anyMatch = $true
         }
     }
