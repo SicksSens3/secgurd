@@ -110,9 +110,19 @@ git pull
 
 ```powershell
 iex (irm "https://raw.githubusercontent.com/SicksSens3/secgurd/main/secgurd.ps1?v=$(Get-Random)")
+OR
+Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/SicksSens3/secgurd/main/secgurd.ps1?v=$(Get-Random)")
 ```
 
 > The `?v=$(Get-Random)` busts GitHub's ~5-minute raw cache so you always get the latest. **Note:** the download-and-execute pattern of `iex(irm)` is frequently flagged by EDR. For managed endpoints, prefer the file-based run above. See **Running on EDR-managed endpoints** below.
+
+### One-liner for cleanup
+
+```powershell
+Remove-Item "$env:TEMP\secgurd*" -Recurse -Force -ErrorAction SilentlyContinue
+```
+
+> To check after cleanup run `Get-ChildItem "$env:TEMP" -Filter "secgurd*" -ErrorAction SilentlyContinue; Get-ChildItem "$env:TEMP" -Include "communitysavedIOCS.txt","manualIOCS.txt" -ErrorAction SilentlyContinue`.
 
 ---
 
