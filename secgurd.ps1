@@ -47,9 +47,9 @@
     Show usage and exit.
 .EXAMPLE
     & .\secgurd.ps1
-    Launches the interactive module menu.
+    Launches the interactive module.
 .EXAMPLE
-    iex (irm https://raw.githubusercontent.com/<you>/secgurd/main/secgurd.ps1)
+    Invoke-Expression (Invoke-RestMethod https://raw.githubusercontent.com/<you>/secgurd/main/secgurd.ps1)
     Pull from GitHub and run on a remoted machine.
 .EXAMPLE
     .\secgurd.ps1 -Auto -OutputPath C:\Cases\IR-0042
