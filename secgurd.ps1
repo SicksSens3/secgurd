@@ -3171,7 +3171,7 @@ Save-Output "10_browser_history.txt" {
     "Dependency-free: URLs are read directly from each browser's history database (Chrome/Edge"
     "'History', Firefox 'places.sqlite', plus the -wal sidecar) - no SQLite engine, so per-visit"
     "timestamps/counts are not decoded; instead each profile's DB last-write time is shown in UTC"
-    "as coarse timing context. The scan screen shows the first 15 HIGH and 10 MED URLs; the rest"
+    "as coarse timing context. The scan screen shows the first 7 HIGH and 3 MED URLs; the rest"
     "(and all INFO) are recorded to this summary, the HTML report, and the per-user files. The"
     "full URL list per profile is written to:"
     "    10_browser_history\<user>\<browser>_<profile>.txt"
@@ -3187,11 +3187,12 @@ Save-Output "10_browser_history.txt" {
     $grandTotalUrls = 0
     $grandFlagged = 0
     $usersSeen = @{}
-    # Live scan screen shows the first N of each severity so it can't be flooded; everything
-    # past these caps (and all INFO) is still recorded to the summary, HTML, and per-user files.
-    $highEchoed = 0; $highCap = 15
-    $medEchoed  = 0; $medCap  = 10
-    $infoEchoed = 0; $infoCap = 50
+    # These caps limit ONLY what is echoed to the live run screen - never the output files.
+    # Every per-user detail file gets ALL flagged + ALL unique URLs (written below from $flagged
+    # / $urlList, which ignore these counters). The counters start at 0 and count UP to the cap
+    # as items are echoed; once a cap is hit, the rest are still recorded, just not shown live.
+    $highEchoed = 0; $highCap = 7   # show first 7 HIGH on the run screen
+    $medEchoed  = 0; $medCap  = 3   # show first 3 MED on the run screen
     $summaryRows = New-Object System.Collections.Generic.List[object]
 
     foreach ($b in $browsers) {
@@ -3214,20 +3215,23 @@ Save-Output "10_browser_history.txt" {
             foreach ($u in $urlList) {
                 $verdict = Test-SuspiciousUrl $u
                 if ($verdict) {
+                    # NOTE: the URL is already in $flagged and will be written to the per-user
+                    # detail file in full - the logic below ONLY decides screen echo vs quiet
+                    # recording. Add-Finding records to 00_SUMMARY/HTML; -Quiet records without
+                    # echoing to the live run screen. So the files always get everything; only the
+                    # scrolling scan output is capped (first 7 HIGH, first 3 MED; INFO never echoed).
                     $flagged.Add([PSCustomObject]@{ Severity = $verdict.Severity; Reason = $verdict.Reason; URL = $u })
                     $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u")
-                    # Scan screen shows the first 15 HIGH and first 10 MED (loud); everything past
-                    # those caps is recorded -Quiet (still in 00_SUMMARY, HTML, and the per-user
-                    # files, just not echoed). All INFO is quiet, capped in the summary too.
-                    if ($verdict.Severity -eq 'HIGH') {
-                        if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt'; $highEchoed++ }
-                        else { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -Quiet }
-                    } elseif ($verdict.Severity -eq 'MED') {
-                        if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt'; $medEchoed++ }
-                        else { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -Quiet }
-                    } elseif ($infoEchoed -lt $infoCap) {
-                        Add-Finding 'INFO' '10' $msg '10_browser_history.txt' -Quiet
-                        $infoEchoed++
+                    switch ($verdict.Severity) {
+                        'HIGH' {
+                            if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt'; $highEchoed++ }
+                            else { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -Quiet }
+                        }
+                        'MED' {
+                            if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt'; $medEchoed++ }
+                            else { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -Quiet }
+                        }
+                        default { Add-Finding 'INFO' '10' $msg '10_browser_history.txt' -Quiet }   # recorded, never echoed
                     }
                 }
             }
@@ -3280,8 +3284,8 @@ Save-Output "10_browser_history.txt" {
     "Users with history : $($usersSeen.Keys.Count)"
     "Total unique URLs  : $grandTotalUrls"
     "Total flagged URLs : $grandFlagged"
-    if ($highEchoed -ge $highCap -or $medEchoed -ge $medCap -or $infoEchoed -ge $infoCap) {
-        "(scan screen showed the first $highCap HIGH and $medCap MED URLs; INFO capped at $infoCap in this summary - the full set, all severities, is in the per-user files)"
+    if ($highEchoed -ge $highCap -or $medEchoed -ge $medCap) {
+        "(run screen showed only the first $highCap HIGH and $medCap MED URLs; every flagged URL of every severity is in 00_SUMMARY, the HTML report, and the per-user detail files)"
     }
     if ($grandFlagged -gt 0) {
         Add-Finding 'INFO' '10' "Browser history: $grandFlagged potentially-suspicious URL(s) across $($usersSeen.Keys.Count) user(s) - review 10_browser_history\<user>\" '10_browser_history.txt'
