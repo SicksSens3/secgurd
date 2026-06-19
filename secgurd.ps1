@@ -182,6 +182,7 @@ $script:DaysBack = $DaysBack
 # Optional output filter: when set, every artifact (and finding) is reduced to only the
 # lines/items that contain this string. Seeded from -Find; also settable in the menu via 'f'.
 $script:FindFilter = $null
+$script:LastFilterMatchCount = 0
 if ($Find -and $Find.Trim()) { $script:FindFilter = $Find.Trim() }
 
 # Force UTF-8 output so box-drawing chars render correctly
@@ -1661,7 +1662,7 @@ function Select-FilteredOutput {
     $pendingHeader = $null      # the 3-line Write-Section header awaiting a match below it
     $sectionEmitted = $false    # has the current section's header already been flushed?
     $lastWasItem = $false       # was the previous emitted line a matched item (not a header)?
-    $anyMatch = $false
+    $matchCount = 0             # number of matched content lines (the "instances" we report)
 
     for ($i = 0; $i -lt $Lines.Count; $i++) {
         $ln = $Lines[$i]
@@ -1683,11 +1684,13 @@ function Select-FilteredOutput {
             }
             $out.Add($ln)
             $lastWasItem = $true
-            $anyMatch = $true
+            $matchCount++
         }
     }
 
-    if (-not $anyMatch) { return ,@("(no matches for '$Term')") }
+    # Expose the count so the caller (Save-Output) can show "N instance(s) found" on the run line.
+    $script:LastFilterMatchCount = $matchCount
+    if ($matchCount -eq 0) { return ,@("(no matches for '$Term')") }
     return $out.ToArray()
 }
 
@@ -1716,6 +1719,7 @@ function Save-Output {
     Write-Host "running..." -ForegroundColor DarkGray -NoNewline
     $script:RunLineActive = $true
 
+    $findCount = 0
     try {
         $result = & $Block
         if ($script:FindFilter) {
@@ -1726,6 +1730,7 @@ function Save-Output {
             # counts.
             $rendered = @(($result | Out-String -Width 4096) -split "`r`n|`r|`n")
             $result = Select-FilteredOutput -Lines $rendered -Term $script:FindFilter
+            $findCount = $script:LastFilterMatchCount   # matched items in THIS artifact
         }
         $result | Out-File -FilePath $file -Encoding UTF8 -Force
         $sw.Stop()
@@ -1739,7 +1744,15 @@ function Save-Output {
         Write-Host "  $progress " -ForegroundColor DarkGray -NoNewline
         Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
         Write-Host ("{0,-42}" -f $FileName) -ForegroundColor Gray -NoNewline
-        Write-Host "$secs        " -ForegroundColor DarkGray
+        if ($script:FindFilter) {
+            # With a find string active, show how many matching items this artifact had.
+            Write-Host "$secs" -ForegroundColor DarkGray -NoNewline
+            $word = if ($findCount -eq 1) { 'instance' } else { 'instances' }
+            $clr  = if ($findCount -gt 0) { 'Yellow' } else { 'DarkGray' }
+            Write-Host ("   {0} {1} found    " -f $findCount, $word) -ForegroundColor $clr
+        } else {
+            Write-Host "$secs        " -ForegroundColor DarkGray
+        }
         $script:RunLineActive = $false
         $script:CollectedCount++
     } catch {
