@@ -46,7 +46,7 @@
 .PARAMETER Help
     Show usage and exit.
 .EXAMPLE
-    .\secgurd.ps1
+    & .\secgurd.ps1
     Launches the interactive module menu.
 .EXAMPLE
     iex (irm https://raw.githubusercontent.com/<you>/secgurd/main/secgurd.ps1)
