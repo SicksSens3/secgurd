@@ -183,6 +183,7 @@ $script:DaysBack = $DaysBack
 # lines/items that contain this string. Seeded from -Find; also settable in the menu via 'f'.
 $script:FindFilter = $null
 $script:LastFilterMatchCount = 0
+$script:FindFileCounts = @{}   # filename -> matched-item count, for the find summary section
 if ($Find -and $Find.Trim()) { $script:FindFilter = $Find.Trim() }
 
 # Force UTF-8 output so box-drawing chars render correctly
@@ -1621,10 +1622,12 @@ function Write-Section {
 }
 
 function Add-Finding {
-    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '')
+    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '', [switch]$Quiet)
     # Severity: HIGH / MED / INFO. Artifact (optional) is the exact .txt filename this
     # finding points at, so the HTML report can highlight just that file (not the whole module).
     # We encode it inside the stored string as {file:NAME} and strip it before display.
+    # -Quiet records the finding (00_SUMMARY + HTML) but does NOT print it to the live scan
+    # screen - used to keep lower-severity, high-volume findings out of the scrolling output.
 
     # When a find filter is active, suppress findings whose message doesn't mention the term,
     # so the summary stays scoped to the hunted artifact (e.g. only SmartPDF-related flags).
@@ -1634,6 +1637,7 @@ function Add-Finding {
 
     $tag = if ($Artifact) { " {file:$Artifact}" } else { '' }
     $script:Findings.Add("[$Severity] ($Module) $Message$tag")
+    if ($Quiet) { return }   # recorded to summary/HTML, but not echoed to the scan screen
     $color = switch ($Severity) {
         'HIGH' { 'Red' }
         'MED'  { 'Yellow' }
@@ -1731,6 +1735,7 @@ function Save-Output {
             $rendered = @(($result | Out-String -Width 4096) -split "`r`n|`r|`n")
             $result = Select-FilteredOutput -Lines $rendered -Term $script:FindFilter
             $findCount = $script:LastFilterMatchCount   # matched items in THIS artifact
+            $script:FindFileCounts[$FileName] = $findCount
         }
         $result | Out-File -FilePath $file -Encoding UTF8 -Force
         $sw.Stop()
@@ -3084,36 +3089,44 @@ function Get-UrlsFromHistoryFile {
     # Firefox 'places.sqlite'). We DON'T parse SQLite (that would need an external engine and
     # break secgurd's no-dependencies rule); instead we read the raw file - opened with shared
     # ReadWrite so an open browser's lock can't block us - and regex out the http(s) URL strings
-    # stored as UTF-8 text inside it. Returns a HashSet of unique URLs, or $null if unreadable.
+    # stored as UTF-8 text inside it. We also scan the '-wal' write-ahead-log sidecar, so the most
+    # recent visits (not yet checkpointed into the main DB while the browser is open) aren't
+    # missed. Returns a HashSet of unique URLs, or $null if nothing could be read.
     param([string]$Path)
-    try {
-        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-    } catch {
-        return $null   # locked exclusively / access denied
-    }
-    try {
-        $len = $fs.Length
-        if ($len -le 0 -or $len -gt 250MB) { return (New-Object System.Collections.Generic.HashSet[string]) }
-        $buf = New-Object byte[] ([int]$len)
-        $read = 0
-        while ($read -lt $len) {
-            $n = $fs.Read($buf, $read, [int]($len - $read))
-            if ($n -le 0) { break }
-            $read += $n
-        }
-    } catch {
-        return $null
-    } finally {
-        $fs.Close()
-    }
-    # Latin1 maps each byte to one char, so binary stays intact and ASCII URLs match cleanly.
-    $text = [System.Text.Encoding]::GetEncoding(28591).GetString($buf)
     $urls = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
     $rx = [regex]"(?i)https?://[^\s""'<>\\)(\]\[}{\x00-\x1f]{4,2048}"
-    foreach ($m in $rx.Matches($text)) {
-        $u = $m.Value.TrimEnd('.', ',', ';', ')', '>', '"', "'", '!', '`')
-        if ($u.Length -ge 8) { [void]$urls.Add($u) }
+    $anyRead = $false
+    foreach ($p in @($Path, "$Path-wal")) {     # main DB + write-ahead log
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        try {
+            $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        } catch {
+            continue   # locked exclusively / access denied
+        }
+        try {
+            $len = $fs.Length
+            if ($len -le 0 -or $len -gt 250MB) { continue }
+            $buf = New-Object byte[] ([int]$len)
+            $read = 0
+            while ($read -lt $len) {
+                $n = $fs.Read($buf, $read, [int]($len - $read))
+                if ($n -le 0) { break }
+                $read += $n
+            }
+        } catch {
+            continue
+        } finally {
+            $fs.Close()
+        }
+        $anyRead = $true
+        # Latin1 maps each byte to one char, so binary stays intact and ASCII URLs match cleanly.
+        $text = [System.Text.Encoding]::GetEncoding(28591).GetString($buf)
+        foreach ($m in $rx.Matches($text)) {
+            $u = $m.Value.TrimEnd('.', ',', ';', ')', '>', '"', "'", '!', '`')
+            if ($u.Length -ge 8) { [void]$urls.Add($u) }
+        }
     }
+    if (-not $anyRead) { return $null }
     return $urls
 }
 
@@ -3156,9 +3169,11 @@ function Test-SuspiciousUrl {
 Save-Output "10_browser_history.txt" {
     Write-Section "BROWSER HISTORY - URL EXTRACTION & ANALYSIS (per user)"
     "Dependency-free: URLs are read directly from each browser's history database (Chrome/Edge"
-    "'History', Firefox 'places.sqlite') - no SQLite engine, so visit timestamps/counts are not"
-    "decoded. Suspicious URLs are flagged below and echoed live as they're found; the full"
-    "per-user URL list for each profile is written to:"
+    "'History', Firefox 'places.sqlite', plus the -wal sidecar) - no SQLite engine, so per-visit"
+    "timestamps/counts are not decoded; instead each profile's DB last-write time is shown in UTC"
+    "as coarse timing context. The scan screen shows the first 15 HIGH and 10 MED URLs; the rest"
+    "(and all INFO) are recorded to this summary, the HTML report, and the per-user files. The"
+    "full URL list per profile is written to:"
     "    10_browser_history\<user>\<browser>_<profile>.txt"
     ""
 
@@ -3172,8 +3187,11 @@ Save-Output "10_browser_history.txt" {
     $grandTotalUrls = 0
     $grandFlagged = 0
     $usersSeen = @{}
-    $findingsEchoed = 0
-    $findingCap = 50          # don't flood the console; the rest still land in the files
+    # Live scan screen shows the first N of each severity so it can't be flooded; everything
+    # past these caps (and all INFO) is still recorded to the summary, HTML, and per-user files.
+    $highEchoed = 0; $highCap = 15
+    $medEchoed  = 0; $medCap  = 10
+    $infoEchoed = 0; $infoCap = 50
     $summaryRows = New-Object System.Collections.Generic.List[object]
 
     foreach ($b in $browsers) {
@@ -3182,9 +3200,10 @@ Save-Output "10_browser_history.txt" {
             $user = if ($db.FullName -match '(?i)\\Users\\([^\\]+)\\') { $matches[1] } else { 'unknown' }
             $profileName = Split-Path (Split-Path $db.FullName -Parent) -Leaf
 
+            $dbModUtc = $db.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm') + 'Z'
             $urls = Get-UrlsFromHistoryFile -Path $db.FullName
             if ($null -eq $urls) {
-                $summaryRows.Add([PSCustomObject]@{ User = $user; Browser = $b.Name; Profile = $profileName; URLs = 'LOCKED/ERR'; Flagged = '-' })
+                $summaryRows.Add([PSCustomObject]@{ User = $user; Browser = $b.Name; Profile = $profileName; 'ModifiedUTC' = $dbModUtc; URLs = 'LOCKED/ERR'; Flagged = '-' })
                 continue
             }
             $usersSeen[$user] = $true
@@ -3196,10 +3215,19 @@ Save-Output "10_browser_history.txt" {
                 $verdict = Test-SuspiciousUrl $u
                 if ($verdict) {
                     $flagged.Add([PSCustomObject]@{ Severity = $verdict.Severity; Reason = $verdict.Reason; URL = $u })
-                    # Echo HIGH/MED live (like scheduled tasks); cap to avoid flooding.
-                    if ($verdict.Severity -ne 'INFO' -and $findingsEchoed -lt $findingCap) {
-                        Add-Finding $verdict.Severity '10' (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u") '10_browser_history.txt'
-                        $findingsEchoed++
+                    $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u")
+                    # Scan screen shows the first 15 HIGH and first 10 MED (loud); everything past
+                    # those caps is recorded -Quiet (still in 00_SUMMARY, HTML, and the per-user
+                    # files, just not echoed). All INFO is quiet, capped in the summary too.
+                    if ($verdict.Severity -eq 'HIGH') {
+                        if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt'; $highEchoed++ }
+                        else { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -Quiet }
+                    } elseif ($verdict.Severity -eq 'MED') {
+                        if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt'; $medEchoed++ }
+                        else { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -Quiet }
+                    } elseif ($infoEchoed -lt $infoCap) {
+                        Add-Finding 'INFO' '10' $msg '10_browser_history.txt' -Quiet
+                        $infoEchoed++
                     }
                 }
             }
@@ -3213,14 +3241,18 @@ Save-Output "10_browser_history.txt" {
 
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add((Write-Section "$($b.Name) HISTORY - user '$user' - profile '$profileName'"))
-            $lines.Add("Source DB  : $($db.FullName)")
-            $lines.Add("DB modified: $($db.LastWriteTime)")
-            $lines.Add("Unique URLs: $($urlList.Count)    Flagged: $($flagged.Count)")
+            $lines.Add("Source DB   : $($db.FullName)")
+            $lines.Add("DB modified : $($db.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC   ($($db.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')) local)")
+            $lines.Add("Unique URLs : $($urlList.Count)    Flagged: $($flagged.Count)")
             $lines.Add('')
             $lines.Add((Write-Section "FLAGGED URLS (heuristic - verify before acting)"))
             if ($flagged.Count) {
+                $firstFlag = $true
                 foreach ($f in ($flagged | Sort-Object Severity, URL)) {
-                    $lines.Add(("[{0,-4}] {1,-42} {2}" -f $f.Severity, $f.Reason, $f.URL))
+                    if (-not $firstFlag) { $lines.Add('') }   # blank line between each flagged entry
+                    $lines.Add(("[{0,-4}] {1}" -f $f.Severity, $f.Reason))
+                    $lines.Add(("        {0}" -f $f.URL))
+                    $firstFlag = $false
                 }
             } else {
                 $lines.Add("(none flagged by heuristics)")
@@ -3233,7 +3265,7 @@ Save-Output "10_browser_history.txt" {
             if ($script:FindFilter) { $outArr = Select-FilteredOutput -Lines $outArr -Term $script:FindFilter }
             $outArr | Out-File -FilePath $detailFile -Encoding UTF8 -Force
 
-            $summaryRows.Add([PSCustomObject]@{ User = $user; Browser = $b.Name; Profile = $profileName; URLs = $urlList.Count; Flagged = $flagged.Count })
+            $summaryRows.Add([PSCustomObject]@{ User = $user; Browser = $b.Name; Profile = $profileName; 'ModifiedUTC' = $dbModUtc; URLs = $urlList.Count; Flagged = $flagged.Count })
         }
     }
 
@@ -3248,8 +3280,8 @@ Save-Output "10_browser_history.txt" {
     "Users with history : $($usersSeen.Keys.Count)"
     "Total unique URLs  : $grandTotalUrls"
     "Total flagged URLs : $grandFlagged"
-    if ($findingsEchoed -ge $findingCap) {
-        "(console echo capped at $findingCap findings - see the per-user files for the full set)"
+    if ($highEchoed -ge $highCap -or $medEchoed -ge $medCap -or $infoEchoed -ge $infoCap) {
+        "(scan screen showed the first $highCap HIGH and $medCap MED URLs; INFO capped at $infoCap in this summary - the full set, all severities, is in the per-user files)"
     }
     if ($grandFlagged -gt 0) {
         Add-Finding 'INFO' '10' "Browser history: $grandFlagged potentially-suspicious URL(s) across $($usersSeen.Keys.Count) user(s) - review 10_browser_history\<user>\" '10_browser_history.txt'
@@ -3452,6 +3484,27 @@ if ($script:Findings.Count -eq 0) {
     $script:Findings | Sort-Object | ForEach-Object { $summaryLines += "  $_" }
 }
 $summaryLines += ""
+
+# When a find filter is active, show at a glance which artifacts actually contained matches
+# (so the analyst isn't hunting through dozens of "(no matches...)" files).
+if ($script:FindFilter) {
+    $summaryLines += (Ex "FILES WITH MATCHES (find: '$($script:FindFilter)')")
+    $summaryLines += ("-" * 60)
+    $hitFiles = $script:FindFileCounts.GetEnumerator() | Where-Object { $_.Value -gt 0 } | Sort-Object { $_.Value } -Descending
+    if ($hitFiles) {
+        foreach ($e in $hitFiles) {
+            $word = if ($e.Value -eq 1) { 'instance' } else { 'instances' }
+            $summaryLines += ("  {0,-42} {1,5} {2}" -f $e.Name, $e.Value, $word)
+        }
+        $emptyCount = @($script:FindFileCounts.GetEnumerator() | Where-Object { $_.Value -eq 0 }).Count
+        $summaryLines += ""
+        $summaryLines += ("  {0} file(s) matched; {1} collected file(s) had no matches." -f @($hitFiles).Count, $emptyCount)
+    } else {
+        $summaryLines += "  No artifact contained '$($script:FindFilter)'."
+    }
+    $summaryLines += ""
+}
+
 $summaryLines += "Generated by secgurd. Review raw artifact files for full detail."
 $summaryLines | Out-File (Join-Path $OutputPath '00_SUMMARY.txt') -Encoding UTF8 -Force
 
