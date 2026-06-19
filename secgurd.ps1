@@ -27,6 +27,12 @@
     Verify Authenticode signatures of service binaries and loaded DLLs. This does a full
     trust-chain check per file and can stall for seconds each on an offline host, so it is
     off by default. Without it, secgurd flags binaries by location and modification time.
+.PARAMETER WithTaskInfo
+    Resolve run-time info (LastRun / NextRun / LastResult) for EVERY scheduled task, including
+    the hundreds of built-in \Microsoft\* tasks. Get-ScheduledTaskInfo makes a per-task call to
+    the Task Scheduler service, so doing it for all tasks can take many minutes (or stall) on a
+    busy or remote host. Off by default: secgurd still lists every task, but only resolves run
+    times for non-Microsoft tasks (the ones that matter in triage).
 .PARAMETER IOCHashes
     Path to a file of known-bad hashes (MD5, SHA-1, or SHA-256; one per line, optional
     ",label"). secgurd
@@ -78,6 +84,7 @@ param(
     [switch]$Cleanup,
     [switch]$WithOwners,
     [switch]$WithSignatures,
+    [switch]$WithTaskInfo,
     [switch]$HtmlReport,
     [string]$IOCHashes,
     [string]$CommunityIOCHashes,
@@ -144,6 +151,7 @@ $script:OpenFolderWhenDone = [bool]$OpenWhenDone
 $script:RunLineActive = $false
 $script:WithOwners = [bool]$WithOwners
 $script:WithSignatures = [bool]$WithSignatures
+$script:WithTaskInfo = [bool]$WithTaskInfo
 $script:HtmlReport = [bool]$HtmlReport
 $script:IOCHashFile = $null
 $script:IOCHashSet = $null
@@ -333,6 +341,7 @@ function Show-Help {
     Write-Host "    -Cleanup              Delete all secgurd output from TEMP (type-to-confirm)" -ForegroundColor Gray
     Write-Host "    -WithOwners           Include process owners in 06_process_tree (slower)" -ForegroundColor Gray
     Write-Host "    -WithSignatures       Verify Authenticode signatures (slow, may stall offline)" -ForegroundColor Gray
+    Write-Host "    -WithTaskInfo         Resolve run times for ALL tasks incl. Microsoft (slow; off by default)" -ForegroundColor Gray
     Write-Host "    -HtmlReport           Also build a single-file report.html" -ForegroundColor Gray
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
     Write-Host "    -CommunityIOCHashes <file>  Explicit path to the community list (else auto-found next to script)" -ForegroundColor Gray
@@ -469,7 +478,7 @@ $script:ModuleCatalogue = @(
     [PSCustomObject]@{ Id='07'; Name='Filesystem';           Desc='temp exes, ads, recent files' }
     [PSCustomObject]@{ Id='08'; Name='Event logs';           Desc='account changes, log clearing' }
     [PSCustomObject]@{ Id='09'; Name='Software & defender';  Desc='installed apps, patches, av status' }
-    [PSCustomObject]@{ Id='10'; Name='Browser & creds';      Desc='history paths, .ssh, .aws' }
+    [PSCustomObject]@{ Id='10'; Name='Browser & creds';      Desc='history+url analysis (per user), .ssh, .aws' }
     [PSCustomObject]@{ Id='11'; Name='LOLBins';              Desc='certutil, mshta, rundll32...' }
     [PSCustomObject]@{ Id='12'; Name='AmCache / ShimCache';  Desc='execution artifact locations' }
     [PSCustomObject]@{ Id='13'; Name='Prefetch';             Desc='.pf files, last run times' }
@@ -2008,8 +2017,12 @@ Save-Output "03_persistence_registry.txt" {
 }
 
 Save-Output "03_scheduled_tasks.txt" {
+    # Enumerate tasks ONCE and reuse - Get-ScheduledTask is comparatively expensive and was
+    # previously called three times (once per section), tripling the enumeration cost.
+    $allTasks = @(Get-ScheduledTask -ErrorAction SilentlyContinue)
+
     Write-Section "SCHEDULED TASKS (non-Microsoft)"
-    Get-ScheduledTask |
+    $allTasks |
         Where-Object { $_.TaskPath -notlike '\Microsoft\*' } |
         Select-Object TaskName, TaskPath, State,
             @{N='Actions';E={($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '}},
@@ -2017,15 +2030,21 @@ Save-Output "03_scheduled_tasks.txt" {
         Format-Table -AutoSize
 
     Write-Section "ALL SCHEDULED TASKS (full detail)"
-    Get-ScheduledTask | ForEach-Object {
-        $info = $_ | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
+    # Get-ScheduledTaskInfo makes a per-task round-trip to the Task Scheduler service. Running it
+    # for every one of the hundreds of built-in \Microsoft\* tasks is what made this collector
+    # crawl (10+ min) or stall on a contended/remote host. By default we resolve run-time info
+    # ONLY for non-Microsoft tasks - the ones that matter in triage - and list Microsoft tasks
+    # without it (LastRun shows "(skipped)"). Pass -WithTaskInfo to force full info for all.
+    $allTasks | ForEach-Object {
+        $isMs = $_.TaskPath -like '\Microsoft\*'
+        $info = if ($script:WithTaskInfo -or -not $isMs) { $_ | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue } else { $null }
         [PSCustomObject]@{
             Name       = $_.TaskName
             Path       = $_.TaskPath
             State      = $_.State
-            LastRun    = $info.LastRunTime
-            NextRun    = $info.NextRunTime
-            LastResult = $info.LastTaskResult
+            LastRun    = if ($info) { $info.LastRunTime } elseif ($isMs) { '(skipped)' } else { $null }
+            NextRun    = if ($info) { $info.NextRunTime } else { $null }
+            LastResult = if ($info) { $info.LastTaskResult } else { $null }
             Actions    = ($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' | '
             Author     = $_.Principal.UserId
         }
@@ -2033,7 +2052,7 @@ Save-Output "03_scheduled_tasks.txt" {
 
     Write-Section "SUSPICIOUS TASK ACTIONS (writable path / encoded / lolbin)"
     # Flag tasks whose action runs from a writable location or uses a download/encoded pattern.
-    $suspectTasks = foreach ($t in (Get-ScheduledTask)) {
+    $suspectTasks = foreach ($t in $allTasks) {
         foreach ($act in $t.Actions) {
             $cmd = "$($act.Execute) $($act.Arguments)".Trim()
             if (-not $cmd) { continue }
@@ -3047,6 +3066,183 @@ Save-Output "10_browser_artifacts.txt" {
     }
 }
 
+function Get-UrlsFromHistoryFile {
+    # Dependency-free URL extraction from a browser history database (Chrome/Edge 'History' or
+    # Firefox 'places.sqlite'). We DON'T parse SQLite (that would need an external engine and
+    # break secgurd's no-dependencies rule); instead we read the raw file - opened with shared
+    # ReadWrite so an open browser's lock can't block us - and regex out the http(s) URL strings
+    # stored as UTF-8 text inside it. Returns a HashSet of unique URLs, or $null if unreadable.
+    param([string]$Path)
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    } catch {
+        return $null   # locked exclusively / access denied
+    }
+    try {
+        $len = $fs.Length
+        if ($len -le 0 -or $len -gt 250MB) { return (New-Object System.Collections.Generic.HashSet[string]) }
+        $buf = New-Object byte[] ([int]$len)
+        $read = 0
+        while ($read -lt $len) {
+            $n = $fs.Read($buf, $read, [int]($len - $read))
+            if ($n -le 0) { break }
+            $read += $n
+        }
+    } catch {
+        return $null
+    } finally {
+        $fs.Close()
+    }
+    # Latin1 maps each byte to one char, so binary stays intact and ASCII URLs match cleanly.
+    $text = [System.Text.Encoding]::GetEncoding(28591).GetString($buf)
+    $urls = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    $rx = [regex]"(?i)https?://[^\s""'<>\\)(\]\[}{\x00-\x1f]{4,2048}"
+    foreach ($m in $rx.Matches($text)) {
+        $u = $m.Value.TrimEnd('.', ',', ';', ')', '>', '"', "'", '!', '`')
+        if ($u.Length -ge 8) { [void]$urls.Add($u) }
+    }
+    return $urls
+}
+
+function Test-SuspiciousUrl {
+    # Heuristic triage of a single URL. Returns @{Severity;Reason} for a hit, else $null.
+    # Tuned to surface payload downloads, raw-IP/C2/exfil infra, obfuscation and abuse TLDs -
+    # leads to verify, not verdicts.
+    param([string]$Url)
+    $lower = $Url.ToLower()
+    $urlHost = ''
+    if ($lower -match '^[a-z]+://([^/:\s]+)') { $urlHost = $matches[1] }
+
+    if ($lower -match '\.(exe|scr|hta|ps1|bat|cmd|vbs|jse?|wsf|jar|msi|dll|lnk|iso|img|apk|ace|7z)(\?|#|$)') {
+        return @{ Severity = 'HIGH'; Reason = 'direct executable/script download' }
+    }
+    if ($urlHost -match '^\d{1,3}(\.\d{1,3}){3}$') {
+        return @{ Severity = 'HIGH'; Reason = 'connection to a raw IP address' }
+    }
+    if ($lower -match '(?i)(cdn\.discordapp\.com|discord(app)?\.com/api/webhooks|pastebin\.com/raw|paste\.ee|controlc\.com|transfer\.sh|anonfiles\.com|gofile\.io|mega\.(nz|io)|mediafire\.com|file\.io|0x0\.st|tmpfiles\.|temp\.sh|ngrok\.(io|app|dev)|serveo\.net|trycloudflare\.com|\.workers\.dev|\.r2\.dev|telegram\.org|t\.me/)') {
+        return @{ Severity = 'HIGH'; Reason = 'known file-drop / C2 / exfil infrastructure' }
+    }
+    if ($urlHost -match 'raw\.githubusercontent\.com$' -or $urlHost -match 'gist\.githubusercontent\.com$') {
+        return @{ Severity = 'MED'; Reason = 'raw GitHub content (common payload host)' }
+    }
+    if ($urlHost -match '^(bit\.ly|tinyurl\.com|goo\.gl|t\.co|is\.gd|cutt\.ly|rebrand\.ly|ow\.ly|rb\.gy|shorturl\.at|tiny\.cc|bit\.do|s\.id)$') {
+        return @{ Severity = 'MED'; Reason = 'URL shortener (obscures destination)' }
+    }
+    if ($urlHost -match '\.(tk|top|xyz|gq|ml|cf|work|click|country|kim|men|loan|download|zip|mov|rest|cfd|sbs|lol|quest)$') {
+        return @{ Severity = 'MED'; Reason = 'high-abuse TLD' }
+    }
+    if ($urlHost -match '(^|\.)xn--') {
+        return @{ Severity = 'MED'; Reason = 'punycode host (possible homoglyph/spoof)' }
+    }
+    if ($lower -match '(anydesk|teamviewer|atera|splashtop|screenconnect|connectwise|logmein|gotomypc|remoteutilities|ammyy|netsupport|meshcentral|rustdesk)') {
+        return @{ Severity = 'INFO'; Reason = 'remote-access tool reference (confirm authorized)' }
+    }
+    return $null
+}
+
+Save-Output "10_browser_history.txt" {
+    Write-Section "BROWSER HISTORY - URL EXTRACTION & ANALYSIS (per user)"
+    "Dependency-free: URLs are read directly from each browser's history database (Chrome/Edge"
+    "'History', Firefox 'places.sqlite') - no SQLite engine, so visit timestamps/counts are not"
+    "decoded. Suspicious URLs are flagged below and echoed live as they're found; the full"
+    "per-user URL list for each profile is written to:"
+    "    10_browser_history\<user>\<browser>_<profile>.txt"
+    ""
+
+    $browsers = @(
+        @{ Name = 'Chrome';  Glob = 'C:\Users\*\AppData\Local\Google\Chrome\User Data\*\History' }
+        @{ Name = 'Edge';    Glob = 'C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\History' }
+        @{ Name = 'Firefox'; Glob = 'C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite' }
+    )
+
+    $detailRoot = Join-Path $OutputPath '10_browser_history'
+    $grandTotalUrls = 0
+    $grandFlagged = 0
+    $usersSeen = @{}
+    $findingsEchoed = 0
+    $findingCap = 50          # don't flood the console; the rest still land in the files
+    $summaryRows = New-Object System.Collections.Generic.List[object]
+
+    foreach ($b in $browsers) {
+        $dbs = Get-ChildItem $b.Glob -ErrorAction SilentlyContinue -Force
+        foreach ($db in $dbs) {
+            $user = if ($db.FullName -match '(?i)\\Users\\([^\\]+)\\') { $matches[1] } else { 'unknown' }
+            $profileName = Split-Path (Split-Path $db.FullName -Parent) -Leaf
+
+            $urls = Get-UrlsFromHistoryFile -Path $db.FullName
+            if ($null -eq $urls) {
+                $summaryRows.Add([PSCustomObject]@{ User = $user; Browser = $b.Name; Profile = $profileName; URLs = 'LOCKED/ERR'; Flagged = '-' })
+                continue
+            }
+            $usersSeen[$user] = $true
+            $urlList = @($urls) | Sort-Object
+            $grandTotalUrls += $urlList.Count
+
+            $flagged = New-Object System.Collections.Generic.List[object]
+            foreach ($u in $urlList) {
+                $verdict = Test-SuspiciousUrl $u
+                if ($verdict) {
+                    $flagged.Add([PSCustomObject]@{ Severity = $verdict.Severity; Reason = $verdict.Reason; URL = $u })
+                    # Echo HIGH/MED live (like scheduled tasks); cap to avoid flooding.
+                    if ($verdict.Severity -ne 'INFO' -and $findingsEchoed -lt $findingCap) {
+                        Add-Finding $verdict.Severity '10' (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u") '10_browser_history.txt'
+                        $findingsEchoed++
+                    }
+                }
+            }
+            $grandFlagged += $flagged.Count
+
+            # Per-user detail file (its own folder per user, as requested).
+            $userDir = Join-Path $detailRoot $user
+            $null = New-Item -ItemType Directory -Path $userDir -Force -ErrorAction SilentlyContinue
+            $safeProfile = ($profileName -replace '[^\w.\-]', '_')
+            $detailFile = Join-Path $userDir ("{0}_{1}.txt" -f $b.Name, $safeProfile)
+
+            $lines = New-Object System.Collections.Generic.List[string]
+            $lines.Add((Write-Section "$($b.Name) HISTORY - user '$user' - profile '$profileName'"))
+            $lines.Add("Source DB  : $($db.FullName)")
+            $lines.Add("DB modified: $($db.LastWriteTime)")
+            $lines.Add("Unique URLs: $($urlList.Count)    Flagged: $($flagged.Count)")
+            $lines.Add('')
+            $lines.Add((Write-Section "FLAGGED URLS (heuristic - verify before acting)"))
+            if ($flagged.Count) {
+                foreach ($f in ($flagged | Sort-Object Severity, URL)) {
+                    $lines.Add(("[{0,-4}] {1,-42} {2}" -f $f.Severity, $f.Reason, $f.URL))
+                }
+            } else {
+                $lines.Add("(none flagged by heuristics)")
+            }
+            $lines.Add('')
+            $lines.Add((Write-Section "ALL UNIQUE URLS ($($urlList.Count))"))
+            foreach ($u in $urlList) { $lines.Add($u) }
+
+            $outArr = $lines.ToArray()
+            if ($script:FindFilter) { $outArr = Select-FilteredOutput -Lines $outArr -Term $script:FindFilter }
+            $outArr | Out-File -FilePath $detailFile -Encoding UTF8 -Force
+
+            $summaryRows.Add([PSCustomObject]@{ User = $user; Browser = $b.Name; Profile = $profileName; URLs = $urlList.Count; Flagged = $flagged.Count })
+        }
+    }
+
+    Write-Section "SUMMARY (per user / browser / profile)"
+    if ($summaryRows.Count) {
+        $summaryRows | Sort-Object User, Browser, Profile | Format-Table -AutoSize
+    } else {
+        "No browser history databases found for any user on this host."
+        "(Chrome / Edge / Firefox not installed, or no user profiles present.)"
+    }
+    ""
+    "Users with history : $($usersSeen.Keys.Count)"
+    "Total unique URLs  : $grandTotalUrls"
+    "Total flagged URLs : $grandFlagged"
+    if ($findingsEchoed -ge $findingCap) {
+        "(console echo capped at $findingCap findings - see the per-user files for the full set)"
+    }
+    if ($grandFlagged -gt 0) {
+        Add-Finding 'INFO' '10' "Browser history: $grandFlagged potentially-suspicious URL(s) across $($usersSeen.Keys.Count) user(s) - review 10_browser_history\<user>\" '10_browser_history.txt'
+    }
+}
+
 Save-Output "10_credential_files.txt" {
     Write-Section "CREDENTIAL/CONFIG FILES OF INTEREST"
     $targets = @(
@@ -3216,8 +3412,10 @@ $indexLines += "Errors      : $($script:ErrorCount)"
 $indexLines += ""
 $indexLines += "FILES IN THIS FOLDER"
 $indexLines += ("-" * 60)
-Get-ChildItem $OutputPath -Filter '*.txt' | Sort-Object Name | ForEach-Object {
-    $indexLines += ("  {0,-42} {1,8:N0} bytes" -f $_.Name, $_.Length)
+# Recurse so per-user subfolders (e.g. 10_browser_history\<user>\) are listed too.
+Get-ChildItem $OutputPath -Filter '*.txt' -Recurse | Sort-Object FullName | ForEach-Object {
+    $rel = $_.FullName.Substring($OutputPath.Length).TrimStart('\', '/')
+    $indexLines += ("  {0,-52} {1,8:N0} bytes" -f $rel, $_.Length)
 }
 $indexLines | Out-File (Join-Path $OutputPath '00_INDEX.txt') -Encoding UTF8 -Force
 
@@ -3533,12 +3731,14 @@ $hashLines += ("=" * 78)
 $hashLines += "Generated : $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))   Host: $env:COMPUTERNAME"
 $hashLines += "Purpose   : evidence integrity - verify files were not altered after collection."
 $hashLines += ("-" * 78)
-Get-ChildItem $OutputPath -File | Where-Object { $_.Name -ne '00_HASHES.txt' } | Sort-Object Name | ForEach-Object {
+# Recurse so per-user subfolder artifacts (e.g. 10_browser_history\<user>\) are hashed too.
+Get-ChildItem $OutputPath -File -Recurse | Where-Object { $_.Name -ne '00_HASHES.txt' } | Sort-Object FullName | ForEach-Object {
+    $rel = $_.FullName.Substring($OutputPath.Length).TrimStart('\', '/')
     try {
         $h = (Get-FileHash $_.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
-        $hashLines += ("{0}  {1}" -f $h, $_.Name)
+        $hashLines += ("{0}  {1}" -f $h, $rel)
     } catch {
-        $hashLines += ("{0,-64}  {1}" -f 'ERROR-HASHING', $_.Name)
+        $hashLines += ("{0,-64}  {1}" -f 'ERROR-HASHING', $rel)
     }
 }
 $hashLines += ("-" * 78)

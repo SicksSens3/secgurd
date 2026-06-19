@@ -52,7 +52,7 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 | 07 | Filesystem | temp executables, ADS, recently-modified files |
 | 08 | Event logs | account changes, log clearing, log status |
 | 09 | Software & Defender | installed apps, patches, Defender status & exclusions |
-| 10 | Browser & creds | history file paths, `.ssh`, `.aws`, credential files |
+| 10 | Browser & creds | **per-user browser history + URL analysis (Chrome/Edge/Firefox)**, history file paths, `.ssh`, `.aws`, credential files |
 | 11 | LOLBins | certutil, mshta, rundll32, regsvr32 usage |
 | 12 | AmCache / ShimCache | execution-artifact locations |
 | 13 | Prefetch | `.pf` files, last-run times |
@@ -62,6 +62,7 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 
 - **Findings engine** — auto-flags high-signal indicators (HIGH / MED / INFO) as it runs: WMI event consumers, IFEO debugger hijacks, accessibility backdoors, encoded PowerShell, suspicious parent→child process chains, services/tasks running from writable paths, unquoted service paths, rogue remote-access tools, Defender exclusions on temp paths, and more.
 - **Rogue RMM detection** — hunts ~18 remote-access tool families (ScreenConnect/ConnectWise, AnyDesk, TeamViewer, Atera, Splashtop, MeshCentral, NetSupport, etc.) and flags suspicious context (writable-path installs, ScreenConnect instance folders + relay host).
+- **Browser history URL analysis** — extracts URLs from every user's Chrome, Edge, and Firefox history (read directly from the history DBs, lock-safe, no SQLite engine needed) and flags suspicious ones live as it runs: direct executable/script downloads, raw-IP hosts, known file-drop/C2/exfil infrastructure (Discord CDN, pastebin/raw, transfer.sh, anonfiles, mega, ngrok, `*.workers.dev`, telegram, …), URL shorteners, high-abuse TLDs, punycode hosts, and remote-access-tool references. Per-user output folders. (URLs only — visit timestamps/counts aren't decoded, to stay dependency-free.)
 - **Local IOC hash matching** — match on-disk binaries against your own list of known-bad MD5 / SHA-1 / SHA-256 hashes. Fully offline; no API key, no third-party disclosure.
 - **Targeted find / scoping** — point a run at a single known artifact (`-Find SmartPDF` or the `f` menu option) and every output is reduced to just the items that name, point at, or are signed by that string — across tasks, run keys, services, processes, files and findings. Case-insensitive.
 - **Event timeline** — chronological merge of logons, log clears, new services, scheduled tasks, and recent file modifications.
@@ -132,8 +133,8 @@ Remove-Item "$env:TEMP\secgurd*" -Recurse -Force -ErrorAction SilentlyContinue
 ```
 secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
             [-OpenWhenDone] [-HtmlReport] [-WithOwners] [-WithSignatures]
-            [-IOCHashes <file>] [-DaysBack <N>] [-Find <string>] [-Cleanup]
-            [-MakeS1Paste] [-Help]
+            [-WithTaskInfo] [-IOCHashes <file>] [-DaysBack <N>] [-Find <string>]
+            [-Cleanup] [-MakeS1Paste] [-Help]
 ```
 
 ### Parameters
@@ -148,6 +149,7 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 | `-HtmlReport` | Also build a single-file `report.html` and open it when done. |
 | `-WithOwners` | Resolve process owners (slower; off by default — can stall on domain controllers). |
 | `-WithSignatures` | Verify Authenticode signatures of service binaries / loaded DLLs (slower; can stall offline). |
+| `-WithTaskInfo` | Resolve run times (LastRun/NextRun/LastResult) for **all** scheduled tasks incl. the hundreds of built-in `\Microsoft\*` ones. Off by default — those per-task Task Scheduler calls can take many minutes; without it, run times are resolved only for non-Microsoft tasks (all tasks are still listed). |
 | `-IOCHashes <file>` | Match on-disk binaries against an MD5/SHA-1/SHA-256 IOC hash list. |
 | `-DaysBack <N>` | Lookback window in days for time-bounded collectors (default 30). |
 | `-Find <string>` | Scope **all** output to lines/items containing `<string>` (case-insensitive) — see [Targeted find](#targeted-find--scoping-a-run-to-one-artifact). |
@@ -266,8 +268,15 @@ secgurd_<HOST>_<timestamp>\
   01_system_info.txt
   02_rdp_remote_access.txt
   03_remote_access_tools.txt
+  10_browser_history.txt          per-user/browser summary + flagged URLs
+  10_browser_history\             one subfolder per user (browser history detail)
+    <user>\Chrome_Default.txt        flagged URLs + all unique URLs for that profile
+    <user>\Edge_Default.txt
+    <user>\Firefox_<profile>.txt
   ... (one .txt per collector)
 ```
+
+Per-user browser-history detail is written under `10_browser_history\<user>\`, one file per browser profile. These subfolder files are included in `00_INDEX.txt` and the `00_HASHES.txt` manifest (both recurse), and in the zip.
 
 The HTML report groups artifacts by module, color-codes findings by severity, and lets you click a finding to jump straight to the artifact it came from.
 
