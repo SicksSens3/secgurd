@@ -132,7 +132,7 @@ function Ex {
     return $s
 }
 
-$script:secgurdVersion = 'v1.3'
+$script:secgurdVersion = 'v1.4'
 
 # ---------------------------------------------
 
@@ -161,6 +161,13 @@ $script:IOCHashCount = 0
 $script:CommunityHashSet = $null
 $script:CommunityHashCount = 0
 $script:CommunityHashFile = $null
+# Browser flagging: module 10 records every flagged URL here (user/browser/host/severity/reason)
+# so the post-collection correlation step (after IOC matching) can cross-reference these hosts
+# with on-disk artifacts and write 00_BROWSER_ALERTS.txt.
+$script:BrowserFlagged = New-Object System.Collections.Generic.List[object]
+# Download origins (module 07 Zone.Identifier streams + module 03 BITS jobs): file -> URL.
+# The end-of-run correlation folds suspicious origins into 00_BROWSER_ALERTS.txt.
+$script:DownloadSources = New-Object System.Collections.Generic.List[object]
 # Trusted binary locations that sit under otherwise-writable roots (e.g. ProgramData) but are
 # legitimate OS/vendor software. We exempt these from "writable path" findings so we don't flag
 # Windows Defender (which lives in ProgramData\Microsoft\Windows Defender\Platform\<ver>\ and
@@ -471,17 +478,17 @@ if ($Cleanup) {
 if (-not $NoBanner) { Show-secgurdBanner }
 
 $script:ModuleCatalogue = @(
-    [PSCustomObject]@{ Id='01'; Name='System info';          Desc='os, build, uptime, domain' }
-    [PSCustomObject]@{ Id='02'; Name='Users & sessions';     Desc='accounts, logons, rdp/remote' }
-    [PSCustomObject]@{ Id='03'; Name='Persistence';          Desc='run keys, tasks, services, wmi, ifeo' }
-    [PSCustomObject]@{ Id='04'; Name='PowerShell artifacts'; Desc='history, transcripts, 4104' }
-    [PSCustomObject]@{ Id='05'; Name='Network';              Desc='connections, dns, arp, fw' }
-    [PSCustomObject]@{ Id='06'; Name='Processes';            Desc='proctree, cmdlines, unsigned dlls' }
-    [PSCustomObject]@{ Id='07'; Name='Filesystem';           Desc='temp exes, ads, recent files' }
+    [PSCustomObject]@{ Id='01'; Name='System info';          Desc='os, build, uptime, domain, env' }
+    [PSCustomObject]@{ Id='02'; Name='Users & sessions';     Desc='accounts, logons, rdp in/out' }
+    [PSCustomObject]@{ Id='03'; Name='Persistence';          Desc='run keys, tasks, services, wmi, ifeo, rmm, bits' }
+    [PSCustomObject]@{ Id='04'; Name='PowerShell artifacts'; Desc='history, transcripts, 4104, secrets' }
+    [PSCustomObject]@{ Id='05'; Name='Network';              Desc='connections, dns, arp, shares, fw' }
+    [PSCustomObject]@{ Id='06'; Name='Processes';            Desc='proctree, cmdlines, odd-path dlls' }
+    [PSCustomObject]@{ Id='07'; Name='Filesystem';           Desc='temp exes, ads, download origins, recycle bin' }
     [PSCustomObject]@{ Id='08'; Name='Event logs';           Desc='account changes, log clearing' }
-    [PSCustomObject]@{ Id='09'; Name='Software & defender';  Desc='installed apps, patches, av status' }
-    [PSCustomObject]@{ Id='10'; Name='Browser & creds';      Desc='history+url analysis (per user), .ssh, .aws' }
-    [PSCustomObject]@{ Id='11'; Name='LOLBins';              Desc='certutil, mshta, rundll32...' }
+    [PSCustomObject]@{ Id='09'; Name='Software & defender';  Desc='installed apps, patches, defender posture' }
+    [PSCustomObject]@{ Id='10'; Name='Browser & creds';      Desc='history+url analysis, extensions, .ssh/.aws' }
+    [PSCustomObject]@{ Id='11'; Name='LOLBins';              Desc='certutil, mshta, rundll32 in 4688' }
     [PSCustomObject]@{ Id='12'; Name='AmCache / ShimCache';  Desc='execution artifact locations' }
     [PSCustomObject]@{ Id='13'; Name='Prefetch';             Desc='.pf files, last run times' }
     [PSCustomObject]@{ Id='14'; Name='Named pipes';          Desc='active pipes, c2 detection' }
@@ -1615,6 +1622,50 @@ try {
 $script:TotalArtifacts = 0
 $script:DoneArtifacts  = 0
 
+function Read-RecycleI {
+    # Parse a Recycle Bin $I metadata file (dependency-free raw byte read). Layout:
+    #   off 0  : 8-byte version (Win10 = 2, Vista/7/8 = 1)
+    #   off 8  : 8-byte original file size (Int64 LE)
+    #   off 16 : 8-byte deletion time (Windows FILETIME LE)
+    #   off 24 : version 1 -> fixed 520-byte (260 UTF-16LE char) original path;
+    #            version 2 -> 4-byte path length (chars incl. null), then that many UTF-16LE chars.
+    # Returns @{OriginalPath; OriginalSize; DeletedTime} or $null.
+    param([string]$Path)
+    try { $b = [System.IO.File]::ReadAllBytes($Path) } catch { return $null }
+    if ($b.Length -lt 24) { return $null }
+    $ver  = [System.BitConverter]::ToInt64($b, 0)
+    $size = [System.BitConverter]::ToInt64($b, 8)
+    $ft   = [System.BitConverter]::ToInt64($b, 16)
+    $delTime = $null
+    try { $delTime = [System.DateTime]::FromFileTime($ft) } catch {}
+    $origPath = ''
+    if ($ver -eq 2 -and $b.Length -ge 28) {
+        $nChars = [System.BitConverter]::ToInt32($b, 24)
+        $byteLen = ($nChars - 1) * 2
+        if ($byteLen -gt 0 -and (28 + $byteLen) -le $b.Length) {
+            $origPath = [System.Text.Encoding]::Unicode.GetString($b, 28, $byteLen)
+        }
+    } else {
+        $avail = $b.Length - 24
+        $take = [Math]::Min(520, $avail)
+        if ($take -gt 0) { $origPath = ([System.Text.Encoding]::Unicode.GetString($b, 24, $take)).Split([char]0)[0] }
+    }
+    return [PSCustomObject]@{ OriginalPath = $origPath; OriginalSize = $size; DeletedTime = $delTime }
+}
+
+function Get-EventData {
+    # Flatten a Windows event's EventData into a name->value hashtable. Locale-independent and
+    # robust to field-position changes across event-log schema versions (unlike $_.Properties[n],
+    # which silently returns the wrong field if positions shift). Returns @{} on any parse error.
+    param($Event)
+    $h = @{}
+    try {
+        $x = [xml]$Event.ToXml()
+        foreach ($n in $x.Event.EventData.Data) { if ($n.Name) { $h[$n.Name] = $n.'#text' } }
+    } catch {}
+    return $h
+}
+
 function Write-Section {
     param([string]$Title)
     $line = "=" * 60
@@ -1836,13 +1887,13 @@ Save-Output "02_local_users.txt" {
     $localUsers | Select-Object Name, Enabled, LastLogon, PasswordLastSet,
         PasswordNeverExpires, Description | Format-Table -AutoSize
 
-    # Flag users created in the last 14 days (PasswordLastSet is a decent proxy for creation)
+    # Flag users whose password was set within the lookback window (a decent proxy for creation)
 
     $recentUsers = $localUsers | Where-Object {
         $_.PasswordLastSet -and $_.PasswordLastSet -gt (Get-Date).AddDays(-$script:DaysBack)
     }
     foreach ($u in $recentUsers) {
-        Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <14d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^09 possible new account") '02_local_users.txt'
+        Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <$($script:DaysBack)d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^09 possible new account") '02_local_users.txt'
     }
 
     Write-Section "LOCAL GROUPS & MEMBERS"
@@ -1877,11 +1928,16 @@ Save-Output "02_logon_history.txt" {
         LogName = 'Security'
         Id      = 4624, 4625, 4634
     } -MaxEvents 200 -ErrorAction SilentlyContinue |
-    Select-Object TimeCreated, Id,
-        @{N='User';E={$_.Properties[5].Value}},
-        @{N='LogonType';E={$_.Properties[8].Value}},
-        @{N='SourceIP';E={$_.Properties[18].Value}},
-        Message |
+    ForEach-Object {
+        $d = Get-EventData $_
+        [PSCustomObject]@{
+            TimeCreated = $_.TimeCreated
+            Id          = $_.Id
+            User        = $d['TargetUserName']
+            LogonType   = $d['LogonType']
+            SourceIP    = $d['IpAddress']
+        }
+    } |
     Format-Table -AutoSize
 }
 
@@ -1911,12 +1967,19 @@ Save-Output "02_rdp_remote_access.txt" {
     $rdpLogons = Get-WinEvent -FilterHashtable @{
         LogName = 'Security'; Id = 4624; StartTime = (Get-Date).AddDays(-$script:DaysBack)
     } -MaxEvents 1000 -ErrorAction SilentlyContinue |
-        Where-Object { $_.Properties[8].Value -eq 10 } |
-        Select-Object TimeCreated,
-            @{N='User';E={$_.Properties[5].Value}},
-            @{N='Domain';E={$_.Properties[6].Value}},
-            @{N='SourceIP';E={$_.Properties[18].Value}},
-            @{N='SourceHost';E={$_.Properties[11].Value}}
+        ForEach-Object {
+            $d = Get-EventData $_
+            [PSCustomObject]@{
+                TimeCreated = $_.TimeCreated
+                User        = $d['TargetUserName']
+                Domain      = $d['TargetDomainName']
+                LogonType   = $d['LogonType']
+                SourceIP    = $d['IpAddress']
+                SourceHost  = $d['WorkstationName']
+            }
+        } |
+        Where-Object { $_.LogonType -eq '10' } |
+        Select-Object TimeCreated, User, Domain, SourceIP, SourceHost
     if ($rdpLogons) {
         $rdpLogons | Format-Table -AutoSize
         $srcIps = ($rdpLogons | Select-Object -ExpandProperty SourceIP -Unique) -join ', '
@@ -1929,10 +1992,17 @@ Save-Output "02_rdp_remote_access.txt" {
     Get-WinEvent -FilterHashtable @{
         LogName = 'Security'; Id = 4625; StartTime = (Get-Date).AddDays(-$script:DaysBack)
     } -MaxEvents 500 -ErrorAction SilentlyContinue |
-        Where-Object { $_.Properties[10].Value -eq 10 } |
-        Select-Object TimeCreated,
-            @{N='User';E={$_.Properties[5].Value}},
-            @{N='SourceIP';E={$_.Properties[19].Value}} |
+        ForEach-Object {
+            $d = Get-EventData $_
+            [PSCustomObject]@{
+                TimeCreated = $_.TimeCreated
+                User        = $d['TargetUserName']
+                LogonType   = $d['LogonType']
+                SourceIP    = $d['IpAddress']
+            }
+        } |
+        Where-Object { $_.LogonType -eq '10' } |
+        Select-Object TimeCreated, User, SourceIP |
         Format-Table -AutoSize
 
     Write-Section "TERMINALSERVICES SESSION EVENTS (connect / reconnect / disconnect)"
@@ -2100,13 +2170,13 @@ Save-Output "03_services.txt" {
         Sort-Object Status, Name | Format-Table -AutoSize
 
     Write-Section "RUNNING SERVICES WITH BINARY PATH"
-    Get-WmiObject Win32_Service |
+    Get-CimInstance Win32_Service |
         Where-Object { $_.State -eq 'Running' } |
         Select-Object Name, DisplayName, StartMode, State, PathName, StartName |
         Format-Table -AutoSize
 
-    Write-Section "RECENTLY MODIFIED SERVICE BINARIES (last 30 days)"
-    Get-WmiObject Win32_Service | ForEach-Object {
+    Write-Section "RECENTLY MODIFIED SERVICE BINARIES (within $($script:DaysBack) days)"
+    Get-CimInstance Win32_Service | ForEach-Object {
         # Extract binary path   handles quoted "C:\Path with spaces\svc.exe -arg"
 
         # and unquoted C:\Windows\System32\svc.exe -k netsvcs
@@ -2174,7 +2244,7 @@ Save-Output "03_services.txt" {
     # Two classic red flags:
     #  1) service binary living in a user-writable spot (Temp, AppData, Public, ProgramData)
     #  2) an unquoted ImagePath that contains a space -> unquoted service path hijack (T1574.009)
-    $suspectSvc = foreach ($svc in (Get-WmiObject Win32_Service)) {
+    $suspectSvc = foreach ($svc in (Get-CimInstance Win32_Service)) {
         $raw = $svc.PathName
         if (-not $raw) { continue }
         # isolate the executable path portion
@@ -2226,15 +2296,15 @@ Save-Output "03_wmi_persistence.txt" {
     Write-Section "WMI EVENT SUBSCRIPTIONS"
 
     Write-Section "  EventFilters"
-    Get-WMIObject -Namespace root\subscription -Class __EventFilter |
+    Get-CimInstance -Namespace root\subscription -ClassName __EventFilter -ErrorAction SilentlyContinue |
         Select-Object Name, Query, QueryLanguage | Format-List
 
     Write-Section "  EventConsumers"
-    $consumers = Get-WMIObject -Namespace root\subscription -Class __EventConsumer
+    $consumers = Get-CimInstance -Namespace root\subscription -ClassName __EventConsumer -ErrorAction SilentlyContinue
     $consumers | Select-Object * | Format-List
 
     Write-Section "  FilterToConsumerBindings"
-    $bindings = Get-WMIObject -Namespace root\subscription -Class __FilterToConsumerBinding
+    $bindings = Get-CimInstance -Namespace root\subscription -ClassName __FilterToConsumerBinding -ErrorAction SilentlyContinue
     $bindings | Select-Object * | Format-List
 
     if ($bindings) {
@@ -2417,7 +2487,7 @@ Save-Output "03_remote_access_tools.txt" {
     function Test-RMM { param($text) foreach ($r in $rmm) { if ($text -match $r.Pat) { return $r.Name } } return $null }
 
     Write-Section "RMM-RELATED SERVICES"
-    $svcHits = foreach ($svc in (Get-WmiObject Win32_Service -ErrorAction SilentlyContinue)) {
+    $svcHits = foreach ($svc in (Get-CimInstance Win32_Service -ErrorAction SilentlyContinue)) {
         $hay = "$($svc.Name) $($svc.DisplayName) $($svc.PathName)"
         $prod = Test-RMM $hay
         if ($prod) {
@@ -2510,6 +2580,86 @@ Save-Output "03_remote_access_tools.txt" {
     if (-not $scFound) { "(no ScreenConnect client instance folders found)" }
 }
 
+Save-Output "03_bits_jobs.txt" {
+    # BITS (Background Intelligent Transfer Service) jobs. Windows uses BITS for updates, but it's
+    # abused (MITRE T1197) for BOTH stealthy downloads and persistence: a job can carry a
+    # SetNotifyCmdLine that runs a program when the transfer completes, and the job survives
+    # reboots and re-attempts on a schedule - persistence that does NOT appear in Run keys, tasks,
+    # or services. We list every job (all users) with source URL(s)/destination/owner/state,
+    # surface NotifyCmdLine via bitsadmin (Get-BitsTransfer can't), and pull recent BITS event-log
+    # activity. Suspicious source URLs are fed into the download/browser correlation, so a BITS
+    # pull of e.g. pdf-fast.com/PDFast.exe also lands in 00_BROWSER_ALERTS.txt.
+
+    Write-Section "ACTIVE BITS JOBS (Get-BitsTransfer -AllUsers)"
+    $haveBits = Get-Command Get-BitsTransfer -ErrorAction SilentlyContinue
+    if ($haveBits) {
+        $jobs = @(Get-BitsTransfer -AllUsers -ErrorAction SilentlyContinue)
+        if ($jobs.Count) {
+            $writable = '(?i)\\(Temp|AppData|Users\\Public|ProgramData|Downloads|Desktop)\\'
+            foreach ($j in $jobs) {
+                $files = @($j.FileList)
+                $srcList = ($files | ForEach-Object { $_.RemoteName }) -join ' ; '
+                $dstList = ($files | ForEach-Object { $_.LocalName }) -join ' ; '
+                [PSCustomObject]@{
+                    JobId       = $j.JobId
+                    DisplayName = $j.DisplayName
+                    Owner       = $j.OwnerAccount
+                    State       = $j.JobState
+                    Created     = $j.CreationTime
+                    Source      = $srcList
+                    Destination = $dstList
+                } | Format-List
+
+                foreach ($f in $files) {
+                    $u = $f.RemoteName; $d = $f.LocalName
+                    if ($u -match '(?i)^https?://\d{1,3}(\.\d{1,3}){3}') {
+                        Add-Finding 'HIGH' '03' (Ex "BITS job '$($j.DisplayName)' downloads from a raw IP ^17 $u") '03_bits_jobs.txt'
+                    }
+                    if ($d -and ($d -match $writable) -and ($d -notmatch $script:TrustedPathRx)) {
+                        Add-Finding 'HIGH' '03' (Ex "BITS job '$($j.DisplayName)' writes to a writable path ^17 $d") '03_bits_jobs.txt'
+                    }
+                    # feed the source URL + destination filename into the download correlation
+                    if ($u) {
+                        $leaf = if ($d) { Split-Path -Leaf $d } else { '' }
+                        [void]$script:DownloadSources.Add([PSCustomObject]@{ User=$j.OwnerAccount; FileLeaf=$leaf; ReferrerUrl=''; HostUrl=$u; Source='BITS job' })
+                    }
+                }
+            }
+        } else {
+            "(no active BITS jobs)"
+        }
+    } else {
+        "(Get-BitsTransfer not available on this host)"
+    }
+
+    Write-Section "BITS JOBS incl. NotifyCmdLine (bitsadmin /list /allusers /verbose)"
+    # bitsadmin is deprecated but is the only built-in that prints NotifyCmdLine - THE persistence
+    # indicator (a command line executed when the job completes).
+    $ba = Join-Path $env:SystemRoot 'System32\bitsadmin.exe'
+    if (Test-Path $ba) {
+        $raw = (& $ba /list /allusers /verbose 2>&1 | Out-String)
+        $raw
+        foreach ($line in ($raw -split "`r?`n")) {
+            if ($line -match '(?i)NotifyCmdLine:\s*(.+\S)') {
+                $ncl = $matches[1].Trim()
+                if ($ncl -and $ncl -notmatch '(?i)^\{?none\}?$') {
+                    Add-Finding 'HIGH' '03' (Ex "BITS job has a NotifyCmdLine (runs on completion) ^17 $ncl") '03_bits_jobs.txt'
+                }
+            }
+        }
+    } else {
+        "(bitsadmin.exe not present)"
+    }
+
+    Write-Section "BITS-CLIENT EVENT LOG (recent transfers, within $($script:DaysBack)d)"
+    Get-WinEvent -FilterHashtable @{
+        LogName   = 'Microsoft-Windows-Bits-Client/Operational'
+        StartTime = (Get-Date).AddDays(-$script:DaysBack)
+    } -MaxEvents 200 -ErrorAction SilentlyContinue |
+        Select-Object TimeCreated, Id, @{N='Detail';E={($_.Message -replace '\s+',' ').Trim()}} |
+        Format-Table -AutoSize -Wrap
+}
+
 # ---------------------------------------------
 
 #  4. POWERSHELL ARTIFACTS
@@ -2518,12 +2668,26 @@ Save-Output "03_remote_access_tools.txt" {
 
 Save-Output "04_ps_history.txt" {
     Write-Section "POWERSHELL HISTORY (ALL USERS)"
+    # PowerShell history routinely contains secrets typed on the command line (passwords, API
+    # keys, tokens, connection strings). We deliberately do NOT redact - a responder needs the
+    # raw evidence - but we (a) print a standing caution and (b) raise a finding when secret-
+    # looking lines are present, since this file ends up in the off-host zip.
+    "NOTE: command history can contain PLAINTEXT secrets (passwords / keys / tokens /"
+    "connection strings). Treat this artifact as sensitive when copying it off-host."
+    ""
     $histPaths = Get-ChildItem 'C:\Users\*\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt' -Force -ErrorAction SilentlyContinue
+    $secretRx = '(?i)(password|passwd|\bpwd\b|secret|api[_-]?key|access[_-]?key|client[_-]?secret|\btoken\b|bearer\s|authorization|ConvertTo-SecureString|-AsPlainText|connectionstring|AKIA[0-9A-Z]{12,}|BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY)'
+    $secretHits = 0
     foreach ($h in $histPaths) {
         "`n`n===== $($h.FullName) ====="
-        Get-Content $h.FullName
+        $content = Get-Content $h.FullName -ErrorAction SilentlyContinue
+        foreach ($line in $content) { if ($line -match $secretRx) { $secretHits++ } }
+        $content
     }
     if (-not $histPaths) { "  (no PSReadLine history files found)" }
+    if ($secretHits -gt 0) {
+        Add-Finding 'MED' '04' "PowerShell history has $secretHits line(s) that look like secrets (passwords/keys/tokens) - 04_ps_history.txt is sensitive, handle the output accordingly" '04_ps_history.txt'
+    }
 }
 
 Save-Output "04_ps_transcripts.txt" {
@@ -2689,7 +2853,7 @@ Save-Output "06_processes.txt" {
     # Pull Win32_Process once into a hashtable instead of querying per-process
 
     $cmdLineByPid = @{}
-    Get-WmiObject Win32_Process | ForEach-Object { $cmdLineByPid[[int]$_.ProcessId] = $_.CommandLine }
+    Get-CimInstance Win32_Process | ForEach-Object { $cmdLineByPid[[int]$_.ProcessId] = $_.CommandLine }
 
     Get-Process | Select-Object Id, Name, CPU, WorkingSet,
         @{N='Path';E={$_.Path}},
@@ -2839,7 +3003,7 @@ Save-Output "06_loaded_dlls.txt" {
 # ---------------------------------------------
 
 Save-Output "07_recently_modified_system32.txt" {
-    Write-Section "RECENTLY MODIFIED FILES IN SYSTEM32 (last 7 days)"
+    Write-Section "RECENTLY MODIFIED FILES IN SYSTEM32 (within $($script:DaysBack) days)"
     Get-ChildItem "$env:SystemRoot\System32" -File -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-$script:DaysBack) } |
         Select-Object Name, LastWriteTime, Length, FullName |
@@ -2905,6 +3069,94 @@ Save-Output "07_alternate_data_streams.txt" {
     }
     if ($results) { $results | Format-Table -AutoSize }
     else { "  (no suspicious alternate data streams found in user content folders)" }
+}
+
+Save-Output "07_download_origins.txt" {
+    Write-Section "DOWNLOAD ORIGINS (Zone.Identifier ReferrerUrl / HostUrl)"
+    "When a file is downloaded, Windows records where it came from in a Zone.Identifier alternate"
+    "data stream (ReferrerUrl = the page, HostUrl = the actual file URL). This is on-disk proof of"
+    "a download's source - it survives even if browser history is cleared, and it's the file-side"
+    "mirror of the browser URL flagging. Scoped to Downloads/Desktop/Documents for all users."
+    "Suspicious origins are also folded into 00_BROWSER_ALERTS.txt by the correlation step."
+    ""
+    $scanFolders = @('Downloads','Desktop','Documents')
+    $exts = @('.exe','.dll','.scr','.ps1','.bat','.cmd','.vbs','.js','.jse','.wsf','.hta','.msi',
+        '.com','.lnk','.iso','.img','.7z','.zip','.rar','.gz','.jar','.apk',
+        '.docm','.xlsm','.pptm','.doc','.xls','.ppt','.pdf')
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($userDir in (Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue)) {
+        $user = $userDir.Name
+        foreach ($sub in $scanFolders) {
+            $p = Join-Path $userDir.FullName $sub
+            if (-not (Test-Path $p)) { continue }
+            Get-ChildItem $p -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $exts -contains $_.Extension.ToLower() } |
+                ForEach-Object {
+                    $zi = Get-Content -LiteralPath $_.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue
+                    if (-not $zi) { return }
+                    $ref = ''; $hostUrl = ''
+                    foreach ($ln in $zi) {
+                        if ($ln -match '(?i)^ReferrerUrl=(.+)$') { $ref = $matches[1].Trim() }
+                        elseif ($ln -match '(?i)^HostUrl=(.+)$') { $hostUrl = $matches[1].Trim() }
+                    }
+                    if ($ref -or $hostUrl) {
+                        [void]$rows.Add([PSCustomObject]@{ User=$user; File=$_.FullName; FileLeaf=$_.Name; ReferrerUrl=$ref; HostUrl=$hostUrl })
+                        [void]$script:DownloadSources.Add([PSCustomObject]@{ User=$user; FileLeaf=$_.Name; ReferrerUrl=$ref; HostUrl=$hostUrl; Source='Zone.Identifier' })
+                    }
+                }
+        }
+    }
+    if ($rows.Count) {
+        foreach ($r in $rows) {
+            "FILE : $($r.File)"
+            if ($r.HostUrl)     { "  HostUrl     : $($r.HostUrl)" }
+            if ($r.ReferrerUrl) { "  ReferrerUrl : $($r.ReferrerUrl)" }
+            ""
+        }
+        "Total downloaded files with a recorded origin: $($rows.Count)"
+    } else {
+        "(no Zone.Identifier download-origin data found in user content folders)"
+    }
+}
+
+Save-Output "07_recycle_bin.txt" {
+    Write-Section "RECYCLE BIN CONTENTS (deleted-but-recoverable, per user SID)"
+    "A normal delete only moves the file into C:\`$Recycle.Bin\<SID>\ and renames it: the `$I file"
+    "holds the original path/size/deletion-time, the paired `$R file is the recovered content"
+    "(same suffix). Shift+Delete and secure-wipe bypass this. Recovered `$R binaries are also"
+    "hashed against the IOC lists in the matching step below."
+    ""
+    $rbRoot = Join-Path $env:SystemDrive '$Recycle.Bin'
+    if (-not (Test-Path $rbRoot)) { "(no `$Recycle.Bin on $env:SystemDrive)"; return }
+    $any = $false
+    foreach ($sidDir in (Get-ChildItem $rbRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+        $sid = $sidDir.Name
+        $iFiles = Get-ChildItem $sidDir.FullName -Force -ErrorAction SilentlyContinue -Filter '$I*'
+        if (-not $iFiles) { continue }
+        $any = $true
+        $acct = $sid
+        try { $acct = (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount]).Value } catch {}
+        "`n--- SID $sid  ($acct) ---"
+        $rows = foreach ($i in $iFiles) {
+            $meta = Read-RecycleI $i.FullName
+            if (-not $meta) { continue }
+            $rName = '$R' + $i.Name.Substring(2)   # $IXXXX.ext -> $RXXXX.ext (avoids -replace $-group ambiguity)
+            $rPath = Join-Path $sidDir.FullName $rName
+            $rExists = Test-Path -LiteralPath $rPath
+            if ($meta.OriginalPath -match '(?i)\.(exe|dll|scr|ps1|bat|cmd|vbs|js|hta|msi)$' -and
+                $meta.OriginalPath -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData|Downloads|Desktop)\\') {
+                Add-Finding 'MED' '07' (Ex "Deleted executable in Recycle Bin (from a writable path): $($meta.OriginalPath)") '07_recycle_bin.txt'
+            }
+            [PSCustomObject]@{
+                OriginalPath = $meta.OriginalPath
+                Deleted      = if ($meta.DeletedTime) { $meta.DeletedTime.ToString('yyyy-MM-dd HH:mm:ss') } else { '?' }
+                SizeKB       = if ($meta.OriginalSize) { '{0:N0}' -f ($meta.OriginalSize/1KB) } else { '?' }
+                Recovered    = if ($rExists) { $rPath } else { '(missing)' }
+            }
+        }
+        if ($rows) { $rows | Format-Table -AutoSize -Wrap }
+    }
+    if (-not $any) { "(Recycle Bin is empty for all users, or not accessible)" }
 }
 
 # ---------------------------------------------
@@ -3105,7 +3357,7 @@ function Get-UrlsFromHistoryFile {
         }
         try {
             $len = $fs.Length
-            if ($len -le 0 -or $len -gt 250MB) { continue }
+            if ($len -le 0 -or $len -gt 80MB) { continue }   # history DBs are far smaller; cap RAM use
             $buf = New-Object byte[] ([int]$len)
             $read = 0
             while ($read -lt $len) {
@@ -3130,20 +3382,87 @@ function Get-UrlsFromHistoryFile {
     return $urls
 }
 
+function Get-UrlHost {
+    # Pull the host (domain) out of a URL with no [uri] dependency (some malformed URLs throw
+    # under [uri], and we want this to never fail mid-scan). Returns lowercase host or ''.
+    param([string]$Url)
+    if ($Url -match '^[a-z]+://([^/:\s]+)') { return $matches[1].ToLower() }
+    return ''
+}
+
+function Test-LookalikeDomain {
+    # Conservative typo-squat / impersonation check on a host. Returns a reason string for a hit,
+    # else $null. Designed to catch the PDFast-style pattern (pdf-fast.com, adobe-reader-download
+    # .com, zoom-install.net) WITHOUT flagging legitimate vendor or company domains.
+    #
+    # Rule (deliberately narrow to keep false positives low): we only look at the registrable
+    # label (the part before the public suffix, e.g. 'pdf-fast' in 'pdf-fast.com'). It is flagged
+    # only when that label CONTAINS A HYPHEN and either:
+    #   (a) pairs a known brand/software word with a lure/action word (adobe-reader, zoom-install,
+    #       chrome-update, pdf-download...), or
+    #   (b) contains a brand word AND splits into 3+ hyphen segments (adobe-reader-download).
+    # Plain hyphenated business domains (my-company-intranet, jira-prod) won't trip it unless they
+    # carry a brand+lure combination, and legit brand domains (no hyphen) are never flagged here.
+    param([string]$UrlHost)
+    if (-not $UrlHost) { return $null }
+    $h = $UrlHost.ToLower()
+    # registrable label = the label just left of the public suffix. Handle the common
+    # two-label ccTLD suffixes (.co.uk, .com.au ...) so e.g. 'pdf-fast.co.uk' resolves to
+    # 'pdf-fast', not 'co'. (Not a full public-suffix list, just the high-traffic ones.)
+    $parts = $h.Split('.')
+    if ($parts.Count -lt 2) { return $null }
+    $twoLabelSuffix = @('co.uk','com.au','com.br','co.nz','co.jp','co.za','com.mx','co.in',
+        'com.sg','com.hk','org.uk','net.au','gov.uk','co.kr','com.tw','com.cn','co.il',
+        'com.tr','com.ua','com.ar','com.co','com.pl','com.ph','com.my','co.id')
+    $label = $parts[$parts.Count - 2]
+    if ($parts.Count -ge 3) {
+        $lastTwo = $parts[$parts.Count - 2] + '.' + $parts[$parts.Count - 1]
+        if ($twoLabelSuffix -contains $lastTwo) { $label = $parts[$parts.Count - 3] }
+    }
+    if ($label -notmatch '-') { return $null }   # only hyphenated labels are candidates
+
+    $brandWords = @('pdf','adobe','acrobat','microsoft','office','windows','update','java',
+        'zoom','teams','chrome','firefox','edge','google','docusign','dropbox','onedrive',
+        'outlook','excel','word','flash','reader','antivirus','defender','login','secure',
+        'account','support','wallet','crypto','meta','paypal','amazon','apple','netflix')
+    $tailWords  = @('install','installer','setup','download','downloads','update','updater',
+        'fast','free','online','viewer','reader','converter','player','app','client','tool',
+        'now','latest','official','win','x64','x86','crack','patch','activator')
+
+    $segs = $label.Split('-') | Where-Object { $_ -ne '' }
+    $hasBrand = $false; $hasTail = $false
+    foreach ($s in $segs) {
+        if ($brandWords -contains $s) { $hasBrand = $true }
+        if ($tailWords  -contains $s) { $hasTail = $true }
+    }
+    if ($hasBrand -and $hasTail) {
+        return "lookalike domain (brand + lure word): $h"
+    }
+    if ($hasBrand -and $segs.Count -ge 3) {
+        return "lookalike domain (brand word in 3+ part hyphenated host): $h"
+    }
+    return $null
+}
+
 function Test-SuspiciousUrl {
     # Heuristic triage of a single URL. Returns @{Severity;Reason} for a hit, else $null.
     # Tuned to surface payload downloads, raw-IP/C2/exfil infra, obfuscation and abuse TLDs -
     # leads to verify, not verdicts.
     param([string]$Url)
     $lower = $Url.ToLower()
-    $urlHost = ''
-    if ($lower -match '^[a-z]+://([^/:\s]+)') { $urlHost = $matches[1] }
+    $urlHost = Get-UrlHost $Url
 
     if ($lower -match '\.(exe|scr|hta|ps1|bat|cmd|vbs|jse?|wsf|jar|msi|dll|lnk|iso|img|apk|ace|7z)(\?|#|$)') {
         return @{ Severity = 'HIGH'; Reason = 'direct executable/script download' }
     }
     if ($urlHost -match '^\d{1,3}(\.\d{1,3}){3}$') {
         return @{ Severity = 'HIGH'; Reason = 'connection to a raw IP address' }
+    }
+    # Lookalike / typo-squat domain (pdf-fast.com, adobe-reader-download.com, zoom-install...).
+    # Conservative - only fires on brand+lure hyphenated hosts, so it is HIGH-confidence here.
+    $look = Test-LookalikeDomain $urlHost
+    if ($look) {
+        return @{ Severity = 'HIGH'; Reason = $look }
     }
     if ($lower -match '(?i)(cdn\.discordapp\.com|discord(app)?\.com/api/webhooks|pastebin\.com/raw|paste\.ee|controlc\.com|transfer\.sh|anonfiles\.com|gofile\.io|mega\.(nz|io)|mediafire\.com|file\.io|0x0\.st|tmpfiles\.|temp\.sh|ngrok\.(io|app|dev)|serveo\.net|trycloudflare\.com|\.workers\.dev|\.r2\.dev|telegram\.org|t\.me/)') {
         return @{ Severity = 'HIGH'; Reason = 'known file-drop / C2 / exfil infrastructure' }
@@ -3221,6 +3540,9 @@ Save-Output "10_browser_history.txt" {
                     # echoing to the live run screen. So the files always get everything; only the
                     # scrolling scan output is capped (first 7 HIGH, first 3 MED; INFO never echoed).
                     $flagged.Add([PSCustomObject]@{ Severity = $verdict.Severity; Reason = $verdict.Reason; URL = $u })
+                    # Also record to the script-scope list so the post-collection correlation step
+                    # (after IOC matching) can cross-reference these hosts with on-disk artifacts.
+                    $script:BrowserFlagged.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Host=(Get-UrlHost $u); Severity=$verdict.Severity; Reason=$verdict.Reason; Url=$u })
                     $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u")
                     switch ($verdict.Severity) {
                         'HIGH' {
@@ -3289,6 +3611,75 @@ Save-Output "10_browser_history.txt" {
     }
     if ($grandFlagged -gt 0) {
         Add-Finding 'INFO' '10' "Browser history: $grandFlagged potentially-suspicious URL(s) across $($usersSeen.Keys.Count) user(s) - review 10_browser_history\<user>\" '10_browser_history.txt'
+    }
+}
+
+Save-Output "10_browser_extensions.txt" {
+    Write-Section "BROWSER EXTENSIONS (Chromium: Chrome/Edge/Brave, per user/profile)"
+    "Malicious or sideloaded extensions are a real cred-theft / session-hijack / persistence"
+    "vector. We enumerate installed Chromium extensions from each profile's Extensions folder and"
+    "read each manifest (name, version, permissions, update_url). Heuristics flag broad host"
+    "access combined with sensitive APIs, and a missing update_url (often sideloaded/unpacked) -"
+    "leads to verify, not verdicts. (Firefox add-ons use a different format and aren't covered here.)"
+    ""
+    $extRoots = @(
+        @{ Browser='Chrome'; Glob='C:\Users\*\AppData\Local\Google\Chrome\User Data\*\Extensions' }
+        @{ Browser='Edge';   Glob='C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Extensions' }
+        @{ Browser='Brave';  Glob='C:\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Extensions' }
+    )
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($er in $extRoots) {
+        foreach ($extDir in (Get-ChildItem $er.Glob -Directory -ErrorAction SilentlyContinue -Force)) {
+            $user = if ($extDir.FullName -match '(?i)\\Users\\([^\\]+)\\') { $matches[1] } else { 'unknown' }
+            $profileName = Split-Path (Split-Path $extDir.FullName -Parent) -Leaf
+            foreach ($idDir in (Get-ChildItem $extDir.FullName -Directory -ErrorAction SilentlyContinue)) {
+                $extId = $idDir.Name
+                $verDir = Get-ChildItem $idDir.FullName -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+                if (-not $verDir) { continue }
+                $manifestPath = Join-Path $verDir.FullName 'manifest.json'
+                if (-not (Test-Path $manifestPath)) { continue }
+                $name=''; $version=''; $perms=@(); $hostPerms=@(); $updateUrl=''; $mf=$null
+                try {
+                    $mf = Get-Content $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json
+                    $name = $mf.name; $version = $mf.version; $updateUrl = $mf.update_url
+                    if ($mf.permissions)      { $perms = @($mf.permissions) }
+                    if ($mf.host_permissions) { $hostPerms = @($mf.host_permissions) }
+                } catch {}
+                # resolve __MSG_name__ via _locales
+                if ($name -match '^__MSG_(.+)__$' -and $mf) {
+                    $key = $matches[1]
+                    $loc = $mf.default_locale; if (-not $loc) { $loc = 'en' }
+                    $msgPath = Join-Path $verDir.FullName ("_locales\{0}\messages.json" -f $loc)
+                    if (-not (Test-Path $msgPath)) { $msgPath = Join-Path $verDir.FullName '_locales\en\messages.json' }
+                    if (Test-Path $msgPath) {
+                        try { $msgs = Get-Content $msgPath -Raw | ConvertFrom-Json; if ($msgs.$key.message) { $name = $msgs.$key.message } } catch {}
+                    }
+                }
+                $allPerms = @(($perms + $hostPerms) | Where-Object { $_ -is [string] -and $_ })
+                $broad = @($allPerms | Where-Object { $_ -match '^(<all_urls>|https?://\*/?\*?|\*://\*/\*)$' })
+                $risky = @($allPerms | Where-Object { $_ -match '(?i)^(tabs|webRequest|webRequestBlocking|cookies|debugger|proxy|nativeMessaging)$' })
+
+                $rows.Add([PSCustomObject]@{
+                    User=$user; Browser=$er.Browser; Profile=$profileName
+                    Name=$name; Version=$version; Id=$extId
+                    UpdateUrl=$updateUrl; Permissions=($allPerms -join ', ')
+                })
+
+                if ($broad.Count -and @($risky | Where-Object { $_ -match '(?i)webRequest|cookies|debugger|nativeMessaging' }).Count) {
+                    Add-Finding 'MED' '10' (Ex "Browser extension '$name' [$($er.Browser)/$user] has broad host access + sensitive APIs ($($risky -join ', ')) ^09 review") '10_browser_extensions.txt'
+                }
+                if (-not $updateUrl) {
+                    Add-Finding 'INFO' '10' "Browser extension '$name' [$($er.Browser)/$user] has no update_url (possibly sideloaded/unpacked): $extId" '10_browser_extensions.txt'
+                }
+            }
+        }
+    }
+    if ($rows.Count) {
+        $rows | Sort-Object User, Browser, Profile, Name | Format-Table -AutoSize -Wrap
+        ""
+        "Total extensions: $($rows.Count)"
+    } else {
+        "(no Chromium browser extensions found, or no profiles present)"
     }
 }
 
@@ -3560,7 +3951,7 @@ $tlLines = @()
 $tlLines += (Ex "secgurd $($script:secgurdVersion) ^09 Event Timeline (most recent first)")
 $tlLines += ("=" * 70)
 $tlLines += "Merged from: logons (4624), log clears (1102), new services (7045),"
-$tlLines += "             scheduled tasks (106/140), System32 exe modifications (<7d)."
+$tlLines += "             scheduled tasks (106/140), System32 exe modifications (within $($script:DaysBack)d)."
 $tlLines += ("-" * 70)
 if ($timeline.Count -eq 0) {
     $tlLines += "  (no timestamped events gathered - may require admin / log access)"
@@ -3713,10 +4104,13 @@ if ($script:HtmlReport) {
     [void]$sb.AppendLine('<h2>Artifacts</h2>')
     $files = Get-ChildItem $OutputPath -Filter '*.txt' | Sort-Object Name
     $lastMod = ''
+    # Skip only the pure-meta files (shown elsewhere); DO render the actionable 00_ outputs
+    # (IOC matches, browser alerts) so findings that link to them resolve and their content shows.
+    $metaSkip = @('00_INDEX.txt','00_SUMMARY.txt','00_TIMELINE.txt','00_HASHES.txt')
     foreach ($file in $files) {
-        if ($file.Name -like '00_*') { continue }  # index/summary shown elsewhere
+        if ($metaSkip -contains $file.Name) { continue }
         $modNum = if ($file.Name -match '^(\d{2})_') { $matches[1] } else { '' }
-        $modName = ($script:ModuleCatalogue | Where-Object { $_.Id -eq $modNum }).Name
+        $modName = if ($modNum -eq '00') { 'Key outputs' } else { ($script:ModuleCatalogue | Where-Object { $_.Id -eq $modNum }).Name }
         if ($modNum -and $modNum -ne $lastMod) {
             [void]$sb.AppendLine("<div class=`"modhdr`" id=`"mod-$modNum`">$modNum &middot; $(ConvertTo-HtmlText $modName)</div>")
             $lastMod = $modNum
@@ -3845,7 +4239,8 @@ if ($haveCommunity -or $haveManual) {
         "$env:TEMP", "$env:SystemRoot\Temp",
         "$env:PUBLIC", "$env:ProgramData",
         "$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", "$env:USERPROFILE\AppData\Local\Temp",
-        "$env:USERPROFILE\AppData\Roaming", "$env:USERPROFILE\AppData\Local"
+        "$env:USERPROFILE\AppData\Roaming", "$env:USERPROFILE\AppData\Local",
+        "$env:SystemDrive\`$Recycle.Bin"
     ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
     $exts = '.exe','.dll','.scr','.ps1','.bat','.cmd','.vbs','.js','.hta','.com','.sys'
@@ -3939,6 +4334,154 @@ if ($haveCommunity -or $haveManual) {
         Write-Host (Ex "  ! IOC MATCH(es): $($parts -join ', ') - see 00_IOC_MATCHES_*.txt") -ForegroundColor Red
     } else {
         Write-Host (Ex "  [^14] No IOC matches ($scanned files scanned)") -ForegroundColor Green
+    }
+}
+
+# ---------------------------------------------
+#  BROWSER ALERT CORRELATION  (cross-reference flagged URLs with host artifacts)
+# ---------------------------------------------
+
+# Takes everything module 10 flagged ($script:BrowserFlagged) and cross-references each flagged
+# host against what actually landed on disk - downloaded/temp files, IOC hash matches, and other
+# findings. The payoff is the PDFast-style case: a flagged download URL (pdf-fast.com/PDFast.exe)
+# whose leaf filename (PDFast.exe) ALSO shows up in Downloads or an IOC match = corroborated on
+# host -> bumped to HIGH; other URLs on the same domain ride along at MED. Output is grouped,
+# de-duplicated and readable: 00_BROWSER_ALERTS.txt, plus an inline finding if anything corroborates.
+if (($script:BrowserFlagged -and $script:BrowserFlagged.Count -gt 0) -or ($script:DownloadSources -and $script:DownloadSources.Count -gt 0)) {
+    Write-Host (Ex "  *  Correlating browser URLs with host artifacts...") -ForegroundColor Cyan
+
+    # 1) Harvest candidate filenames present ON THIS HOST from already-written artifacts +
+    #    findings. We keep them lowercased and as leaf names for matching against URL filenames.
+    $hostFiles = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    $addLeaf = {
+        param($name)
+        if (-not $name) { return }
+        $n = ([string]$name).Trim()
+        if ($n -match '([^\\/]+\.(exe|dll|scr|ps1|bat|cmd|vbs|js|hta|msi|com|lnk|iso|img|7z|zip))\b') {
+            [void]$hostFiles.Add($matches[1].ToLower())
+        }
+    }
+    # from 07 downloads/desktop + temp executables + recycle bin artifact text
+    foreach ($af in @('07_downloads_desktop.txt','07_temp_executables.txt','07_recycle_bin.txt')) {
+        $p = Join-Path $OutputPath $af
+        if (Test-Path $p) {
+            foreach ($ln in (Get-Content $p -ErrorAction SilentlyContinue)) { & $addLeaf $ln }
+        }
+    }
+    # from IOC match files (MATCH lines carry the full on-disk path)
+    foreach ($af in @('00_IOC_MATCHES_community.txt','00_IOC_MATCHES_manual.txt')) {
+        $p = Join-Path $OutputPath $af
+        if (Test-Path $p) {
+            foreach ($ln in (Get-Content $p -ErrorAction SilentlyContinue)) {
+                if ($ln -match '^\s*MATCH\s+(.+)$') { & $addLeaf $matches[1] }
+            }
+        }
+    }
+    # from the in-memory findings (catches scheduled-task / service / RMM drops naming a file)
+    foreach ($fdg in $script:Findings) { & $addLeaf $fdg }
+
+    # 1b) Fold in download origins from Zone.Identifier (module 07). These run through the SAME
+    #     URL heuristic here (safe - all functions are defined by now). We only surface an origin
+    #     when its URL is itself suspicious OR its host was already flagged from the browser side,
+    #     so benign downloads don't flood the alerts. Because the file is on disk by definition,
+    #     a matching filename corroborates it to HIGH in the scoring pass below. The full,
+    #     unfiltered origin list always lives in 07_download_origins.txt.
+    foreach ($ds in $script:DownloadSources) {
+        $srcUrl = if ($ds.HostUrl) { $ds.HostUrl } else { $ds.ReferrerUrl }
+        if (-not $srcUrl) { continue }
+        $dsHost = Get-UrlHost $srcUrl
+        $v = Test-SuspiciousUrl $srcUrl
+        $sameAsBrowser = $false
+        if ($dsHost) { foreach ($bf in $script:BrowserFlagged) { if ($bf.Host -eq $dsHost) { $sameAsBrowser = $true; break } } }
+        if ($v -or $sameAsBrowser) {
+            $sev = if ($v) { $v.Severity } else { 'MED' }
+            $rsn = "download origin ($($ds.Source)) of $($ds.FileLeaf)$(if ($v) { " - $($v.Reason)" })"
+            [void]$script:BrowserFlagged.Add([PSCustomObject]@{ User=$ds.User; Browser='download-origin'; Host=$dsHost; Severity=$sev; Reason=$rsn; Url=$srcUrl })
+            # ensure the downloaded file's own name is in the host-file set for corroboration
+            & $addLeaf $ds.FileLeaf
+        }
+    }
+
+    # 2) Which flagged URLs look like an actual payload fetch (so a host hit is corroboration,
+    #    not just coincidence)? Reason text from Test-SuspiciousUrl tells us.
+    $payloadHosts = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($bf in $script:BrowserFlagged) {
+        if ($bf.Reason -match '(?i)executable/script download|fake-installer|lookalike|download origin') {
+            if ($bf.Host) { [void]$payloadHosts.Add($bf.Host) }
+        }
+    }
+
+    # 3) Walk every flagged URL; decide an EFFECTIVE severity:
+    #      - HIGH  if the URL's own leaf filename is present on the host  (corroborated)
+    #      - else  bump same-host URLs to at least MED when that host served a payload
+    #      - else  keep the original severity
+    $sevRank = @{ 'HIGH' = 3; 'MED' = 2; 'INFO' = 1 }
+    $alertRows = New-Object System.Collections.Generic.List[object]
+    $highCount = 0
+    foreach ($bf in $script:BrowserFlagged) {
+        $eff = $bf.Severity
+        $note = ''
+        # leaf filename from the URL itself
+        $urlLeaf = ''
+        if ($bf.Url -match '/([^/?#]+\.(exe|dll|scr|ps1|bat|cmd|vbs|js|hta|msi|com|lnk|iso|img|7z|zip))(\?|#|$)') {
+            $urlLeaf = $matches[1].ToLower()
+        }
+        if ($urlLeaf -and $hostFiles.Contains($urlLeaf)) {
+            $eff = 'HIGH'
+            $note = "corroborated on host: $urlLeaf present in downloads/temp/IOC"
+        } elseif ($bf.Host -and $payloadHosts.Contains($bf.Host) -and $sevRank[$eff] -lt $sevRank['MED']) {
+            $eff = 'MED'
+            $note = "same host served a payload URL"
+        }
+        if ($eff -eq 'HIGH') { $highCount++ }
+        $alertRows.Add([PSCustomObject]@{
+            EffSeverity = $eff
+            User        = $bf.User
+            Host        = $bf.Host
+            Reason      = $bf.Reason
+            Note        = $note
+            Url         = $bf.Url
+        })
+    }
+
+    # 4) Write a grouped, readable alert file: by user, then host, severity-ordered.
+    $abLines = New-Object System.Collections.Generic.List[string]
+    $abLines.Add((Ex "secgurd $($script:secgurdVersion) ^09 Browser Alert Correlation"))
+    $abLines.Add(("=" * 72))
+    $abLines.Add("Cross-references browser-flagged URLs with files seen on this host")
+    $abLines.Add("(Downloads/Desktop, Temp, IOC matches, and other findings).")
+    $abLines.Add("EffSeverity HIGH = the URL's filename was actually found on the host, OR a")
+    $abLines.Add("lookalike/payload host; verify before acting - these are leads, not verdicts.")
+    $abLines.Add(("-" * 72))
+    $abLines.Add("Flagged URLs correlated : $($alertRows.Count)")
+    $abLines.Add("Corroborated on host    : $highCount")
+    $abLines.Add("Host filenames harvested: $($hostFiles.Count)")
+    $abLines.Add("Download origins (Zone.Id): $($script:DownloadSources.Count) total (see 07_download_origins.txt)")
+    $abLines.Add('')
+
+    foreach ($userGrp in ($alertRows | Group-Object User | Sort-Object Name)) {
+        $abLines.Add((Write-Section "USER: $($userGrp.Name)"))
+        foreach ($hostGrp in ($userGrp.Group | Group-Object Host | Sort-Object Name)) {
+            $abLines.Add("  host: $($hostGrp.Name)")
+            $ordered = $hostGrp.Group | Sort-Object @{E={$sevRank[$_.EffSeverity]};Descending=$true}, Url
+            foreach ($row in $ordered) {
+                $abLines.Add(("    [{0,-4}] {1}" -f $row.EffSeverity, $row.Reason))
+                if ($row.Note) { $abLines.Add("           ^ $($row.Note)") }
+                $abLines.Add("           $($row.Url)")
+            }
+            $abLines.Add('')
+        }
+    }
+
+    $abArr = $abLines.ToArray()
+    if ($script:FindFilter) { $abArr = Select-FilteredOutput -Lines $abArr -Term $script:FindFilter }
+    $abArr | Out-File (Join-Path $OutputPath '00_BROWSER_ALERTS.txt') -Encoding UTF8 -Force
+
+    if ($highCount -gt 0) {
+        Add-Finding 'HIGH' '10' "Browser correlation: $highCount flagged URL(s) corroborated by files on this host - see 00_BROWSER_ALERTS.txt" '00_BROWSER_ALERTS.txt'
+        Write-Host (Ex "  ! $highCount browser URL(s) corroborated on host - see 00_BROWSER_ALERTS.txt") -ForegroundColor Red
+    } else {
+        Write-Host (Ex "  [^14] Browser alerts written ($($alertRows.Count) flagged URL(s), none corroborated on host)") -ForegroundColor Green
     }
 }
 
