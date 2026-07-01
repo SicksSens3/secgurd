@@ -726,8 +726,11 @@ function Show-S1ChunkedPaste {
         # quotes/$/backticks are preserved verbatim.
         $chunks += "$verb -Path `"$tgtPs1`" -Value @'`r`n$body`r`n'@"
     }
-    # final command: just run the assembled file (menu appears, community IOCs auto-load)
-    $finalCmd = "powershell -ExecutionPolicy Bypass -File `"$tgtPs1`""
+    # final command: run the assembled file IN-SESSION as a scriptblock (same pattern as the
+    # single/compressed pastes) - not `powershell -File`, which spawns a child process that won't
+    # repaint in the S1 shell and would be blocked by a Restricted execution policy. A scriptblock
+    # runs in the current shell and is immune to the disabled-scripts policy.
+    $finalCmd = "Clear-Host; & ([ScriptBlock]::Create([IO.File]::ReadAllText(`"$tgtPs1`")))"
 
     Clear-Host
     Write-Host ""
@@ -864,10 +867,15 @@ function Show-S1Compressed {
     [void]$sb.Append('$man=Join-Path $env:TEMP "manualIOCS.txt"; ')
     [void]$sb.Append('$com=Join-Path $env:TEMP "communitysavedIOCS.txt"; ')
     [void]$sb.Append('$sg=Join-Path $env:TEMP "secgurd.ps1"; ')
-    [void]$sb.Append('$al=@("-ExecutionPolicy","Bypass","-File",$sg); ')
-    [void]$sb.Append('if(Test-Path $com){$al+=@("-CommunityIOCHashes",$com)}; ')
-    [void]$sb.Append('if(Test-Path $man){$al+=@("-IOCHashes",$man)}; ')
-    [void]$sb.Append('& powershell $al')
+    # Run secgurd IN THE CURRENT SESSION (like the single-paste option) rather than spawning a
+    # child powershell.exe: in the SentinelOne remote shell a child interactive process doesn't
+    # repaint on the first Enter - it leaves the pasted text on screen and only shows the prompt.
+    # We execute it as a SCRIPTBLOCK built from the file text (not `& $sg`, which loads a .ps1
+    # FILE and is blocked by a Restricted execution policy). Execution policy only gates script
+    # files, never in-memory scriptblocks - so this runs even where "running scripts is disabled".
+    # Clear-Host first wipes the pasted block; IOC lists are passed via splatting.
+    [void]$sb.Append('$sgArgs=@{}; if(Test-Path $com){$sgArgs["CommunityIOCHashes"]=$com}; if(Test-Path $man){$sgArgs["IOCHashes"]=$man}; ')
+    [void]$sb.Append('Clear-Host; & ([ScriptBlock]::Create([IO.File]::ReadAllText($sg))) @sgArgs')
     $block = $sb.ToString()
 
     # Save a file fallback.
@@ -1673,12 +1681,14 @@ function Write-Section {
 }
 
 function Add-Finding {
-    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '', [switch]$Quiet)
+    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '', [switch]$Quiet, [switch]$NoRecord)
     # Severity: HIGH / MED / INFO. Artifact (optional) is the exact .txt filename this
     # finding points at, so the HTML report can highlight just that file (not the whole module).
     # We encode it inside the stored string as {file:NAME} and strip it before display.
-    # -Quiet records the finding (00_SUMMARY + HTML) but does NOT print it to the live scan
-    # screen - used to keep lower-severity, high-volume findings out of the scrolling output.
+    # -Quiet    : record the finding (00_SUMMARY + HTML) but do NOT echo it to the live scan screen.
+    # -NoRecord : echo it live but do NOT add it to the consolidated FINDINGS list / 00_SUMMARY /
+    #             HTML - used for high-volume, low-persistence items (e.g. browser URLs) that would
+    #             clutter the post-run findings list but are still worth seeing scroll by.
 
     # When a find filter is active, suppress findings whose message doesn't mention the term,
     # so the summary stays scoped to the hunted artifact (e.g. only SmartPDF-related flags).
@@ -1686,8 +1696,10 @@ function Add-Finding {
         return
     }
 
-    $tag = if ($Artifact) { " {file:$Artifact}" } else { '' }
-    $script:Findings.Add("[$Severity] ($Module) $Message$tag")
+    if (-not $NoRecord) {
+        $tag = if ($Artifact) { " {file:$Artifact}" } else { '' }
+        $script:Findings.Add("[$Severity] ($Module) $Message$tag")
+    }
     if ($Quiet) { return }   # recorded to summary/HTML, but not echoed to the scan screen
     $color = switch ($Severity) {
         'HIGH' { 'Red' }
@@ -3456,7 +3468,20 @@ function Test-SuspiciousUrl {
         return @{ Severity = 'HIGH'; Reason = 'direct executable/script download' }
     }
     if ($urlHost -match '^\d{1,3}(\.\d{1,3}){3}$') {
-        return @{ Severity = 'HIGH'; Reason = 'connection to a raw IP address' }
+        # Only flag PUBLIC raw-IP hosts. Private / internal ranges (RFC1918, loopback,
+        # link-local, CGNAT) are almost always benign LAN devices - e.g. a firewall/appliance
+        # admin page at 10.30.4.207 - so we don't alert on them.
+        $o = $urlHost.Split('.') | ForEach-Object { [int]$_ }
+        $isInternal =
+            ($o[0] -eq 10) -or
+            ($o[0] -eq 127) -or
+            ($o[0] -eq 169 -and $o[1] -eq 254) -or
+            ($o[0] -eq 172 -and $o[1] -ge 16 -and $o[1] -le 31) -or
+            ($o[0] -eq 192 -and $o[1] -eq 168) -or
+            ($o[0] -eq 100 -and $o[1] -ge 64 -and $o[1] -le 127)
+        if (-not $isInternal) {
+            return @{ Severity = 'HIGH'; Reason = 'connection to a raw public IP address' }
+        }
     }
     # Lookalike / typo-squat domain (pdf-fast.com, adobe-reader-download.com, zoom-install...).
     # Conservative - only fires on brand+lure hyphenated hosts, so it is HIGH-confidence here.
@@ -3490,9 +3515,10 @@ Save-Output "10_browser_history.txt" {
     "Dependency-free: URLs are read directly from each browser's history database (Chrome/Edge"
     "'History', Firefox 'places.sqlite', plus the -wal sidecar) - no SQLite engine, so per-visit"
     "timestamps/counts are not decoded; instead each profile's DB last-write time is shown in UTC"
-    "as coarse timing context. The scan screen shows the first 7 HIGH and 3 MED URLs; the rest"
-    "(and all INFO) are recorded to this summary, the HTML report, and the per-user files. The"
-    "full URL list per profile is written to:"
+    "as coarse timing context. Individual URLs are NOT added to the post-run FINDINGS list /"
+    "00_SUMMARY (too noisy) - a few HIGH/MED are echoed live during the scan for awareness, and"
+    "EVERY flagged URL of every severity is written in full to the per-user files. A single"
+    "summary finding points you there. The full URL list per profile is written to:"
     "    10_browser_history\<user>\<browser>_<profile>.txt"
     ""
 
@@ -3506,12 +3532,12 @@ Save-Output "10_browser_history.txt" {
     $grandTotalUrls = 0
     $grandFlagged = 0
     $usersSeen = @{}
-    # These caps limit ONLY what is echoed to the live run screen - never the output files.
-    # Every per-user detail file gets ALL flagged + ALL unique URLs (written below from $flagged
-    # / $urlList, which ignore these counters). The counters start at 0 and count UP to the cap
-    # as items are echoed; once a cap is hit, the rest are still recorded, just not shown live.
-    $highEchoed = 0; $highCap = 7   # show first 7 HIGH on the run screen
-    $medEchoed  = 0; $medCap  = 3   # show first 3 MED on the run screen
+    # These caps limit ONLY how many URLs are ECHOED live during the scan (for awareness). NO
+    # browser URL is added to the post-run FINDINGS list / 00_SUMMARY (they're -NoRecord). And
+    # the caps never limit the output files: every per-user detail file gets ALL flagged + ALL
+    # unique URLs (written below from $flagged / $urlList, which ignore these counters).
+    $highEchoed = 0; $highCap = 5   # HIGH URLs echoed live during the scan (not recorded)
+    $medEchoed  = 0; $medCap  = 3   # MED URLs echoed live during the scan (not recorded)
     $summaryRows = New-Object System.Collections.Generic.List[object]
 
     foreach ($b in $browsers) {
@@ -3534,11 +3560,10 @@ Save-Output "10_browser_history.txt" {
             foreach ($u in $urlList) {
                 $verdict = Test-SuspiciousUrl $u
                 if ($verdict) {
-                    # NOTE: the URL is already in $flagged and will be written to the per-user
-                    # detail file in full - the logic below ONLY decides screen echo vs quiet
-                    # recording. Add-Finding records to 00_SUMMARY/HTML; -Quiet records without
-                    # echoing to the live run screen. So the files always get everything; only the
-                    # scrolling scan output is capped (first 7 HIGH, first 3 MED; INFO never echoed).
+                    # The URL is already in $flagged and gets written to the per-user detail file in
+                    # full. Below we ONLY decide the live-scan echo - NOTHING here is added to the
+                    # post-run FINDINGS list / 00_SUMMARY (all -NoRecord). A few HIGH/MED are echoed
+                    # for awareness; INFO is not echoed at all. The detail files hold everything.
                     $flagged.Add([PSCustomObject]@{ Severity = $verdict.Severity; Reason = $verdict.Reason; URL = $u })
                     # Also record to the script-scope list so the post-collection correlation step
                     # (after IOC matching) can cross-reference these hosts with on-disk artifacts.
@@ -3546,14 +3571,12 @@ Save-Output "10_browser_history.txt" {
                     $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u")
                     switch ($verdict.Severity) {
                         'HIGH' {
-                            if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt'; $highEchoed++ }
-                            else { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -Quiet }
+                            if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -NoRecord; $highEchoed++ }
                         }
                         'MED' {
-                            if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt'; $medEchoed++ }
-                            else { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -Quiet }
+                            if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -NoRecord; $medEchoed++ }
                         }
-                        default { Add-Finding 'INFO' '10' $msg '10_browser_history.txt' -Quiet }   # recorded, never echoed
+                        default { }   # INFO: written to the per-user detail file only
                     }
                 }
             }
@@ -3606,10 +3629,9 @@ Save-Output "10_browser_history.txt" {
     "Users with history : $($usersSeen.Keys.Count)"
     "Total unique URLs  : $grandTotalUrls"
     "Total flagged URLs : $grandFlagged"
-    if ($highEchoed -ge $highCap -or $medEchoed -ge $medCap) {
-        "(run screen showed only the first $highCap HIGH and $medCap MED URLs; every flagged URL of every severity is in 00_SUMMARY, the HTML report, and the per-user detail files)"
-    }
+    "(Individual URLs are intentionally NOT in the FINDINGS list - see the per-user detail files.)"
     if ($grandFlagged -gt 0) {
+        # The ONE browser entry that goes in the findings list: an aggregate pointer, not a URL.
         Add-Finding 'INFO' '10' "Browser history: $grandFlagged potentially-suspicious URL(s) across $($usersSeen.Keys.Count) user(s) - review 10_browser_history\<user>\" '10_browser_history.txt'
     }
 }
