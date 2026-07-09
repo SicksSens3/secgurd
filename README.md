@@ -51,7 +51,7 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 | 06 | Processes | process tree, command lines, unsigned DLLs |
 | 07 | Filesystem | temp executables, ADS, recently-modified files |
 | 08 | Event logs | account changes, log clearing, log status |
-| 09 | Software & Defender | installed apps, patches, Defender status & exclusions |
+| 09 | Software & Defender | installed apps, **per-user AppData / all-hive PUP & clone-browser detection**, patches, Defender status & exclusions |
 | 10 | Browser & creds | **per-user browser history + URL analysis (Chrome/Edge/Firefox)**, history file paths, `.ssh`, `.aws`, credential files |
 | 11 | LOLBins | certutil, mshta, rundll32, regsvr32 usage |
 | 12 | AmCache / ShimCache | execution-artifact locations |
@@ -63,6 +63,7 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 - **Findings engine** — auto-flags high-signal indicators (HIGH / MED / INFO) as it runs: WMI event consumers, IFEO debugger hijacks, accessibility backdoors, encoded PowerShell, suspicious parent→child process chains, services/tasks running from writable paths, unquoted service paths, rogue remote-access tools, Defender exclusions on temp paths, and more.
 - **Rogue RMM detection** — hunts ~18 remote-access tool families (ScreenConnect/ConnectWise, AnyDesk, TeamViewer, Atera, Splashtop, MeshCentral, NetSupport, etc.) and flags suspicious context (writable-path installs, ScreenConnect instance folders + relay host).
 - **Browser history URL analysis** — extracts URLs from every user's Chrome, Edge, and Firefox history (read directly from the history DBs plus their `-wal` sidecars, lock-safe, no SQLite engine needed) and flags suspicious ones live as it runs, color-coded by threat level: direct executable/script downloads, **raw *public*-IP hosts** (private/LAN IPs like `10.x` / `192.168.x` are ignored), known file-drop/C2/exfil infrastructure (Discord CDN, pastebin/raw, transfer.sh, anonfiles, mega, ngrok, `*.workers.dev`, telegram, …), URL shorteners, high-abuse TLDs, punycode hosts, and remote-access-tool references. One output folder per user. To keep the post-run **FINDINGS list uncluttered, individual browser URLs are not added to it** (a few HIGH/MED are echoed live during the scan for awareness, and a single aggregate finding points you to the files) — but **every** flagged URL of every severity is written in full to the per-user files. (URLs only — per-visit timestamps aren't decoded, to stay dependency-free; each profile's DB last-write time is shown in UTC as coarse timing context.)
+- **Per-user PUP / clone-browser detection** — walks every user's AppData (Local/Roaming/LocalLow) and every user registry hive — including **logged-off users' `NTUSER.DAT`**, which it mounts then unloads — to catch adware / potentially-unwanted apps that install per-user and skip Add/Remove Programs. Flags the Chromium-"clone" layout (`<App>\Application\<ver>\...\Installer\setup.exe`) and updater/dock families (`<App>` + `<App>Updater`/`AutoUpdate`/`Dock`), plus self-registered `Software\<Name>` keys carrying an `UninstallString`/`InstallerProgress` value. Catches infections sitting in **other** users' profiles that a current-user-only scan misses (mounting logged-off hives needs admin).
 - **Local IOC hash matching** — match on-disk binaries against your own list of known-bad MD5 / SHA-1 / SHA-256 hashes. Fully offline; no API key, no third-party disclosure.
 - **Targeted find / scoping** — point a run at a single known artifact (`-Find SmartPDF` or the `f` menu option) and every output is reduced to just the items that name, point at, or are signed by that string — across tasks, run keys, services, processes, files and findings. Case-insensitive.
 - **Event timeline** — chronological merge of logons, log clears, new services, scheduled tasks, and recent file modifications.
@@ -269,6 +270,8 @@ secgurd_<HOST>_<timestamp>\
   01_system_info.txt
   02_rdp_remote_access.txt
   03_remote_access_tools.txt
+  09_appdata_app_installs.txt     per-user AppData app installs (PUP / clone-browser flags)
+  09_user_hive_software.txt       self-registered software across all user hives (incl. logged-off)
   10_browser_history.txt          per-user/browser summary + flagged URLs
   10_browser_history\             one subfolder per user (browser history detail)
     <user>\Chrome_Default.txt        flagged URLs + all unique URLs for that profile
