@@ -480,7 +480,7 @@ if (-not $NoBanner) { Show-secgurdBanner }
 $script:ModuleCatalogue = @(
     [PSCustomObject]@{ Id='01'; Name='System info';          Desc='os, build, uptime, domain, env' }
     [PSCustomObject]@{ Id='02'; Name='Users & sessions';     Desc='accounts, logons, rdp in/out' }
-    [PSCustomObject]@{ Id='03'; Name='Persistence';          Desc='run keys, tasks, services, wmi, ifeo, rmm, bits' }
+    [PSCustomObject]@{ Id='03'; Name='Persistence';          Desc='run keys, runmru/clickfix, tasks, services, wmi, ifeo, rmm, bits' }
     [PSCustomObject]@{ Id='04'; Name='PowerShell artifacts'; Desc='history, transcripts, 4104, secrets' }
     [PSCustomObject]@{ Id='05'; Name='Network';              Desc='connections, dns, arp, shares, fw' }
     [PSCustomObject]@{ Id='06'; Name='Processes';            Desc='proctree, cmdlines, odd-path dlls' }
@@ -1716,6 +1716,56 @@ function Add-Finding {
     Write-Host $Message -ForegroundColor $color
 }
 
+function Get-AllUserHives {
+    # Enumerate every real user profile and expose its registry hive for inspection.
+    # Loaded hives (the user is logged on) are used in place under HKEY_USERS\<SID>; a logged-off
+    # user's NTUSER.DAT is mounted under a temp HKU key (needs admin) so their per-user keys can be
+    # read too. Returns:  Hives = list of {Sid, Acct, Base, Mounted};  Mounted = temp mount-point
+    # names the caller MUST pass to Dismount-UserHives in a finally;  OfflineSkipped = #mount failures.
+    $profiles = @{}
+    Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -ErrorAction SilentlyContinue | ForEach-Object {
+        $sid = $_.PSChildName
+        $pip = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ProfileImagePath
+        if ($pip) { $profiles[$sid] = $pip }
+    }
+    $loaded = @{}
+    Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | ForEach-Object { $loaded[$_.PSChildName] = $true }
+
+    $hives = New-Object System.Collections.Generic.List[object]
+    $mounted = New-Object System.Collections.Generic.List[string]
+    $skipped = 0
+    $idx = 0
+    foreach ($sid in $profiles.Keys) {
+        if ($sid -match '^S-1-5-(18|19|20)$') { continue }   # SYSTEM / LocalService / NetworkService
+        $acct = try { (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount]).Value } catch { $profiles[$sid] }
+        if ($loaded.ContainsKey($sid)) {
+            $hives.Add([PSCustomObject]@{ Sid=$sid; Acct=$acct; Base="Registry::HKEY_USERS\$sid"; Mounted=$false })
+        } else {
+            $dat = Join-Path $profiles[$sid] 'NTUSER.DAT'
+            if (Test-Path $dat) {
+                $mp = "secgurd_hive_$idx"; $idx++
+                reg load "HKU\$mp" "$dat" | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    $mounted.Add($mp)
+                    $hives.Add([PSCustomObject]@{ Sid=$sid; Acct=$acct; Base="Registry::HKEY_USERS\$mp"; Mounted=$true })
+                } else {
+                    $skipped++
+                }
+            }
+        }
+    }
+    [PSCustomObject]@{ Hives=$hives; Mounted=$mounted; OfflineSkipped=$skipped }
+}
+
+function Dismount-UserHives {
+    # Unmount hives that Get-AllUserHives mounted. Release .NET registry handles first, or
+    # 'reg unload' fails with "hive is in use by another process".
+    param($Mounted)
+    if (-not $Mounted) { return }
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    foreach ($mp in $Mounted) { reg unload "HKU\$mp" | Out-Null }
+}
+
 
 function Select-FilteredOutput {
     # Reduce already-rendered artifact text to just the lines containing $Term, keeping the
@@ -2113,6 +2163,76 @@ Save-Output "03_persistence_registry.txt" {
         } else {
             "  (key not found)"
         }
+    }
+}
+
+Save-Output "03_runmru_clickfix.txt" {
+    Write-Section "RUN DIALOG HISTORY - RunMRU (ClickFix / paste-and-run triage)"
+    "The Win+R Run dialog records each command a user typed into HKCU\...\Explorer\RunMRU. 'ClickFix'"
+    "and 'paste-and-run' lures (fake CAPTCHA / 'verify you are human' / 'fix this error') trick a user"
+    "into pasting an attacker command here - usually a heavily obfuscated one-liner: powershell -w"
+    "hidden, mshta, curl|iex, certutil, FromBase64String, etc. Because it is USER-driven it never"
+    "lands in the autorun/persistence keys above, so this is often the ONLY registry trace of initial"
+    "access. Read from EVERY user hive (loaded + logged-off NTUSER.DAT mounted with admin)."
+    ""
+
+    # Hallmark of a malicious Run entry = a script interpreter and/or a fetch/decode/hidden pattern.
+    $badRx = '(?i)(powershell|pwsh|cmd(\.exe)?|%comspec%|comspec|mshta|wscript|cscript|rundll32|' +
+        'regsvr32|certutil|bitsadmin|curl|wget|msiexec|forfiles|installutil|-enc(odedcommand)?|' +
+        'frombase64string|iex\b|invoke-expression|invoke-webrequest|invoke-restmethod|downloadstring|' +
+        'downloadfile|-nop\b|-noni|-w(indowstyle)?\s+hidden|hidden|http[s]?://|ftp://|\.hta\b|scrobj|' +
+        'start-process|new-object\s+net\.webclient)'
+
+    $hv = Get-AllUserHives
+    $rows = New-Object System.Collections.Generic.List[object]
+    try {
+        foreach ($h in $hv.Hives) {
+            $rk = "$($h.Base)\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
+            if (-not (Test-Path $rk)) { continue }
+            $props = Get-ItemProperty $rk -ErrorAction SilentlyContinue
+            if (-not $props) { continue }
+            # MRUList gives most-recent-first order; each value is a single letter (a, b, c, ...).
+            $order = "$($props.MRUList)"
+            $letters = if ($order) { [char[]]$order } else {
+                $props.PSObject.Properties.Name | Where-Object { $_ -match '^[a-z]$' }
+            }
+            $rank = 0
+            foreach ($ltr in $letters) {
+                $slot = [string]$ltr
+                $val = [string]$props.$slot
+                if (-not $val) { continue }
+                $rank++
+                # RunMRU stores 'command\1'; the trailing \1 is a field separator - strip it.
+                $cmd = $val -replace '\\1$', ''
+                $suspicious = $cmd -match $badRx
+                $longish = $cmd.Length -ge 200          # pasted ClickFix one-liners are typically very long
+                $sev = if ($suspicious) { 'HIGH' } elseif ($longish) { 'MED' } else { 'INFO' }
+                $rows.Add([PSCustomObject]@{
+                    Account = $h.Acct
+                    Order   = $rank
+                    Slot    = $slot
+                    Sev     = $sev
+                    Command = $cmd
+                })
+                if ($sev -eq 'HIGH') {
+                    $short = if ($cmd.Length -gt 160) { $cmd.Substring(0,160) + '...' } else { $cmd }
+                    Add-Finding 'HIGH' '03' (Ex "RunMRU (Win+R) command looks like ClickFix/paste-and-run ($($h.Acct)) ^17 $short") '03_runmru_clickfix.txt'
+                } elseif ($sev -eq 'MED') {
+                    Add-Finding 'MED' '03' (Ex "Unusually long RunMRU (Win+R) command ($($h.Acct)) - review for paste-and-run") '03_runmru_clickfix.txt'
+                }
+            }
+        }
+    } finally {
+        Dismount-UserHives $hv.Mounted
+    }
+
+    "Hives examined: $($hv.Hives.Count)  (offline mounted: $($hv.Mounted.Count); offline skipped: $($hv.OfflineSkipped))"
+    ""
+    if ($rows.Count) {
+        $rows | Sort-Object @{E={ switch ($_.Sev) { 'HIGH' {0} 'MED' {1} default {2} } }}, Account, Order |
+            Format-Table Account, Order, Slot, Sev, Command -AutoSize -Wrap
+    } else {
+        "(no RunMRU / Run-dialog history found in any user hive)"
     }
 }
 
@@ -3351,40 +3471,11 @@ Save-Output "09_user_hive_software.txt" {
     "users' NTUSER.DAT which it mounts (mounting needs admin; skipped otherwise) - then unloads them."
     ""
 
-    # Map every profile SID -> on-disk profile path.
-    $profiles = @{}
-    Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -ErrorAction SilentlyContinue | ForEach-Object {
-        $sid = $_.PSChildName
-        $pip = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ProfileImagePath
-        if ($pip) { $profiles[$sid] = $pip }
-    }
-    # Which user hives are already loaded (i.e. that user is logged on)?
-    $loaded = @{}
-    Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | ForEach-Object { $loaded[$_.PSChildName] = $true }
-
-    $hives = New-Object System.Collections.Generic.List[object]
-    $mounted = New-Object System.Collections.Generic.List[string]
-    $skippedOffline = 0
-    $idx = 0
-    foreach ($sid in $profiles.Keys) {
-        if ($sid -match '^S-1-5-(18|19|20)$') { continue }   # SYSTEM / LocalService / NetworkService
-        $acct = try { (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount]).Value } catch { $profiles[$sid] }
-        if ($loaded.ContainsKey($sid)) {
-            $hives.Add([PSCustomObject]@{ Sid=$sid; Acct=$acct; Base="Registry::HKEY_USERS\$sid"; Mounted=$false })
-        } else {
-            $dat = Join-Path $profiles[$sid] 'NTUSER.DAT'
-            if (Test-Path $dat) {
-                $mp = "secgurd_hive_$idx"; $idx++
-                reg load "HKU\$mp" "$dat" | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    $mounted.Add($mp)
-                    $hives.Add([PSCustomObject]@{ Sid=$sid; Acct=$acct; Base="Registry::HKEY_USERS\$mp"; Mounted=$true })
-                } else {
-                    $skippedOffline++
-                }
-            }
-        }
-    }
+    # Enumerate every user hive (loaded + logged-off mounted); helper handles reg load.
+    $hv = Get-AllUserHives
+    $hives = $hv.Hives
+    $mounted = $hv.Mounted
+    $skippedOffline = $hv.OfflineSkipped
 
     $rows = New-Object System.Collections.Generic.List[object]
     try {
@@ -3456,9 +3547,7 @@ Save-Output "09_user_hive_software.txt" {
             }
         }
     } finally {
-        # Release .NET registry handles before unmounting, or reg unload fails ("in use by another process").
-        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-        foreach ($mp in $mounted) { reg unload "HKU\$mp" | Out-Null }
+        Dismount-UserHives $mounted
     }
 
     "Hives examined: $($hives.Count)  (offline mounted: $($mounted.Count); offline skipped: $skippedOffline)"
