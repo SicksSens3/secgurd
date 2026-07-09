@@ -3251,6 +3251,230 @@ Save-Output "09_installed_software.txt" {
         Sort-Object InstallDate -Descending | Format-Table -AutoSize
 }
 
+Save-Output "09_appdata_app_installs.txt" {
+    Write-Section "PER-USER APP INSTALLS UNDER AppData (all users)"
+    "Apps installed into a user's AppData need no admin rights and often skip Add/Remove Programs,"
+    "so AppData is a favorite home for adware / PUPs / 'clone' browsers. The standard software scan"
+    "(09_installed_software) won't list them. This walks EVERY user's Local / Roaming / LocalLow,"
+    "lists folders that contain an executable, and FLAGS two high-signal PUP patterns:"
+    "   - a Chromium-style  <App>\Application\<version>\(...\Installer\setup.exe)  under a non-vendor name"
+    "   - an updater/dock family:  <App> plus <App>Updater / <App>AutoUpdate / <App>Dock"
+    ""
+
+    # Legit per-user vendors/folders: still listed if they hold exes, but never flagged.
+    $good = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($g in 'Microsoft','Google','Google Chrome','Mozilla','BraveSoftware','Packages','Temp',
+        'Programs','SquirrelTemp','Adobe','JetBrains','JetBrains Toolbox','Docker','Postman','Slack',
+        'discord','Zoom','GitHub Desktop','GitHubDesktop','obsidian','Notion','1Password','Spotify',
+        'Dropbox','NVIDIA','NVIDIA Corporation','ConnectedDevicesPlatform','CrashDumps','D3DSCache',
+        'ElevatedDiagnostics','Comms','Publishers','VirtualStore','WinGet','pip','Yarn','pnpm','npm',
+        'ms-playwright','python','TileDataLayer') { [void]$good.Add($g) }
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($userDir in (Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue)) {
+        $user = $userDir.Name
+        foreach ($base in 'Local','Roaming','LocalLow') {
+            $root = Join-Path $userDir.FullName "AppData\$base"
+            if (-not (Test-Path $root)) { continue }
+            $dirs = @(Get-ChildItem $root -Directory -Force -ErrorAction SilentlyContinue)
+            if (-not $dirs) { continue }
+            # Sibling names for cheap family detection (case-insensitive).
+            $names = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($d in $dirs) { [void]$names.Add($d.Name) }
+
+            foreach ($d in $dirs) {
+                $name = $d.Name
+
+                # --- Chromium-clone layout: <App>\Application\<ver>\ with an exe (+/- Installer\setup.exe).
+                #     Bounded lookups only (never a deep recurse of AppData).
+                $cloneHit = $false; $cloneVer = ''
+                $appDir = Join-Path $d.FullName 'Application'
+                if (Test-Path $appDir) {
+                    foreach ($v in (Get-ChildItem $appDir -Directory -Force -ErrorAction SilentlyContinue)) {
+                        if ($v.Name -notmatch '^\d+(\.\d+)+$') { continue }
+                        $hasExe = [bool](Get-ChildItem $v.FullName -Filter *.exe -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+                        $hasSetup = Test-Path (Join-Path $v.FullName 'Installer\setup.exe')
+                        if ($hasExe -or $hasSetup) { $cloneHit = $true; $cloneVer = $v.Name; break }
+                    }
+                }
+
+                # --- Updater / dock family (name-only; no disk hit).
+                $famHit = $false
+                foreach ($suf in 'Updater','Update','AutoUpdate','Dock') {
+                    if ($names.Contains($name + $suf)) { $famHit = $true; break }
+                    if ($name -match "(?i)$suf`$") {
+                        $bnm = $name -replace "(?i)$suf`$", ''
+                        if ($bnm -and $names.Contains($bnm)) { $famHit = $true; break }
+                    }
+                }
+
+                # Only surface folders that are actually app installs (hold an exe or are part of a family).
+                $topExe = Get-ChildItem $d.FullName -Filter *.exe -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1
+                if (-not $cloneHit -and -not $topExe -and -not $famHit) { continue }
+
+                $isGood = $good.Contains($name)
+                $flag = ($cloneHit -or $famHit) -and -not $isGood
+                $reason = @()
+                if ($cloneHit) { $reason += "chromium-layout(Application\$cloneVer)" }
+                if ($famHit)   { $reason += 'updater/dock-family' }
+
+                $rows.Add([PSCustomObject]@{
+                    User    = $user
+                    Where   = "AppData\$base"
+                    Folder  = $name
+                    Flag    = if ($flag) { 'FLAG' } elseif ($isGood) { '(known)' } else { '' }
+                    Signals = ($reason -join ', ')
+                    Path    = $d.FullName
+                })
+
+                if ($flag) {
+                    Add-Finding 'HIGH' '09' (Ex "Possible PUP/clone app in AppData: $user\$base\$name ($($reason -join ', ')) ^17 $($d.FullName)") '09_appdata_app_installs.txt'
+                }
+            }
+        }
+    }
+
+    if ($rows.Count) {
+        $rows | Sort-Object @{E={ if ($_.Flag -eq 'FLAG') { 0 } else { 1 } }}, User, Where |
+            Format-Table User, Where, Folder, Flag, Signals, Path -AutoSize -Wrap
+    } else {
+        "(no per-user AppData application folders with executables found)"
+    }
+}
+
+Save-Output "09_user_hive_software.txt" {
+    Write-Section "PER-USER SOFTWARE REGISTRATION (all user hives, incl. logged-off)"
+    "PUPs / adware often register directly under HKCU\Software\<Name> (carrying an UninstallString"
+    "or InstallerProgress value) rather than the standard Uninstall path, and drop a companion"
+    "<Name>Updater key. The Add/Remove scan reads only HKLM + the CURRENT user's hive, so it misses"
+    "these on other users. This walks EVERY user hive - loaded ones under HKEY_USERS, and logged-off"
+    "users' NTUSER.DAT which it mounts (mounting needs admin; skipped otherwise) - then unloads them."
+    ""
+
+    # Map every profile SID -> on-disk profile path.
+    $profiles = @{}
+    Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -ErrorAction SilentlyContinue | ForEach-Object {
+        $sid = $_.PSChildName
+        $pip = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ProfileImagePath
+        if ($pip) { $profiles[$sid] = $pip }
+    }
+    # Which user hives are already loaded (i.e. that user is logged on)?
+    $loaded = @{}
+    Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | ForEach-Object { $loaded[$_.PSChildName] = $true }
+
+    $hives = New-Object System.Collections.Generic.List[object]
+    $mounted = New-Object System.Collections.Generic.List[string]
+    $skippedOffline = 0
+    $idx = 0
+    foreach ($sid in $profiles.Keys) {
+        if ($sid -match '^S-1-5-(18|19|20)$') { continue }   # SYSTEM / LocalService / NetworkService
+        $acct = try { (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount]).Value } catch { $profiles[$sid] }
+        if ($loaded.ContainsKey($sid)) {
+            $hives.Add([PSCustomObject]@{ Sid=$sid; Acct=$acct; Base="Registry::HKEY_USERS\$sid"; Mounted=$false })
+        } else {
+            $dat = Join-Path $profiles[$sid] 'NTUSER.DAT'
+            if (Test-Path $dat) {
+                $mp = "secgurd_hive_$idx"; $idx++
+                reg load "HKU\$mp" "$dat" | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    $mounted.Add($mp)
+                    $hives.Add([PSCustomObject]@{ Sid=$sid; Acct=$acct; Base="Registry::HKEY_USERS\$mp"; Mounted=$true })
+                } else {
+                    $skippedOffline++
+                }
+            }
+        }
+    }
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    try {
+        foreach ($h in $hives) {
+            # (1) Self-registered Software\<Name> keys carrying an uninstaller/installer footprint.
+            $swKey = "$($h.Base)\Software"
+            if (Test-Path $swKey) {
+                $subs = @(Get-ChildItem $swKey -ErrorAction SilentlyContinue)
+                $subNames = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($s in $subs) { [void]$subNames.Add($s.PSChildName) }
+                foreach ($s in $subs) {
+                    $name = $s.PSChildName
+                    $vals = Get-ItemProperty $s.PSPath -ErrorAction SilentlyContinue
+                    $uninst = $vals.UninstallString
+                    $hasProg = ($vals.PSObject.Properties.Name -contains 'InstallerProgress')
+                    if (-not $uninst -and -not $hasProg) { continue }   # not a self-registered installer key
+                    $hasUpdater = $false
+                    foreach ($suf in 'Updater','Update','AutoUpdate') { if ($subNames.Contains($name + $suf)) { $hasUpdater = $true; break } }
+                    $inAppData = $uninst -match '(?i)\\AppData\\(Local|Roaming|LocalLow)\\'
+                    $sev = if ($hasUpdater -and $inAppData) { 'HIGH' } elseif ($hasUpdater -or $inAppData) { 'MED' } else { 'INFO' }
+                    $rows.Add([PSCustomObject]@{
+                        Account = $h.Acct
+                        Sev     = $sev
+                        Updater = if ($hasUpdater) { 'yes' } else { '' }
+                        Key     = "Software\$name"
+                        Detail  = $uninst
+                    })
+                    if ($sev -ne 'INFO') {
+                        $tags = @(); if ($hasUpdater) { $tags += '+updater' }; if ($inAppData) { $tags += 'AppData' }
+                        Add-Finding $sev '09' (Ex "Self-registered app key: HKU\...\Software\$name ($($h.Acct))$(if($tags){' ['+($tags -join ',')+']'})") '09_user_hive_software.txt'
+                    }
+                }
+            }
+            # (2) Per-user Add/Remove entries (Uninstall) - not covered by the HKLM/HKCU scan.
+            foreach ($un in "$($h.Base)\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+                            "$($h.Base)\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall") {
+                if (-not (Test-Path $un)) { continue }
+                Get-ChildItem $un -ErrorAction SilentlyContinue | ForEach-Object {
+                    $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+                    if (-not $p.DisplayName) { return }
+                    $loc = "$($p.InstallLocation) $($p.UninstallString)"
+                    $inAppData = $loc -match '(?i)\\AppData\\(Local|Roaming|LocalLow)\\'
+                    $rows.Add([PSCustomObject]@{
+                        Account = $h.Acct
+                        Sev     = if ($inAppData) { 'MED' } else { 'INFO' }
+                        Updater = ''
+                        Key     = "Uninstall\$($_.PSChildName)"
+                        Detail  = "$($p.DisplayName) | $($p.UninstallString)"
+                    })
+                    if ($inAppData) {
+                        Add-Finding 'MED' '09' (Ex "Per-user app installed under AppData: '$($p.DisplayName)' ($($h.Acct))") '09_user_hive_software.txt'
+                    }
+                }
+            }
+            # (3) Per-user Run / RunOnce entries pointing into writable paths (missed by the current-user run scan).
+            foreach ($rk in "$($h.Base)\Software\Microsoft\Windows\CurrentVersion\Run",
+                            "$($h.Base)\Software\Microsoft\Windows\CurrentVersion\RunOnce") {
+                if (-not (Test-Path $rk)) { continue }
+                $rp = Get-ItemProperty $rk -ErrorAction SilentlyContinue
+                if (-not $rp) { continue }
+                $rp.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object {
+                    $val = [string]$_.Value
+                    $badLoc = ($val -match '(?i)\\(AppData|Temp|Users\\Public|ProgramData)\\') -and ($val -notmatch $script:TrustedPathRx)
+                    if ($badLoc) {
+                        $rows.Add([PSCustomObject]@{ Account=$h.Acct; Sev='HIGH'; Updater=''; Key="Run\$($_.Name)"; Detail=$val })
+                        Add-Finding 'HIGH' '09' (Ex "Per-user Run entry from a writable path: '$($_.Name)' ($($h.Acct)) ^17 $val") '09_user_hive_software.txt'
+                    }
+                }
+            }
+        }
+    } finally {
+        # Release .NET registry handles before unmounting, or reg unload fails ("in use by another process").
+        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+        foreach ($mp in $mounted) { reg unload "HKU\$mp" | Out-Null }
+    }
+
+    "Hives examined: $($hives.Count)  (offline mounted: $($mounted.Count); offline skipped: $skippedOffline)"
+    $isAdminNow = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdminNow) {
+        "NOTE: not elevated - logged-off users' hives could not be mounted. Run as Administrator for full coverage."
+    }
+    ""
+    if ($rows.Count) {
+        $rows | Sort-Object @{E={ switch ($_.Sev) { 'HIGH' {0} 'MED' {1} default {2} } }}, Account |
+            Format-Table Account, Sev, Updater, Key, Detail -AutoSize -Wrap
+    } else {
+        "(no per-user self-registered software / AppData installs found)"
+    }
+}
+
 Save-Output "09_patches.txt" {
     Write-Section "INSTALLED HOTFIXES / PATCHES"
     Get-HotFix | Sort-Object InstalledOn -Descending | Format-Table -AutoSize
