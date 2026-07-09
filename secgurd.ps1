@@ -784,6 +784,77 @@ function Show-S1ChunkedPaste {
     } catch {}
 }
 
+function Compress-Source {
+    # Shrink a PowerShell source string for the compressed remote-shell paste WITHOUT changing what
+    # it does. Three safe passes only:
+    #   1) strip comments       - tokenizer-classified, so a '#' inside a string is never touched
+    #   2) alias common cmdlets - only in command position, from a curated Win-PS-5.1 alias map
+    #   3) strip indentation + blank lines - only when the source has NO multi-line string literals
+    # Variable renaming is deliberately NOT done: names live inside expandable strings, and $script:
+    # scope + param() binding make an automatic rename unsafe - and gzip already collapses repeated
+    # names, so the post-compression saving would be negligible anyway. On ANY tokenizer error, or if
+    # a pass can't be proven safe, the input is returned unchanged: a correct big paste beats a
+    # broken small one.
+    param([string]$Text)
+    if (-not $Text) { return $Text }
+
+    $errs = $null
+    $toks = $null
+    try { $toks = [System.Management.Automation.PSParser]::Tokenize($Text, [ref]$errs) } catch { return $Text }
+    if (-not $toks -or ($errs -and $errs.Count)) { return $Text }
+
+    # Curated map: long cmdlet -> shortest alias guaranteed to exist in Windows PowerShell 5.1.
+    $alias = @{
+        'Get-ChildItem'    = 'gci'
+        'Get-ItemProperty' = 'gp'
+        'Get-Item'         = 'gi'
+        'Get-Content'      = 'gc'
+        'Get-Command'      = 'gcm'
+        'Where-Object'     = '?'
+        'ForEach-Object'   = '%'
+        'Select-Object'    = 'select'
+        'Sort-Object'      = 'sort'
+        'Measure-Object'   = 'measure'
+        'Format-Table'     = 'ft'
+        'Format-List'      = 'fl'
+    }
+
+    # Any multi-line string literal? If so, touching line whitespace would corrupt its contents, so
+    # we skip pass 3. secgurd is written without them, but this keeps the helper safe if that changes.
+    $hasMultiLineStr = $false
+    foreach ($t in $toks) {
+        if ($t.Type -eq 'String' -and $t.Content -and $t.Content.Contains("`n")) { $hasMultiLineStr = $true; break }
+    }
+
+    # Pass 1+2: offset-based edits (remove comments, apply aliases). Apply END-first so earlier
+    # offsets stay valid as we mutate the buffer.
+    $edits = New-Object System.Collections.Generic.List[object]
+    foreach ($t in $toks) {
+        if ($t.Type -eq 'Comment') {
+            $edits.Add([PSCustomObject]@{ S = $t.Start; L = $t.Length; R = '' })
+        } elseif ($t.Type -eq 'Command' -and $alias.ContainsKey($t.Content)) {
+            $edits.Add([PSCustomObject]@{ S = $t.Start; L = $t.Length; R = $alias[$t.Content] })
+        }
+    }
+    $sb = New-Object System.Text.StringBuilder($Text)
+    foreach ($e in ($edits | Sort-Object S -Descending)) {
+        [void]$sb.Remove($e.S, $e.L)
+        if ($e.R) { [void]$sb.Insert($e.S, $e.R) }
+    }
+    $out = $sb.ToString()
+
+    # Pass 3: strip indentation + blank lines. Skipped when a multi-line string exists (see above).
+    if (-not $hasMultiLineStr) {
+        $keep = New-Object System.Collections.Generic.List[string]
+        foreach ($ln in ($out -split "`r?`n")) {
+            $tr = $ln.Trim()
+            if ($tr -ne '') { [void]$keep.Add($tr) }
+        }
+        $out = ($keep -join "`n")
+    }
+    return $out
+}
+
 function Show-S1Compressed {
     # Compressed SINGLE paste, with IOC lists bundled in. Gzip the script (and the community +
     # manual hash lists, if present) then Base64 it - roughly one third the size of plain text,
@@ -804,6 +875,14 @@ function Show-S1Compressed {
         Write-Host "  Could not read secgurd's own source to build the compressed paste." -ForegroundColor Yellow
         return
     }
+
+    # Compact secgurd's own source before packing it - strip comments, indentation and blank lines,
+    # and alias common cmdlets, all WITHOUT changing behavior - so the gzip+Base64 paste comes out
+    # smaller. Compress-Source fails safe (returns the source unchanged on any problem), so this can
+    # never produce a broken paste. Variable renaming is intentionally skipped (see Compress-Source).
+    $origLen = $src.Length
+    try { $src = Compress-Source $src } catch {}
+    $newLen = $src.Length
 
     # Build a multi-file container. Each file is preceded by a marker line. The marker is
     # assembled from fragments at runtime so the literal full marker never appears in this
@@ -901,6 +980,10 @@ function Show-S1Compressed {
         Write-Host "  (~$kb KB, one paste)" -ForegroundColor DarkGray
     } else {
         Write-Host (Ex "  ^16 Clipboard not available - use the saved file below.") -ForegroundColor Yellow
+    }
+    if ($origLen -gt 0 -and $newLen -lt $origLen) {
+        $pct = [Math]::Round((1 - ($newLen / $origLen)) * 100)
+        Write-Host ("  Source compacted before packing: {0:N0} -> {1:N0} chars (-{2}%)" -f $origLen, $newLen, $pct) -ForegroundColor DarkGray
     }
     Write-Host ""
     Write-Host "  Bundled into the paste:" -ForegroundColor Gray

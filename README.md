@@ -302,10 +302,12 @@ If you're authorized on the environment:
 
 The S1 remote shell often can't paste, runs non-interactively, and chokes on download-and-run. Secgurd handles this:
 
-- Run secgurd on your own box and press **`p`** (or use `-MakeS1Paste`). It offers three modes: **[1]** a single full-text paste, **[2]** a chunked plain-text paste for size-limited shells, and **[3]** a compressed single paste (gzip+Base64, ~1/3 the size, with the IOC lists bundled in).
+- Run secgurd on your own box and press **`p`** (or use `-MakeS1Paste`). It offers three modes: **[1]** a single full-text paste, **[2]** a chunked plain-text paste for size-limited shells, and **[3]** a compressed single paste (gzip+Base64, with the IOC lists bundled in). Before packing, mode [3] auto-**compacts** a copy of the source (see below), so the final paste is as small as possible.
 - Copy the block, paste it into the S1 Remote Shell, press Enter, and the interactive menu appears there.
 
 All three run secgurd **in the current shell as an in-memory scriptblock** — never a child `powershell.exe`. This matters in the S1 shell: it repaints the banner/menu on the first Enter (a child process doesn't), and it runs even when the endpoint's execution policy has script files disabled (execution policy only restricts `.ps1` *files*, not scriptblocks). The script is also "wrap-safe" (no internal here-strings), so the paste can't break itself.
+
+**Auto-compaction (mode [3]).** Rather than maintaining a second minified script, the compressed paste shrinks a *copy* of secgurd's own source on the fly, right before gzip+Base64, via `Compress-Source`. It runs three behavior-preserving passes over the source, using PowerShell's own tokenizer so strings are never touched: (1) strip all comments, (2) alias common cmdlets in command position (`Get-ChildItem`->`gci`, `Where-Object`->`?`, `ForEach-Object`->`%`, `Select-Object`->`select`, `Get-ItemProperty`->`gp`, `Format-Table`->`ft`, ...), and (3) remove indentation and blank lines. It **fails safe** — on any tokenizer error it returns the source unchanged, so compaction can never produce a broken paste. Variable renaming is intentionally **not** done: variable names appear inside expandable strings and `$script:` scope / `param()` binding make an automatic rename unsafe, and gzip already collapses repeated names so shortening them saves almost nothing after compression (comments and whitespace are the real win). `secgurd.ps1` stays the single, human-readable source of truth; only the pasted payload is compacted. The run prints the before/after character count.
 
 ---
 
