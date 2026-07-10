@@ -193,6 +193,7 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `o` | Toggle: open output folder when done |
 | `h` | Toggle: build + open the HTML report |
 | `i` | IOC hashes — load from file `[f]`, paste `[p]`, list `[l]`, or turn off `[x]` |
+| `u` | Malicious URLs (URLhaus) — load from file `[f]`, paste `[p]`, list `[l]`, or toggle `[x]` |
 | `f` | Find — scope all output to a name/string (enter a term, or blank to clear) |
 | `d` | Set the lookback window (days) |
 | `p` | Pastable version for remote shells (single / chunked / compressed) |
@@ -231,6 +232,25 @@ Everything is **fully offline** — no API key, no internet on the target. Hashe
 ### Keeping the community list fresh automatically
 
 The repo includes a GitHub Action (`.github/workflows/refresh-iocs.yml`) that, once a day, fetches a free public malware-hash feed (abuse.ch MalwareBazaar) **in GitHub's cloud** and commits the refreshed `communitysavedIOCS.txt` back to the repo. Your endpoints never touch the internet — only GitHub does the fetching. Then your next `git pull` picks up the new hashes. You can also trigger it manually from the repo's **Actions** tab ("Run workflow").
+
+---
+
+## Community malicious-URL matching
+
+Alongside the hash list, secgurd carries a community **malicious-URL** list (`communitysavedMALURLS.txt`) built from the free abuse.ch **[URLhaus](https://urlhaus.abuse.ch/)** feed — URLs currently serving malware. Like the hash list it is **auto-loaded** on every run from the file next to `secgurd.ps1` (no flags needed; use `-CommunityMalUrls <file>` to point at an explicit path). In the interactive menu the **`u`** command mirrors `i`: load from a file `[f]`, paste `[p]`, list `[l]`, or toggle matching on/off `[x]`.
+
+**Where it's used.** Module 10 (Browser & creds) extracts every URL from Chrome/Edge/Firefox history and triages it. Any visited URL that appears on the feed — by **exact URL** or by **host** (payload URLs rotate their paths, so the host is the durable signal) — is flagged **HIGH** with reason *"listed on the community malicious-URL feed (URLhaus)"*. That flag then feeds the end-of-run **browser-alert correlation**, so a hit that also matches a file on disk is escalated in `00_BROWSER_ALERTS.txt`.
+
+**Format:** one `<url>,<label>` per line. The label (threat/tags from URLhaus) is comma-free, so the URL is everything before the **last** comma (URLs themselves can contain commas). `#` comment lines are ignored:
+
+```
+http://185.220.101.45/win/update.exe,LummaStealer
+https://evil-cdn.example/a,b,c/payload,CobaltStrike
+```
+
+### Keeping the malicious-URL list fresh automatically
+
+The GitHub Action `.github/workflows/refresh-malurls.yml` runs daily (06:30 UTC, just after the hash refresh) and manually from the **Actions** tab. It fetches the URLhaus "online" export **in GitHub's cloud**, keeps the URL plus its threat/tags label, and commits the refreshed `communitysavedMALURLS.txt` back to the repo. Your next `git pull` picks up the new URLs — the endpoints never touch the internet. It also rides along inside the compressed SentinelOne paste, so an air-gapped box gets the current URL feed too.
 
 ---
 

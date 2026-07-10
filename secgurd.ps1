@@ -88,6 +88,7 @@ param(
     [switch]$HtmlReport,
     [string]$IOCHashes,
     [string]$CommunityIOCHashes,
+    [string]$CommunityMalUrls,
     [int]$DaysBack = 30,
     [string]$Find,
     [switch]$MakeS1Paste,
@@ -161,6 +162,15 @@ $script:IOCHashCount = 0
 $script:CommunityHashSet = $null
 $script:CommunityHashCount = 0
 $script:CommunityHashFile = $null
+# Community malicious-URL list: auto-loaded from communitysavedMALURLS.txt next to the script
+# (refreshed via git pull from abuse.ch URLhaus). Module 10 checks browser-history URLs against
+# these. We keep TWO sets: exact full-URL matches (strongest) and host-only matches (payload
+# URLs rotate paths, so the host is the durable signal).
+$script:MalUrlSet = $null       # normalized full URLs (lowercased, trailing slash trimmed)
+$script:MalUrlHostSet = $null   # hosts extracted from those URLs
+$script:MalUrlCount = 0
+$script:MalUrlFile = $null
+$script:MalUrlBackup = $null    # stashed sets when the 'u' menu toggles matching OFF (so it can flip back ON)
 # Browser flagging: module 10 records every flagged URL here (user/browser/host/severity/reason)
 # so the post-collection correlation step (after IOC matching) can cross-reference these hosts
 # with on-disk artifacts and write 00_BROWSER_ALERTS.txt.
@@ -353,7 +363,8 @@ function Show-Help {
     Write-Host "    -WithTaskInfo         Resolve run times for ALL tasks incl. Microsoft (slow; off by default)" -ForegroundColor Gray
     Write-Host "    -HtmlReport           Also build a single-file report.html" -ForegroundColor Gray
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
-    Write-Host "    -CommunityIOCHashes <file>  Explicit path to the community list (else auto-found next to script)" -ForegroundColor Gray
+    Write-Host "    -CommunityIOCHashes <file>  Explicit path to the community hash list (else auto-found next to script)" -ForegroundColor Gray
+    Write-Host "    -CommunityMalUrls <file>    Explicit path to the community malicious-URL list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
     Write-Host "    -Find <string>        Filter ALL output to lines/items containing <string> (e.g. SmartPDF)" -ForegroundColor Gray
     Write-Host "    -MakeS1Paste          Copy a paste-ready version for the SentinelOne shell" -ForegroundColor Gray
@@ -367,6 +378,7 @@ function Show-Help {
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
     Write-Host "    h                     Toggle: build + open HTML report" -ForegroundColor Gray
     Write-Host "    i                     Toggle: match hashes vs IOC list (load/paste/list under here)" -ForegroundColor Gray
+    Write-Host "    u                     Toggle: match browser URLs vs URLhaus list (load/paste/list under here)" -ForegroundColor Gray
     Write-Host "    d                     Set lookback window in days (time-bounded collectors)" -ForegroundColor Gray
     Write-Host "    f                     Find/filter: scope all output to a name/string (blank clears)" -ForegroundColor Gray
     Write-Host "    p                     Pastable version for remote shells - single/chunked/compressed" -ForegroundColor Gray
@@ -544,6 +556,96 @@ function Import-IOCHashes {
     param([string]$Path)
     try { return ConvertFrom-IOCText (Get-Content $Path -Raw -ErrorAction Stop) }
     catch { return @{} }
+}
+
+function Get-MalUrlHost {
+    # Minimal, self-contained host extraction for the malicious-URL loader. Kept separate from
+    # Get-UrlHost (defined much later in the file) so this can run during early script setup,
+    # before that function exists. Lowercases, drops scheme/userinfo/port/path. Returns '' on miss.
+    param([string]$Url)
+    if (-not $Url) { return '' }
+    $h = $Url.Trim().ToLower()
+    $h = $h -replace '^[a-z][a-z0-9+.-]*://', ''   # strip scheme
+    $h = ($h -split '[/?#]', 2)[0]                 # drop path/query/fragment
+    if ($h -match '@') { $h = ($h -split '@', 2)[-1] }  # drop userinfo
+    $h = ($h -split ':', 2)[0]                      # drop port
+    return $h.Trim('.')
+}
+
+function ConvertFrom-MalUrlText {
+    # Parse malicious-URL text into @{ Urls = <HashSet full-url>; Hosts = <HashSet host> }.
+    # Accepts the file format ("<url>,<label>" per line - the label is comma-free, so the URL is
+    # everything before the LAST comma, since URLs themselves may contain commas) AND pasted
+    # bare-URL lists (one per line, or several space-separated on a comma-free line). '#' lines
+    # are ignored.
+    param([string]$Text)
+    $urls  = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $hosts = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    if (-not $Text) { return @{ Urls = $urls; Hosts = $hosts } }
+    foreach ($line in ($Text -split "`r?`n")) {
+        $t = $line.Trim()
+        if ($t -eq '' -or $t.StartsWith('#')) { continue }
+        # A comma-free line may hold several space-separated bare URLs; a line WITH a comma is a
+        # single "<url>,<label>" entry (URLs can contain commas, so we split on the LAST one).
+        if ($t.Contains(',')) {
+            $comma = $t.LastIndexOf(',')
+            $entries = @($t.Substring(0, $comma).Trim())
+        } else {
+            $entries = @($t -split '\s+')
+        }
+        foreach ($u in $entries) {
+            if ($u -notmatch '^(?i)https?://') { continue }
+            $norm = $u.ToLower().TrimEnd('/')
+            [void]$urls.Add($norm)
+            $mh = Get-MalUrlHost $u
+            if ($mh) { [void]$hosts.Add($mh) }
+        }
+    }
+    return @{ Urls = $urls; Hosts = $hosts }
+}
+
+function Import-MalUrls {
+    # Load community malicious URLs from a FILE (communitysavedMALURLS.txt, abuse.ch URLhaus feed).
+    # Delegates parsing to ConvertFrom-MalUrlText. Returns @{ Urls; Hosts } (empty on error).
+    param([string]$Path)
+    try { return ConvertFrom-MalUrlText (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop) }
+    catch {
+        return @{
+            Urls  = (New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase))
+            Hosts = (New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase))
+        }
+    }
+}
+
+function Show-MalUrlList {
+    # Print the currently-loaded community malicious URLs (capped at 50 for readability).
+    if (-not $script:MalUrlSet -or $script:MalUrlCount -le 0) {
+        Write-Host ""
+        Write-Host "  No malicious URLs loaded." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+    Write-Host ""
+    Write-Host "  " -NoNewline
+    Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
+    Write-Host "COMMUNITY malicious URLs" -ForegroundColor White -NoNewline
+    Write-Host "   source: $($script:MalUrlFile)" -ForegroundColor DarkGray
+    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+    $n = 0
+    foreach ($u in ($script:MalUrlSet | Sort-Object)) {
+        $n++
+        $short = if ($u.Length -gt 72) { $u.Substring(0, 69) + '...' } else { $u }
+        Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
+        Write-Host $short -ForegroundColor Gray
+        if ($n -ge 50) {
+            Write-Host ("        ... and $($script:MalUrlCount - 50) more") -ForegroundColor DarkGray
+            break
+        }
+    }
+    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+    Write-Host "  $($script:MalUrlCount) URL(s), $($script:MalUrlHostSet.Count) unique host(s)." -ForegroundColor DarkGray
+    Write-Host "  Matched against browser-history URLs in module 10 at run time." -ForegroundColor DarkGray
+    Write-Host ""
 }
 
 function Show-IOCList {
@@ -905,6 +1007,16 @@ function Show-S1Compressed {
             $bundled += "communitysavedIOCS.txt ($($script:CommunityHashCount) hashes)"
         } catch {}
     }
+    # community malicious-URL list (rides along so the air-gapped box gets current URLhaus URLs)
+    if ($script:MalUrlFile -and (Test-Path $script:MalUrlFile)) {
+        try {
+            $uTxt = Get-Content -LiteralPath $script:MalUrlFile -Raw -ErrorAction Stop
+            [void]$container.AppendLine($MK + 'communitysavedMALURLS.txt' + $END)
+            [void]$container.Append($uTxt)
+            if (-not $uTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
+            $bundled += "communitysavedMALURLS.txt ($($script:MalUrlCount) URLs)"
+        } catch {}
+    }
     # manual list (whatever you loaded via -IOCHashes / the i menu)
     if ($script:IOCHashFile -and (Test-Path $script:IOCHashFile)) {
         try {
@@ -945,6 +1057,7 @@ function Show-S1Compressed {
     [void]$sb.Append('Write-Host ""; Write-Host ("  unpacked to {0}:" -f $env:TEMP) -ForegroundColor Cyan; foreach($w in $wrote){ Write-Host "    + $w" -ForegroundColor DarkGray }; Write-Host ""; ')
     [void]$sb.Append('$man=Join-Path $env:TEMP "manualIOCS.txt"; ')
     [void]$sb.Append('$com=Join-Path $env:TEMP "communitysavedIOCS.txt"; ')
+    [void]$sb.Append('$mal=Join-Path $env:TEMP "communitysavedMALURLS.txt"; ')
     [void]$sb.Append('$sg=Join-Path $env:TEMP "secgurd.ps1"; ')
     # Run secgurd IN THE CURRENT SESSION (like the single-paste option) rather than spawning a
     # child powershell.exe: in the SentinelOne remote shell a child interactive process doesn't
@@ -953,7 +1066,7 @@ function Show-S1Compressed {
     # FILE and is blocked by a Restricted execution policy). Execution policy only gates script
     # files, never in-memory scriptblocks - so this runs even where "running scripts is disabled".
     # Clear-Host first wipes the pasted block; IOC lists are passed via splatting.
-    [void]$sb.Append('$sgArgs=@{}; if(Test-Path $com){$sgArgs["CommunityIOCHashes"]=$com}; if(Test-Path $man){$sgArgs["IOCHashes"]=$man}; ')
+    [void]$sb.Append('$sgArgs=@{}; if(Test-Path $com){$sgArgs["CommunityIOCHashes"]=$com}; if(Test-Path $mal){$sgArgs["CommunityMalUrls"]=$mal}; if(Test-Path $man){$sgArgs["IOCHashes"]=$man}; ')
     [void]$sb.Append('Clear-Host; & ([ScriptBlock]::Create([IO.File]::ReadAllText($sg))) @sgArgs')
     $block = $sb.ToString()
 
@@ -1126,6 +1239,17 @@ function Show-ModuleMenu {
         Write-Host ("{0,-36}" -f 'Match hashes against IOC list') -ForegroundColor White -NoNewline
         Write-Host $iocNote -ForegroundColor DarkGray
 
+        $malOn   = ($script:MalUrlCount -gt 0)
+        $malMark = if ($malOn) { (Ex "[^14]") } else { '[ ]' }
+        $malClr  = if ($malOn) { 'Green' } else { 'DarkGray' }
+        $malNote = if ($malOn) { "($($script:MalUrlCount) URLs loaded)" } else { '(URLhaus feed - off/empty)' }
+        Write-Host "   " -NoNewline
+        Write-Host $malMark -ForegroundColor $malClr -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f 'u') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-36}" -f 'Match browser URLs vs URLhaus list') -ForegroundColor White -NoNewline
+        Write-Host $malNote -ForegroundColor DarkGray
+
         $fOn   = [bool]$script:FindFilter
         $fMark = if ($fOn) { (Ex "[^14]") } else { '[ ]' }
         $fClr  = if ($fOn) { 'Green' } else { 'DarkGray' }
@@ -1284,6 +1408,106 @@ function Show-ModuleMenu {
                 $pendingMsg = "IOC hash matching: ON ($($loaded.Count) hashes)"
             } elseif (($how -eq 'f' -or $how -eq 'p') -and -not $pendingMsg) {
                 $pendingMsg = "No valid hashes found (need MD5/SHA-1/SHA-256 hex values)."
+            }
+            Clear-Host; Show-secgurdBannerCompact
+            continue
+        }
+
+        if ($cmd -eq 'u') {
+            $malLoaded = ($script:MalUrlSet -and $script:MalUrlCount -gt 0)
+            Write-Host ""
+            Write-Host "  Community malicious-URL matching" -ForegroundColor Cyan -NoNewline
+            if ($malLoaded) {
+                Write-Host "  ($($script:MalUrlCount) URLs loaded)" -ForegroundColor Green
+            } else {
+                Write-Host "  (none loaded)" -ForegroundColor DarkGray
+            }
+            Write-Host "  Browser-history URLs (module 10) are checked against this list; a hit on the" -ForegroundColor DarkGray
+            Write-Host "  full URL or its host is flagged HIGH. Auto-loaded from communitysavedMALURLS.txt." -ForegroundColor DarkGray
+            Write-Host "    [f] " -ForegroundColor Yellow -NoNewline
+            Write-Host "load URLs from a file" -ForegroundColor White
+            Write-Host "    [p] " -ForegroundColor Yellow -NoNewline
+            Write-Host "paste URLs (space-separated, or one per line)" -ForegroundColor White
+            Write-Host "    [l] " -ForegroundColor Yellow -NoNewline
+            Write-Host "list / show loaded URLs" -ForegroundColor White
+            if ($malLoaded) {
+                Write-Host "    [x] " -ForegroundColor Yellow -NoNewline
+                Write-Host "turn URL matching off" -ForegroundColor White
+            } elseif ($script:MalUrlBackup) {
+                Write-Host "    [x] " -ForegroundColor Yellow -NoNewline
+                Write-Host "turn URL matching back on" -ForegroundColor White
+            }
+            Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+            $how = (Read-Host).Trim().ToLower()
+
+            if ($how -eq 'x') {
+                if ($malLoaded) {
+                    # Stash the loaded sets so it can be toggled back on without re-reading disk.
+                    $script:MalUrlBackup = @{ Urls=$script:MalUrlSet; Hosts=$script:MalUrlHostSet; Count=$script:MalUrlCount; File=$script:MalUrlFile }
+                    $script:MalUrlSet = $null; $script:MalUrlHostSet = $null; $script:MalUrlCount = 0; $script:MalUrlFile = $null
+                    $pendingMsg = "Community malicious-URL matching: OFF"
+                } elseif ($script:MalUrlBackup) {
+                    $script:MalUrlSet     = $script:MalUrlBackup.Urls
+                    $script:MalUrlHostSet = $script:MalUrlBackup.Hosts
+                    $script:MalUrlCount   = $script:MalUrlBackup.Count
+                    $script:MalUrlFile    = $script:MalUrlBackup.File
+                    $script:MalUrlBackup  = $null
+                    $pendingMsg = "Community malicious-URL matching: ON ($($script:MalUrlCount) URLs)"
+                } else {
+                    $pendingMsg = "Nothing to toggle - no URLs loaded."
+                }
+                Clear-Host; Show-secgurdBannerCompact; continue
+            }
+
+            if ($how -eq 'l') {
+                Clear-Host; Show-secgurdBannerCompact
+                if ($malLoaded) {
+                    Show-MalUrlList
+                } else {
+                    Write-Host ""
+                    Write-Host "  No URLs loaded." -ForegroundColor Yellow
+                    Write-Host "  Use [f] to load from a file or [p] to paste some first." -ForegroundColor DarkGray
+                    Write-Host ""
+                }
+                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
+                Read-Host | Out-Null
+                Clear-Host; Show-secgurdBannerCompact; continue
+            }
+
+            $loaded = $null; $src = ''
+            if ($how -eq 'f') {
+                Write-Host "  Path to malicious-URL list file:" -ForegroundColor Cyan
+                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                $malPath = (Read-Host).Trim('"').Trim()
+                if ($malPath -and (Test-Path $malPath)) {
+                    $loaded = Import-MalUrls $malPath
+                    $src = $malPath
+                } else {
+                    $pendingMsg = "File not found - URL matching not changed."
+                }
+            } elseif ($how -eq 'p') {
+                Write-Host "  Paste URLs (space-separated, or one per line), then press Enter:" -ForegroundColor Cyan
+                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+                $pasted = Read-Host
+                $loaded = ConvertFrom-MalUrlText $pasted
+                $src = '(pasted)'
+            } else {
+                $pendingMsg = "Cancelled - pick f, p, l, or x."
+            }
+
+            if ($loaded -and $loaded.Urls.Count -gt 0) {
+                $script:MalUrlFile    = $src
+                $script:MalUrlSet     = $loaded.Urls
+                $script:MalUrlHostSet = $loaded.Hosts
+                $script:MalUrlCount   = $loaded.Urls.Count
+                $script:MalUrlBackup  = $null
+                Clear-Host; Show-secgurdBannerCompact
+                Show-MalUrlList
+                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
+                Read-Host | Out-Null
+                $pendingMsg = "Community malicious-URL matching: ON ($($script:MalUrlCount) URLs)"
+            } elseif (($how -eq 'f' -or $how -eq 'p') -and -not $pendingMsg) {
+                $pendingMsg = "No valid URLs found (need http:// or https:// entries)."
             }
             Clear-Host; Show-secgurdBannerCompact
             continue
@@ -1640,6 +1864,31 @@ if ($communityFile) {
         $script:CommunityHashSet   = $cset
         $script:CommunityHashCount = $cset.Count
         $script:CommunityHashFile  = $communityFile
+    }
+}
+
+# Community malicious-URL list. Same discovery order as the community hash list: explicit
+# -CommunityMalUrls path (used by the bundled S1 paste), else communitysavedMALURLS.txt next to
+# the script (the normal git-pull case). Feeds module 10's browser-history URL triage.
+$malUrlFile = $null
+if ($CommunityMalUrls -and (Test-Path $CommunityMalUrls)) {
+    $malUrlFile = $CommunityMalUrls
+} else {
+    $scriptDir2 = $null
+    if ($PSScriptRoot) { $scriptDir2 = $PSScriptRoot }
+    elseif ($PSCommandPath) { $scriptDir2 = Split-Path -Parent $PSCommandPath }
+    if ($scriptDir2) {
+        $cand2 = Join-Path $scriptDir2 'communitysavedMALURLS.txt'
+        if (Test-Path $cand2) { $malUrlFile = $cand2 }
+    }
+}
+if ($malUrlFile) {
+    $mset = Import-MalUrls $malUrlFile
+    if ($mset.Urls.Count -gt 0) {
+        $script:MalUrlSet     = $mset.Urls
+        $script:MalUrlHostSet = $mset.Hosts
+        $script:MalUrlCount   = $mset.Urls.Count
+        $script:MalUrlFile    = $malUrlFile
     }
 }
 
@@ -3860,6 +4109,17 @@ function Test-SuspiciousUrl {
     $lower = $Url.ToLower()
     $urlHost = Get-UrlHost $Url
 
+    # Community malicious-URL feed (abuse.ch URLhaus, from communitysavedMALURLS.txt) - highest
+    # confidence, so it's checked first. Exact URL match beats a host match, but either is HIGH.
+    if ($script:MalUrlSet -and $script:MalUrlSet.Count -gt 0) {
+        if ($script:MalUrlSet.Contains($lower.TrimEnd('/'))) {
+            return @{ Severity = 'HIGH'; Reason = 'listed on the community malicious-URL feed (URLhaus)' }
+        }
+        if ($urlHost -and $script:MalUrlHostSet -and $script:MalUrlHostSet.Contains($urlHost)) {
+            return @{ Severity = 'HIGH'; Reason = 'host listed on the community malicious-URL feed (URLhaus)' }
+        }
+    }
+
     if ($lower -match '\.(exe|scr|hta|ps1|bat|cmd|vbs|jse?|wsf|jar|msi|dll|lnk|iso|img|apk|ace|7z)(\?|#|$)') {
         return @{ Severity = 'HIGH'; Reason = 'direct executable/script download' }
     }
@@ -3916,6 +4176,10 @@ Save-Output "10_browser_history.txt" {
     "EVERY flagged URL of every severity is written in full to the per-user files. A single"
     "summary finding points you there. The full URL list per profile is written to:"
     "    10_browser_history\<user>\<browser>_<profile>.txt"
+    if ($script:MalUrlCount -gt 0) {
+        "Community malicious-URL feed active: $($script:MalUrlCount) URL(s) from communitysavedMALURLS.txt"
+        "(abuse.ch URLhaus) - any visited URL or host on the feed is flagged HIGH."
+    }
     ""
 
     $browsers = @(

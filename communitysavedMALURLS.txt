@@ -1,0 +1,7 @@
+# secgurd community malicious-URL list
+# Auto-generated from abuse.ch URLhaus online export (https://urlhaus.abuse.ch/)
+# Updated: (not yet refreshed - run the "Refresh community malicious-URL list" Action)
+# Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
+#
+# This file is populated automatically by .github/workflows/refresh-malurls.yml.
+# Until the first run, it is empty; secgurd loads it if present and skips it if empty.

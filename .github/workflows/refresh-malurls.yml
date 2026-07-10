@@ -1,0 +1,88 @@
+name: Refresh community malicious-URL list
+
+# Auto-updates communitysavedMALURLS.txt from a free public malicious-URL feed.
+# Runs in GitHub's cloud (NOT on any endpoint), commits the refreshed file to the repo.
+# Your endpoints stay offline - they just get the new URLs on the next `git pull`.
+
+on:
+  schedule:
+    - cron: '30 6 * * *'        # daily at 06:30 UTC (30 min after the IOC-hash refresh)
+  workflow_dispatch:            # also allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: write               # needed to commit the refreshed file back to the repo
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v5
+
+      - name: Download and build community malicious-URL list
+        run: |
+          set -euo pipefail
+          OUT="communitysavedMALURLS.txt"
+          TMP="$(mktemp)"
+
+          # --- Source: abuse.ch URLhaus "online" URL export (free, no API key) ---
+          # https://urlhaus.abuse.ch/  -> a CSV of URLs currently serving malware. We keep only
+          # the "online" feed (dead URLs are useless for hunting) and label each with its
+          # threat/tags so a match tells you WHAT it is.
+          echo "Downloading URLhaus online URL export..."
+          curl -fsSL "https://urlhaus.abuse.ch/downloads/csv_online/" -o online.csv || {
+            echo "Download failed; leaving the existing list untouched."
+            exit 0
+          }
+
+          # URLhaus CSV columns (every field is double-quoted, comma-separated):
+          #   1 id, 2 dateadded, 3 url, 4 url_status, 5 last_online, 6 threat, 7 tags,
+          #   8 urlhaus_link, 9 reporter
+          # We want column 3 (url) and a label from column 6 (threat) or 7 (tags).
+          # URLs legitimately contain commas (query strings), so we parse with gawk FPAT
+          # (quote-aware field splitting) rather than a naive split on ',', and we keep the
+          # LABEL comma-free so the consumer can recover <url> by splitting on the LAST comma.
+          {
+            echo "# secgurd community malicious-URL list"
+            echo "# Auto-generated from abuse.ch URLhaus online export (https://urlhaus.abuse.ch/)"
+            echo "# Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "# Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)"
+            echo "#"
+            gawk -v FPAT='"[^"]*"|[^,]*' '
+              /^#/ { next }
+              {
+                url=$3; threat=$6; tags=$7;
+                gsub(/^"|"$/,"",url); gsub(/^"|"$/,"",threat); gsub(/^"|"$/,"",tags);
+                if (url !~ /^https?:\/\//) next;
+                label=threat;
+                if (label=="" || label=="None") label=tags;
+                if (label=="" || label=="None") label="URLhaus";
+                gsub(/,/,";",label);
+                print url "," label;
+              }' online.csv \
+              | sort -u
+          } > "$TMP"
+
+          # Sanity: only replace the committed file if we actually parsed some URLs.
+          URLCOUNT=$(grep -cE '^https?://' "$TMP" || true)
+          echo "Parsed $URLCOUNT URLs."
+          if [ "$URLCOUNT" -gt 0 ]; then
+            mv "$TMP" "$OUT"
+            echo "Wrote $OUT"
+          else
+            echo "No URLs parsed; keeping existing $OUT unchanged."
+          fi
+
+      - name: Commit changes if the list changed
+        run: |
+          set -euo pipefail
+          git config user.name  "secgurd-ioc-bot"
+          git config user.email "secgurd-ioc-bot@users.noreply.github.com"
+          if git diff --quiet -- communitysavedMALURLS.txt; then
+            echo "No changes to commit."
+          else
+            git add communitysavedMALURLS.txt
+            git commit -m "Auto-refresh community malicious-URL list ($(date -u '+%Y-%m-%d'))"
+            git push
+            echo "Committed updated community malicious-URL list."
+          fi
