@@ -252,6 +252,8 @@ https://evil-cdn.example/a,b,c/payload,CobaltStrike
 
 The GitHub Action `.github/workflows/refresh-malurls.yml` runs daily (06:30 UTC, just after the hash refresh) and manually from the **Actions** tab. It fetches the URLhaus "online" export **in GitHub's cloud**, keeps the URL plus its threat/tags label, and commits the refreshed `communitysavedMALURLS.txt` back to the repo. Your next `git pull` picks up the new URLs — the endpoints never touch the internet. It also rides along inside the compressed SentinelOne paste, so an air-gapped box gets the current URL feed too.
 
+**The feed is aggressively filtered to stay small.** The raw URLhaus export is ~15k URLs, but ~87% of them are things secgurd **already flags on its own heuristics** — so listing them adds nothing. The Action drops every entry the tool would already catch (direct payload downloads like `.exe`/`.dll`/`.ps1`, raw-IP hosts, GitHub-hosted content, known C2/file-drop infrastructure, URL shorteners, high-abuse TLDs, punycode), keeps only URLs added in the last **90 days**, and emits **one representative URL per host** (module 10 matches on host too, so extra URLs on an already-listed host are redundant). What survives — a few hundred hosts — is the real value-add: confirmed-malicious sites on *otherwise normal-looking* domains that the heuristics would miss. Tune the window via `MAXAGE_DAYS` in the workflow.
+
 ---
 
 ## Targeted find — scoping a run to one artifact

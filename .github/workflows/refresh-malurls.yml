@@ -25,6 +25,10 @@ jobs:
           OUT="communitysavedMALURLS.txt"
           TMP="$(mktemp)"
 
+          # Only keep URLs first seen within this many days (drops stale long-lived infra).
+          MAXAGE_DAYS=90
+          CUTOFF="$(date -u -d "${MAXAGE_DAYS} days ago" '+%Y-%m-%d')"
+
           # --- Source: abuse.ch URLhaus "online" URL export (free, no API key) ---
           # https://urlhaus.abuse.ch/  -> a CSV of URLs currently serving malware. We keep only
           # the "online" feed (dead URLs are useless for hunting) and label each with its
@@ -38,22 +42,53 @@ jobs:
           # URLhaus CSV columns (every field is double-quoted, comma-separated):
           #   1 id, 2 dateadded, 3 url, 4 url_status, 5 last_online, 6 threat, 7 tags,
           #   8 urlhaus_link, 9 reporter
-          # We want column 3 (url) and a label from column 6 (threat) or 7 (tags).
+          # We want column 3 (url), 2 (dateadded, for the time filter) and a label from 6/7.
           # URLs legitimately contain commas (query strings), so we parse with gawk FPAT
           # (quote-aware field splitting) rather than a naive split on ',', and we keep the
           # LABEL comma-free so the consumer can recover <url> by splitting on the LAST comma.
+          #
+          # AGGRESSIVE SHRINK: the raw feed is ~15k URLs, but ~87% are things secgurd ALREADY
+          # flags on its own heuristics (module 10 Test-SuspiciousUrl) - so listing them adds
+          # nothing. We drop every entry the tool would already catch, keep only recent ones,
+          # and emit ONE representative URL per host (module 10 matches on host too, so extra
+          # URLs on an already-listed host are redundant). Net: ~15k -> a few hundred hosts
+          # that are confirmed-malicious on otherwise normal-looking domains - the real value.
           {
             echo "# secgurd community malicious-URL list"
             echo "# Auto-generated from abuse.ch URLhaus online export (https://urlhaus.abuse.ch/)"
+            echo "# Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,"
+            echo "#   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,"
+            echo "#   punycode); keep entries added in the last ${MAXAGE_DAYS} days; ONE URL per host."
             echo "# Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "# Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)"
             echo "#"
-            gawk -v FPAT='"[^"]*"|[^,]*' '
+            gawk -v FPAT='"[^"]*"|[^,]*' -v CUT="$CUTOFF" '
               /^#/ { next }
               {
-                url=$3; threat=$6; tags=$7;
-                gsub(/^"|"$/,"",url); gsub(/^"|"$/,"",threat); gsub(/^"|"$/,"",tags);
+                url=$3; dateadded=$2; threat=$6; tags=$7;
+                gsub(/^"|"$/,"",url); gsub(/^"|"$/,"",dateadded);
+                gsub(/^"|"$/,"",threat); gsub(/^"|"$/,"",tags);
                 if (url !~ /^https?:\/\//) next;
+
+                # time filter: keep only URLs first seen on/after the cutoff (ISO dates sort lexically)
+                if (substr(dateadded,1,10) < CUT) next;
+
+                lu = tolower(url);
+
+                # --- drop everything secgurd already flags by heuristic (redundant) ---
+                if (lu ~ /\.(exe|dll|bin|scr|msi|ps1|bat|cmd|hta|vbs|jse?|wsf|jar|apk|iso|img|lnk|ace|7z)(\?|#|$)/) next;   # direct payload download (HIGH)
+                if (lu ~ /^https?:\/\/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+([:\/]|$)/) next;                                        # raw IP host (HIGH)
+                if (lu ~ /(githubusercontent|github\.io|github\.com|gist\.)/) next;                                          # GitHub-hosted (already flagged)
+                if (lu ~ /(cdn\.discordapp\.com|discord(app)?\.com\/api\/webhooks|pastebin\.com\/raw|paste\.ee|transfer\.sh|anonfiles|gofile\.io|mega\.(nz|io)|mediafire|file\.io|0x0\.st|tmpfiles|ngrok\.(io|app|dev)|trycloudflare|\.workers\.dev|\.r2\.dev|t\.me\/)/) next;   # known C2/file-drop (HIGH)
+                if (lu ~ /:\/\/(bit\.ly|tinyurl\.com|goo\.gl|t\.co|is\.gd|cutt\.ly|rebrand\.ly|ow\.ly|rb\.gy|shorturl\.at|tiny\.cc|bit\.do|s\.id)\//) next;   # URL shortener (MED)
+                if (lu ~ /:\/\/[^\/]*\.(tk|top|xyz|gq|ml|cf|work|click|country|kim|men|loan|download|zip|mov|rest|cfd|sbs|lol|quest)([\/:]|$)/) next;          # high-abuse TLD (MED)
+                if (lu ~ /:\/\/xn--/) next;                                                                                  # punycode host (MED)
+
+                # dedup: one representative URL per host
+                h = lu; sub(/^https?:\/\//,"",h); sub(/[\/:?#].*$/,"",h);
+                if (h in seen) next;
+                seen[h]=1;
+
                 label=threat;
                 if (label=="" || label=="None") label=tags;
                 if (label=="" || label=="None") label="URLhaus";
