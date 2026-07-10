@@ -24,7 +24,7 @@ Secgurd is a single-file PowerShell DFIR (Digital Forensics and Incident Respons
 
 It's built for the first hour of an investigation: *"something looks off on this box — what's actually going on?"* Run it, pull back the zip, and review.
 
-- **One file, no dependencies.** Pure PowerShell 5.1+, no modules to install, nothing to compile.
+- **One file, no external dependencies.** Pure PowerShell 5.1+, no modules to install, nothing to compile.
 - **Read-only by default.** Collects and reports; it doesn't change the system (the only write action, `-Cleanup`, requires explicit confirmation).
 - **Offline-friendly.** No internet required. No data leaves the host except the evidence zip you collect.
 - **Self-contained output.** Timestamped folder + auto-zipped archive, with an optional single-file HTML report.
