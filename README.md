@@ -123,10 +123,12 @@ Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/SicksSen
 ### One-liner for cleanup
 
 ```powershell
-Remove-Item "$env:TEMP\secgurd*" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:TEMP\secgurd*", "$env:TEMP\communitysavedIOCS.txt", "$env:TEMP\communitysavedMALURLS.txt", "$env:TEMP\manualIOCS.txt", "$env:TEMP\secgurd_s1_*.txt" -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
-> To check after cleanup run `Get-ChildItem "$env:TEMP" -Filter "secgurd*" -ErrorAction SilentlyContinue; Get-ChildItem "$env:TEMP" -Include "communitysavedIOCS.txt","manualIOCS.txt" -ErrorAction SilentlyContinue`.
+> This clears everything secgurd (or the compressed S1 paste) can leave in `%TEMP%`: the `secgurd_<host>_<timestamp>` output folder, the unpacked `secgurd.ps1`, the S1 paste files, and the IOC-hash / malicious-URL lists. `"$env:TEMP\secgurd*"` already covers `secgurd.ps1` and the `secgurd_s1_*.txt` files, so those entries are belt-and-suspenders.
+>
+> To check after cleanup run `Get-ChildItem "$env:TEMP" -Filter "secgurd*" -ErrorAction SilentlyContinue; Get-ChildItem "$env:TEMP" -Include "communitysavedIOCS.txt","communitysavedMALURLS.txt","manualIOCS.txt" -ErrorAction SilentlyContinue`.
 
 ---
 
