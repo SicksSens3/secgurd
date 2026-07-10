@@ -241,6 +241,13 @@ Alongside the hash list, secgurd carries a community **malicious-URL** list (`co
 
 **Where it's used.** Module 10 (Browser & creds) extracts every URL from Chrome/Edge/Firefox history and triages it. Any visited URL that appears on the feed — by **exact URL** or by **host** (payload URLs rotate their paths, so the host is the durable signal) — is flagged **HIGH** with reason *"listed on the community malicious-URL feed (URLhaus)"*. That flag then feeds the end-of-run **browser-alert correlation**, so a hit that also matches a file on disk is escalated in `00_BROWSER_ALERTS.txt`.
 
+**Curated watchlist (hand-maintained).** Separate from the auto-refreshed feed, `secgurd.ps1` carries two small lists you edit directly (near `Test-SuspiciousUrl`) to pin things you keep seeing:
+
+- `$script:WatchlistHosts` — specific known-bad domains (e.g. `rdxgo.click`). A visited host that equals one, or is a subdomain of it (`foo.rdxgo.click`), is flagged **HIGH**.
+- `$script:WatchlistTlds` — abuse-prone TLDs on top of the built-in list (e.g. `beer`). Any host under one is flagged **MED**.
+
+These are checked right alongside the built-in URL heuristics, so no feed refresh or flags are needed — just add a line to the array.
+
 **Format:** one `<url>,<label>` per line. The label (threat/tags from URLhaus) is comma-free, so the URL is everything before the **last** comma (URLs themselves can contain commas). `#` comment lines are ignored:
 
 ```

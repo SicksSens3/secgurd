@@ -4101,6 +4101,26 @@ function Test-LookalikeDomain {
     return $null
 }
 
+# ---------------------------------------------
+#  CURATED MALICIOUS-DOMAIN WATCHLIST (hand-maintained)
+# ---------------------------------------------
+# Small, hand-picked list you edit directly - separate from the auto-refreshed URLhaus feed
+# (communitysavedMALURLS.txt). Use it to pin domains/TLDs you keep seeing to a firm verdict.
+#
+#   $script:WatchlistHosts - specific known-bad domains/hosts. A browser-history URL whose host
+#     equals one of these, OR is a subdomain of it (foo.rdxgo.click matches rdxgo.click), is
+#     flagged HIGH. Lower-case, no scheme, no path.
+#   $script:WatchlistTlds  - abuse-prone TLDs to flag on top of the built-in list. Just the
+#     label, no leading dot. These flag MED (a whole TLD is a broad signal, not one host).
+$script:WatchlistHosts = @(
+    'rdxgo.click'
+    # add more known-bad domains here, one per line, e.g. 'malware-example.com'
+)
+$script:WatchlistTlds = @(
+    'beer'
+    # add more abuse-prone TLDs here, one per line (no dot), e.g. 'lat'
+)
+
 function Test-SuspiciousUrl {
     # Heuristic triage of a single URL. Returns @{Severity;Reason} for a hit, else $null.
     # Tuned to surface payload downloads, raw-IP/C2/exfil infra, obfuscation and abuse TLDs -
@@ -4117,6 +4137,16 @@ function Test-SuspiciousUrl {
         }
         if ($urlHost -and $script:MalUrlHostSet -and $script:MalUrlHostSet.Contains($urlHost)) {
             return @{ Severity = 'HIGH'; Reason = 'host listed on the community malicious-URL feed (URLhaus)' }
+        }
+    }
+
+    # Curated watchlist (hand-maintained above) - exact host or a subdomain of a watched domain.
+    if ($urlHost -and $script:WatchlistHosts) {
+        foreach ($w in $script:WatchlistHosts) {
+            $wl = $w.ToLower().Trim()
+            if ($wl -and ($urlHost -eq $wl -or $urlHost.EndsWith('.' + $wl))) {
+                return @{ Severity = 'HIGH'; Reason = "on the curated malicious-domain watchlist ($wl)" }
+            }
         }
     }
 
@@ -4156,6 +4186,14 @@ function Test-SuspiciousUrl {
     }
     if ($urlHost -match '\.(tk|top|xyz|gq|ml|cf|work|click|country|kim|men|loan|download|zip|mov|rest|cfd|sbs|lol|quest)$') {
         return @{ Severity = 'MED'; Reason = 'high-abuse TLD' }
+    }
+    if ($urlHost -and $script:WatchlistTlds) {
+        foreach ($t in $script:WatchlistTlds) {
+            $tl = $t.ToLower().Trim().TrimStart('.')
+            if ($tl -and $urlHost.EndsWith('.' + $tl)) {
+                return @{ Severity = 'MED'; Reason = "watchlisted high-abuse TLD (.$tl)" }
+            }
+        }
     }
     if ($urlHost -match '(^|\.)xn--') {
         return @{ Severity = 'MED'; Reason = 'punycode host (possible homoglyph/spoof)' }
