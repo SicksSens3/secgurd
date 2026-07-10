@@ -2772,6 +2772,24 @@ Save-Output "03_startup_items.txt" {
     }
 }
 
+# Known-benign WMI event-subscription names (allowlist). A __FilterToConsumerBinding is a classic
+# fileless-persistence technique, so secgurd flags them - but a few ship with a healthy Windows box
+# by default (the built-in SCM Event Log subscription, above all) or come from legitimate management
+# agents, and would otherwise fire HIGH on EVERY run. Names here (regex, case-insensitive) are
+# suppressed from the HIGH finding. Add your environment's known-good subscriptions (e.g. SCOM /
+# monitoring agents) so the finding stays signal-only. NOTE: on top of this list, any binding whose
+# consumer is an NTEventLogEventConsumer is auto-suppressed too - that consumer type only writes to
+# the event log and cannot execute code, unlike the CommandLine/ActiveScript consumers attackers use.
+$script:WmiBenignNames = @(
+    'SCM Event ?Log (Consumer|Filter|Provider)'   # Windows default: Service Control Manager event log
+    'BVT(Filter|Consumer)'                          # legacy Windows build-verification-test subscription
+    'TSLogon(Filter|Consumer)'                      # Terminal Services logon
+    'RmAssist.*(Filter|Consumer)'                   # Windows Remote Assistance
+    # --- add your management/monitoring agents below, e.g.: ---
+    # 'Microsoft Monitoring Agent'                  # SCOM
+    # 'HealthService.*'
+)
+
 Save-Output "03_wmi_persistence.txt" {
     Write-Section "WMI EVENT SUBSCRIPTIONS"
 
@@ -2788,7 +2806,48 @@ Save-Output "03_wmi_persistence.txt" {
     $bindings | Select-Object * | Format-List
 
     if ($bindings) {
-        Add-Finding 'HIGH' '03' (Ex "$($bindings.Count) WMI event consumer binding(s) present ^09 classic fileless persistence, review carefully") '03_wmi_persistence.txt'
+        # Split bindings into suspicious vs known-benign so the default/agent subscriptions that
+        # exist on every box don't fire HIGH on every run. A binding is benign when its consumer
+        # is an NTEventLogEventConsumer (log-only, can't execute) OR its consumer/filter name is
+        # on the allowlist above. Everything else - especially CommandLine/ActiveScript consumers,
+        # the ones used for real persistence - is still surfaced HIGH.
+        $suspBindings   = New-Object System.Collections.Generic.List[string]
+        $benignBindings = New-Object System.Collections.Generic.List[string]
+        foreach ($bnd in $bindings) {
+            $consRef   = [string]$bnd.Consumer
+            $filtRef   = [string]$bnd.Filter
+            $consClass = if ($consRef -match '(\w+EventConsumer)') { $matches[1] } else { '' }
+            $cName     = if ($consRef -match 'Name="([^"]+)"')     { $matches[1] } else { $consRef }
+            $fName     = if ($filtRef -match 'Name="([^"]+)"')     { $matches[1] } else { $filtRef }
+
+            $isBenign = ($consClass -eq 'NTEventLogEventConsumer')
+            if (-not $isBenign) {
+                foreach ($pat in $script:WmiBenignNames) {
+                    if ($cName -match $pat -or $fName -match $pat) { $isBenign = $true; break }
+                }
+            }
+            $desc = "$cName <- $fName" + $(if ($consClass) { " [$consClass]" } else { '' })
+            if ($isBenign) { $benignBindings.Add($desc) } else { $suspBindings.Add($desc) }
+        }
+
+        Write-Section "  Binding triage"
+        "  Suspicious (review): $($suspBindings.Count)   |   Suppressed as known-benign: $($benignBindings.Count)"
+        if ($suspBindings.Count -gt 0) {
+            ""
+            "  SUSPICIOUS bindings:"
+            $suspBindings | ForEach-Object { "    ! $_" }
+        }
+        if ($benignBindings.Count -gt 0) {
+            ""
+            "  Suppressed (default/allowlisted - not flagged):"
+            $benignBindings | ForEach-Object { "    - $_" }
+        }
+
+        if ($suspBindings.Count -gt 0) {
+            Add-Finding 'HIGH' '03' (Ex "$($suspBindings.Count) unrecognized WMI event consumer binding(s) ^09 classic fileless persistence, review carefully") '03_wmi_persistence.txt'
+        } elseif ($benignBindings.Count -gt 0) {
+            Add-Finding 'INFO' '03' "$($benignBindings.Count) WMI event consumer binding(s), all known-benign (default/allowlisted) - no action" '03_wmi_persistence.txt'
+        }
     }
 }
 
