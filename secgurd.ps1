@@ -244,6 +244,21 @@ function Wc {
     }
 }
 
+# Alert red. HIGH findings / alerts print in a darker "brick" red - true-color when the terminal
+# supports it (Write-Host's -ForegroundColor can't do arbitrary RGB), with DarkRed as the
+# 16-color fallback. Centralized here so the shade is easy to retune in one place.
+$script:BrickAnsi = '38;2;168;42;34'   # brick red, RGB (168,42,34) - darker/less neon than plain Red
+$script:BrickCon  = 'DarkRed'          # fallback ConsoleColor when ANSI/VT is unavailable
+function Write-Alert {
+    # Write a line (or segment with -NoNewline) in the alert brick-red.
+    param([string]$Text, [switch]$NoNewline)
+    if ($script:AnsiOK) {
+        Write-Host ("{0}[{1}m{2}{0}[0m" -f $script:ESC, $script:BrickAnsi, $Text) -NoNewline:$NoNewline
+    } else {
+        Write-Host $Text -ForegroundColor $script:BrickCon -NoNewline:$NoNewline
+    }
+}
+
 # ---------------------------------------------
 
 #  secgurd BANNER
@@ -2033,11 +2048,6 @@ function Add-Finding {
         $script:Findings.Add("[$Severity] ($Module) $Message$tag")
     }
     if ($Quiet) { return }   # recorded to summary/HTML, but not echoed to the scan screen
-    $color = switch ($Severity) {
-        'HIGH' { 'Red' }
-        'MED'  { 'Yellow' }
-        default { 'DarkGray' }
-    }
     # If a transient "running..." line is on screen, move to a fresh line first
     # so the finding doesn't get tangled with it.
     if ($script:RunLineActive) {
@@ -2045,7 +2055,13 @@ function Add-Finding {
         $script:RunLineActive = $false
     }
     Write-Host (Ex "       ^26^00 ") -ForegroundColor DarkGray -NoNewline
-    Write-Host $Message -ForegroundColor $color
+    if ($Severity -eq 'HIGH') {
+        # brick-red alert (true-color when supported, DarkRed fallback)
+        Write-Alert $Message
+    } else {
+        $color = if ($Severity -eq 'MED') { 'Yellow' } else { 'DarkGray' }
+        Write-Host $Message -ForegroundColor $color
+    }
 }
 
 function Get-AllUserHives {
@@ -5051,7 +5067,7 @@ if ($haveCommunity -or $haveManual) {
         $parts = @()
         if ($commMatches.Count) { $parts += "$($commMatches.Count) community" }
         if ($manMatches.Count)  { $parts += "$($manMatches.Count) you-added" }
-        Write-Host (Ex "  ! IOC MATCH(es): $($parts -join ', ') - see 00_IOC_MATCHES_*.txt") -ForegroundColor Red
+        Write-Alert (Ex "  ! IOC MATCH(es): $($parts -join ', ') - see 00_IOC_MATCHES_*.txt")
     } else {
         Write-Host (Ex "  [^14] No IOC matches ($scanned files scanned)") -ForegroundColor Green
     }
@@ -5199,7 +5215,7 @@ if (($script:BrowserFlagged -and $script:BrowserFlagged.Count -gt 0) -or ($scrip
 
     if ($highCount -gt 0) {
         Add-Finding 'HIGH' '10' "Browser correlation: $highCount flagged URL(s) corroborated by files on this host - see 00_BROWSER_ALERTS.txt" '00_BROWSER_ALERTS.txt'
-        Write-Host (Ex "  ! $highCount browser URL(s) corroborated on host - see 00_BROWSER_ALERTS.txt") -ForegroundColor Red
+        Write-Alert (Ex "  ! $highCount browser URL(s) corroborated on host - see 00_BROWSER_ALERTS.txt")
     } else {
         Write-Host (Ex "  [^14] Browser alerts written ($($alertRows.Count) flagged URL(s), none corroborated on host)") -ForegroundColor Green
     }
@@ -5218,10 +5234,14 @@ Write-Host ""
 # Findings recap on screen
 
 if ($script:Findings.Count -gt 0) {
-    Write-Host (Ex "  ^24 FINDINGS ($($script:Findings.Count))") -ForegroundColor Red
+    Write-Alert (Ex "  ^24 FINDINGS ($($script:Findings.Count))")
     foreach ($f in ($script:Findings | Sort-Object)) {
-        $c = if ($f -like '`[HIGH`]*') { 'Red' } elseif ($f -like '`[MED`]*') { 'Yellow' } else { 'DarkGray' }
-        Write-Host "    $f" -ForegroundColor $c
+        if ($f -like '`[HIGH`]*') {
+            Write-Alert "    $f"
+        } else {
+            $c = if ($f -like '`[MED`]*') { 'Yellow' } else { 'DarkGray' }
+            Write-Host "    $f" -ForegroundColor $c
+        }
     }
     Write-Host ""
 } else {
