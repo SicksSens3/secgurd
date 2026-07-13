@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-07-12 08:38:16 UTC
+# Updated: 2026-07-13 09:54:24 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://airyvineic.help/rebirth.m68k,malware_download
@@ -14,43 +14,38 @@ http://cliftycreek.anondns.net/bins/c.sh,malware_download
 http://genddos.st/bachekuni/ohshit.arm5,malware_download
 http://hostphpwindowsappsconecting.ydns.eu:8015/data/optimized_MSI.png,malware_download
 http://hostphpwindowsnuevas.ydns.eu:8015/data/optimized_MSI.png,malware_download
+http://igmc.duckdns.org/ar-15/ar15.ppc,malware_download
 http://js.byxly.eu.cc/mipsel,malware_download
 http://oqwlkbwl3wt65gwskl.hopto.org/nz/nz.sh4,malware_download
 http://peachcity.si/n2/mips64,malware_download
 http://purmed.ro/upwork/Odours.prx,malware_download
 http://s3onfd.bounceme.net/nz/nz.arm7,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
-http://sc.c1s.su/tplink.sh,malware_download
+http://sc.c1s.su/tftp.sh,malware_download
 http://we.aibotnet.su/arm5,malware_download
 https://11032026sver.blob.core.windows.net/homeplus/RMMClient.zip,malware_download
 https://balconyresidences.com.br/A64ybzU6h2ndxvVzRdE0wrhclick/download.php,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
-https://chekingmax.vercel.app/?download=1,malware_download
 https://drive.google.com/uc?export=download&id=1atl3cZJNCTsuxmHAymvb7_c873JOXC0x,malware_download
 https://dynga.pl/common.dat,malware_download
 https://fd.v2downf.shop//tmp/f/10dfff942805d90d6ebb28bd58093653_20251208021850.so,malware_download
 https://gboutros.howto.rocks/img_142806.png,malware_download
 https://goldland8.com/wordpress/wp-content/plugins/yolk/img_234646.png,malware_download
-https://gossuvpn.vercel.app/?download=1,malware_download
 https://grantexx.com/Pred.inf,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://ipfs.io/ipfs/QmbPifgvVgU4RSccJkUnzWTmDxZEoS2scDEQquqzg6GUat,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,malware_download
-https://kzaa.co.za/1.jpg,malware_download
 https://lb.nigsv.com/maiv/stego_payloads.png,malware_download
 https://mosselnet.co.za/April_Staff_Appraisal_4qsK_pdf.arj,malware_download
-https://omani-disputes.com/txt/adkbjdd.txt,malware_download
+https://nightmare-cheats.vip/NMLoader%20v%204.2.1.zip,malware_download
+https://nightmare-download.pw/NMLoader%20v%204.2.1.zip,malware_download
 https://pocopaco.co.za/img_090136.png,malware_download
-https://poiskrunsvo.vercel.app/?download=1,malware_download
-https://police0807work.vercel.app/?download=1,malware_download
-https://police1107rat.vercel.app/?download=1,malware_download
-https://police1107workzlo.vercel.app/?download=1,malware_download
-https://porno-videophotos.vercel.app/?download=1,malware_download
 https://postelnini.mk/optimized_MSI.png,malware_download
 https://pritinder.ifree.page/img_003724.png,malware_download
 https://res.cloudinary.com/dp1ymsqid/image/upload/v1783395994/img_204415_txnqyg.jpg,malware_download
+https://ringmycellphone.com/images/rotate/rotate.php,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
 https://solar-sanat.net/imagetest0071154z7.png,malware_download
 https://spgint.com/rum/optimized_MSI.png,malware_download
