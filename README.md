@@ -311,10 +311,12 @@ secgurd_<HOST>_<timestamp>\
     <user>\Chrome_Default.txt        flagged URLs + all unique URLs for that profile
     <user>\Edge_Default.txt
     <user>\Firefox_<profile>.txt
-  ... (one .txt per collector)
+  ... (one .txt per collector that produced data)
 ```
 
 Per-user browser-history detail is written under `10_browser_history\<user>\`, one file per browser profile. These subfolder files are included in `00_INDEX.txt` and the `00_HASHES.txt` manifest (both recurse), and in the zip.
+
+**Empty collectors are skipped.** A collector that finds nothing (only section headers / `(none found)` placeholders, no actual data) **does not write a file** — so the folder isn't bloated with empty artifacts (e.g. no `RunMRU` file when there are no RunMRU entries). `00_INDEX.txt` reports how many collectors were skipped this way. The `00_*` summaries and any collector that errored are always written. Under a `-Find` filter this also drops artifacts with no matches.
 
 The HTML report groups artifacts by module, color-codes findings by severity, and lets you click a finding to jump straight to the artifact it came from.
 

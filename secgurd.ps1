@@ -147,6 +147,7 @@ $script:Findings = [System.Collections.Generic.List[string]]::new()
 $script:CollectedCount = 0
 $script:ErrorCount = 0
 $script:SkippedCount = 0
+$script:EmptySkipped = 0   # collectors that produced no data - file not written (avoids bloat)
 $script:ProceedWithRun = $false
 $script:OpenFolderWhenDone = [bool]$OpenWhenDone
 $script:RunLineActive = $false
@@ -2159,6 +2160,28 @@ function Select-FilteredOutput {
     return $out.ToArray()
 }
 
+function Test-OutputHasData {
+    # Decide whether a rendered artifact actually contains data worth writing, so the output
+    # folder isn't littered with files that hold only section headers and "(none found)" style
+    # placeholders. Returns $true if any substantive line exists. Treated as NON-data: blank
+    # lines, Write-Section header triples (bar / title / bar), separator rules, and lines that
+    # are entirely a parenthetical note like "(none found)" / "(key not found)". Anything else
+    # (a table row, a Format-List value, a real message) counts as data.
+    param([string[]]$Lines)
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $ln = $Lines[$i]
+        if ($ln -match '^={10,}$' -and ($i + 2) -lt $Lines.Count -and $Lines[$i + 2] -match '^={10,}$') {
+            $i += 2; continue   # skip the 3-line section header
+        }
+        $t = $ln.Trim()
+        if ($t -eq '') { continue }              # blank
+        if ($t -match '^[-=]{3,}$') { continue } # separator / stray bar
+        if ($t -match '^\(.*\)$') { continue }   # parenthetical placeholder, e.g. "(none found)"
+        return $true                             # a real data line
+    }
+    return $false
+}
+
 function Save-Output {
     param([string]$FileName, [scriptblock]$Block)
 
@@ -2197,7 +2220,26 @@ function Save-Output {
             $result = Select-FilteredOutput -Lines $rendered -Term $script:FindFilter
             $findCount = $script:LastFilterMatchCount   # matched items in THIS artifact
             $script:FindFileCounts[$FileName] = $findCount
+            $checkLines = $result
+        } else {
+            $checkLines = @(($result | Out-String -Width 4096) -split "`r`n|`r|`n")
         }
+
+        # Skip writing artifacts that hold no real data (just headers / "(none found)" notes) so
+        # the output folder isn't bloated with empty files. Under a find filter this also drops
+        # no-match artifacts. Errors (below) and the 00_* summaries are always written.
+        if (-not (Test-OutputHasData $checkLines)) {
+            $sw.Stop()
+            if ($script:RunLineActive) { Write-Host "`r" -NoNewline }
+            Write-Host "  $progress " -ForegroundColor DarkGray -NoNewline
+            Write-Host "[-] " -ForegroundColor DarkGray -NoNewline
+            Write-Host ("{0,-42}" -f $FileName) -ForegroundColor DarkGray -NoNewline
+            Write-Host "no data - not written    " -ForegroundColor DarkGray
+            $script:RunLineActive = $false
+            $script:EmptySkipped++
+            return
+        }
+
         $result | Out-File -FilePath $file -Encoding UTF8 -Force
         $sw.Stop()
         $secs = ('{0,6:N1}s' -f ($sw.ElapsedMilliseconds / 1000))
@@ -4643,6 +4685,7 @@ $indexLines += "Modules run : $selectedIds"
 $indexLines += "Lookback    : $($script:DaysBack) days"
 if ($script:FindFilter) { $indexLines += "Find filter : '$($script:FindFilter)' (output scoped to lines containing this)" }
 $indexLines += "Collected   : $($script:CollectedCount) files"
+$indexLines += "Empty (skip): $($script:EmptySkipped) collector(s) had no data - no file written"
 $indexLines += "Errors      : $($script:ErrorCount)"
 $indexLines += ""
 $indexLines += "FILES IN THIS FOLDER"
