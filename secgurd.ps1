@@ -148,6 +148,7 @@ $script:CollectedCount = 0
 $script:ErrorCount = 0
 $script:SkippedCount = 0
 $script:EmptySkipped = 0   # collectors that produced no data - file not written (avoids bloat)
+$script:ErrorDetails = [System.Collections.Generic.List[string]]::new()  # collector errors, logged in 00_INDEX (no per-file ERROR artifacts)
 $script:ProceedWithRun = $false
 $script:OpenFolderWhenDone = [bool]$OpenWhenDone
 $script:RunLineActive = $false
@@ -400,6 +401,7 @@ function Show-Help {
     Write-Host "    p                     Pastable version for remote shells - single/chunked/compressed" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
+    Write-Host "    cleanup               Remove ALL secgurd artifacts from TEMP (type-to-confirm)" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  REMOTE ONE-LINER" -ForegroundColor White
     Write-Host "    iex (irm https://raw.githubusercontent.com/<you>/secgurd/main/secgurd.ps1)" -ForegroundColor Gray
@@ -417,21 +419,31 @@ if ($Help) {
 # ---------------------------------------------
 
 function Invoke-Cleanup {
-    # Finds every secgurd output folder and zip under %TEMP% and deletes them,
-    # gated behind a type-to-confirm prompt so it can't fire accidentally.
-    if (-not $NoBanner) { Show-secgurdBanner }
+    param([switch]$SkipBanner)   # menu path shows its own compact banner, so skip the big one
+    # Finds EVERY secgurd artifact under %TEMP% and deletes them, gated behind a type-to-confirm
+    # prompt so it can't fire accidentally. Targets: the script itself (secgurd.ps1, e.g. the copy
+    # unpacked on an endpoint), output folders (secgurd_<host>_<ts>) and their .zip archives, the
+    # SentinelOne paste text files (secgurd_s1_*.txt), and the auto-loaded lists
+    # (communitysavedIOCS.txt, communitysavedMALURLS.txt, manualIOCS.txt).
+    if (-not $NoBanner -and -not $SkipBanner) { Show-secgurdBanner }
 
-    $pattern = Join-Path $env:TEMP 'secgurd_*'
-    $items = Get-ChildItem $pattern -Force -ErrorAction SilentlyContinue
+    $patterns = @(
+        'secgurd*'                      # secgurd.ps1 + secgurd_<host>_<ts> folders + .zip + secgurd_s1_*.txt
+        'communitysavedIOCS.txt'
+        'communitysavedMALURLS.txt'
+        'manualIOCS.txt'
+    )
+    $items = @(foreach ($p in $patterns) { Get-ChildItem (Join-Path $env:TEMP $p) -Force -ErrorAction SilentlyContinue }) |
+        Sort-Object FullName -Unique
 
     Write-Host ""
-    Write-Host "  CLEANUP - remove secgurd output from this machine" -ForegroundColor Cyan
+    Write-Host "  CLEANUP - remove ALL secgurd artifacts from this machine" -ForegroundColor Cyan
     Write-Host "  ----------------------------------------------------" -ForegroundColor DarkGray
     Write-Host "  Location: $env:TEMP" -ForegroundColor DarkGray
     Write-Host ""
 
     if (-not $items) {
-        Write-Host "  Nothing to clean - no secgurd_* items found in TEMP." -ForegroundColor Green
+        Write-Host "  Nothing to clean - no secgurd artifacts found in TEMP." -ForegroundColor Green
         Write-Host ""
         return
     }
@@ -445,7 +457,7 @@ function Invoke-Cleanup {
             $kind = 'folder'
         } else {
             $size = $it.Length
-            $kind = 'zip   '
+            $kind = 'file  '
         }
         $totalBytes += [int64]$size
         Write-Host ("   {0}  {1,-50} {2,8:N0} KB" -f $kind, $it.Name, ($size/1KB)) -ForegroundColor Gray
@@ -454,11 +466,15 @@ function Invoke-Cleanup {
     Write-Host ("  {0} item(s), {1:N1} MB total" -f $items.Count, ($totalBytes/1MB)) -ForegroundColor White
     Write-Host ""
 
-    # Non-interactive safety: never auto-delete without a human confirming.
-    if (-not [Environment]::UserInteractive -or $Host.Name -eq 'ServerRemoteHost') {
+    # Non-interactive safety: refuse only when we genuinely can't read the type-to-confirm input
+    # (redirected stdin in a non-interactive session). The S1 remote shell (ServerRemoteHost) IS
+    # interactive - it supports Read-Host - so we allow it there, matching the menu's behavior.
+    $canRead = $true
+    try { if ([Console]::IsInputRedirected -and -not [Environment]::UserInteractive) { $canRead = $false } } catch {}
+    if (-not $canRead) {
         Write-Host "  Refusing to delete in a non-interactive session." -ForegroundColor Yellow
         Write-Host "  Run interactively, or delete manually:" -ForegroundColor DarkGray
-        Write-Host "    Remove-Item `"$pattern`" -Recurse -Force" -ForegroundColor DarkGray
+        Write-Host "    Remove-Item `"`$env:TEMP\secgurd*`",`"`$env:TEMP\communitysaved*.txt`",`"`$env:TEMP\manualIOCS.txt`" -Recurse -Force -ErrorAction SilentlyContinue" -ForegroundColor DarkGray
         Write-Host ""
         return
     }
@@ -1181,7 +1197,9 @@ function Show-ModuleMenu {
         Write-Host " ? " -ForegroundColor Yellow -NoNewline
         Write-Host (Ex "] help  ^10  [") -ForegroundColor DarkGray -NoNewline
         Write-Host " q " -ForegroundColor Red -NoNewline
-        Write-Host "] quit" -ForegroundColor DarkGray
+        Write-Host (Ex "] quit  ^10  [ ") -ForegroundColor DarkGray -NoNewline
+        Write-Host "cleanup" -ForegroundColor Cyan -NoNewline
+        Write-Host " ]" -ForegroundColor DarkGray
         Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  collection modules  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
@@ -1314,6 +1332,17 @@ function Show-ModuleMenu {
             Write-Host ""
             Write-Flair (Ex "   ^13 Sigurd sheathes the blade. Farewell. ^13") '1;91' 'Red'
             Write-Host ""
+            $script:ProceedWithRun = $false
+            return
+        }
+
+        if ($cmd -eq 'cleanup') {
+            # Run the same cleanup available via -Cleanup, then exit (files may now be gone).
+            Clear-Host
+            Show-secgurdBannerCompact
+            Invoke-Cleanup -SkipBanner
+            Write-Host "   Press Enter to exit..." -ForegroundColor DarkGray
+            Read-Host | Out-Null
             $script:ProceedWithRun = $false
             return
         }
@@ -2265,11 +2294,13 @@ function Save-Output {
         $script:CollectedCount++
     } catch {
         $sw.Stop()
-        "ERROR: $_" | Out-File -FilePath $file -Encoding UTF8 -Force
+        # No-bloat policy: don't write a per-collector ERROR file. Record the error centrally
+        # (listed in 00_INDEX) and flag it on the run screen instead.
+        $script:ErrorDetails.Add(("{0} - {1}" -f $FileName, ($_.Exception.Message -replace '\s+', ' ')))
         if ($script:RunLineActive) { Write-Host "`r" -NoNewline }
         Write-Host "  $progress " -ForegroundColor DarkGray -NoNewline
         Write-Host "[!] " -ForegroundColor Yellow -NoNewline
-        Write-Host "$FileName (error)            " -ForegroundColor DarkGray
+        Write-Host "$FileName (error - not written)   " -ForegroundColor DarkGray
         $script:RunLineActive = $false
         $script:ErrorCount++
     }
@@ -4397,12 +4428,7 @@ Save-Output "10_browser_history.txt" {
             }
             $grandFlagged += $flagged.Count
 
-            # Per-user detail file (its own folder per user, as requested).
-            $userDir = Join-Path $detailRoot $user
-            $null = New-Item -ItemType Directory -Path $userDir -Force -ErrorAction SilentlyContinue
-            $safeProfile = ($profileName -replace '[^\w.\-]', '_')
-            $detailFile = Join-Path $userDir ("{0}_{1}.txt" -f $b.Name, $safeProfile)
-
+            # Build the per-user detail content.
             $lines = New-Object System.Collections.Generic.List[string]
             $lines.Add((Write-Section "$($b.Name) HISTORY - user '$user' - profile '$profileName'"))
             $lines.Add("Source DB   : $($db.FullName)")
@@ -4425,9 +4451,26 @@ Save-Output "10_browser_history.txt" {
             $lines.Add((Write-Section "ALL UNIQUE URLS ($($urlList.Count))"))
             foreach ($u in $urlList) { $lines.Add($u) }
 
+            # Decide whether this detail file is worth writing (mirror the Save-Output policy for
+            # the directly-written detail files). No file when: a find filter is active and this
+            # profile has no matching URL (so no "(no matches...)" file), or - with no filter -
+            # the profile yielded no URLs at all. A profile WITH history but no flags is still
+            # written (informational, like the scheduled-tasks dump).
             $outArr = $lines.ToArray()
-            if ($script:FindFilter) { $outArr = Select-FilteredOutput -Lines $outArr -Term $script:FindFilter }
-            $outArr | Out-File -FilePath $detailFile -Encoding UTF8 -Force
+            $writeDetail = $true
+            if ($script:FindFilter) {
+                $outArr = Select-FilteredOutput -Lines $outArr -Term $script:FindFilter
+                if ($script:LastFilterMatchCount -le 0) { $writeDetail = $false }
+            } elseif ($urlList.Count -eq 0) {
+                $writeDetail = $false
+            }
+            if ($writeDetail) {
+                $userDir = Join-Path $detailRoot $user
+                $null = New-Item -ItemType Directory -Path $userDir -Force -ErrorAction SilentlyContinue
+                $safeProfile = ($profileName -replace '[^\w.\-]', '_')
+                $detailFile = Join-Path $userDir ("{0}_{1}.txt" -f $b.Name, $safeProfile)
+                $outArr | Out-File -FilePath $detailFile -Encoding UTF8 -Force
+            }
 
             $summaryRows.Add([PSCustomObject]@{ User = $user; Browser = $b.Name; Profile = $profileName; 'ModifiedUTC' = $dbModUtc; URLs = $urlList.Count; Flagged = $flagged.Count })
         }
@@ -4694,6 +4737,13 @@ $indexLines += ("-" * 60)
 Get-ChildItem $OutputPath -Filter '*.txt' -Recurse | Sort-Object FullName | ForEach-Object {
     $rel = $_.FullName.Substring($OutputPath.Length).TrimStart('\', '/')
     $indexLines += ("  {0,-52} {1,8:N0} bytes" -f $rel, $_.Length)
+}
+# Collector errors are logged here (not as per-file ERROR artifacts) so nothing is lost.
+if ($script:ErrorDetails.Count -gt 0) {
+    $indexLines += ""
+    $indexLines += "COLLECTOR ERRORS (no file written for these)"
+    $indexLines += ("-" * 60)
+    $script:ErrorDetails | ForEach-Object { $indexLines += "  $_" }
 }
 $indexLines | Out-File (Join-Path $OutputPath '00_INDEX.txt') -Encoding UTF8 -Force
 

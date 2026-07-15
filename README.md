@@ -158,7 +158,7 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 | `-IOCHashes <file>` | Match on-disk binaries against an MD5/SHA-1/SHA-256 IOC hash list. |
 | `-DaysBack <N>` | Lookback window in days for time-bounded collectors (default 30). |
 | `-Find <string>` | Scope **all** output to lines/items containing `<string>` (case-insensitive) — see [Targeted find](#targeted-find--scoping-a-run-to-one-artifact). |
-| `-Cleanup` | Find and remove previous secgurd output folders (requires typing `DELETE` to confirm). |
+| `-Cleanup` | Remove **all** secgurd artifacts from `%TEMP%` — the script itself, output folders + zips, S1 paste files, and the IOC/URL/manual lists (requires typing `DELETE` to confirm). Also available as the `cleanup` menu command. |
 | `-MakeS1Paste` | Print a copy/paste-ready version for the SentinelOne remote shell. |
 | `-Help` | Show usage and exit. |
 
@@ -203,6 +203,7 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `r` | Run the selected modules |
 | `?` | Help |
 | `q` | Quit |
+| `cleanup` | Remove **all** secgurd artifacts from `%TEMP%` (script, output folders + zips, S1 paste files, IOC/URL/manual lists) — type-to-confirm, then exit. Same as `-Cleanup`. |
 
 ---
 
@@ -316,7 +317,7 @@ secgurd_<HOST>_<timestamp>\
 
 Per-user browser-history detail is written under `10_browser_history\<user>\`, one file per browser profile. These subfolder files are included in `00_INDEX.txt` and the `00_HASHES.txt` manifest (both recurse), and in the zip.
 
-**Empty collectors are skipped.** A collector that finds nothing (only section headers / `(none found)` placeholders, no actual data) **does not write a file** — so the folder isn't bloated with empty artifacts (e.g. no `RunMRU` file when there are no RunMRU entries). `00_INDEX.txt` reports how many collectors were skipped this way. The `00_*` summaries and any collector that errored are always written. Under a `-Find` filter this also drops artifacts with no matches.
+**Empty / no-data collectors are skipped.** A collector **does not write a file** when it produces no real data — only section headers, `(none found)` placeholders, a `(no matches for '…')` result under `-Find`, or an error. This keeps the folder from filling with empty artifacts (e.g. no `RunMRU` file when there are no RunMRU entries). A collector that produces **actual information is always kept**, even with no flagged findings — e.g. the scheduled-tasks list or a user's browsing history. `00_INDEX.txt` reports how many collectors were skipped for no data and lists any collector **errors** (logged centrally there instead of as per-file `ERROR` artifacts). The `00_*` summaries are always written.
 
 The HTML report groups artifacts by module, color-codes findings by severity, and lets you click a finding to jump straight to the artifact it came from.
 
@@ -347,7 +348,7 @@ All three run secgurd **in the current shell as an in-memory scriptblock** — n
 
 ## Safety & scope
 
-- **Read-only.** Secgurd collects and reports. It does not remediate, quarantine, or modify the system. The single exception, `-Cleanup`, deletes only prior secgurd output folders and requires typing `DELETE` to confirm (and refuses to run unattended).
+- **Read-only.** Secgurd collects and reports. It does not remediate, quarantine, or modify the system. The single exception, `-Cleanup` (or the `cleanup` menu command), deletes only secgurd's own artifacts under `%TEMP%` and requires typing `DELETE` to confirm (and refuses when it can't read that confirmation).
 - **No exfiltration.** Nothing is sent anywhere. The only data that leaves the host is the evidence zip you collect.
 - **Absence of findings is not proof of a clean host.** Auto-flagged findings are leads, not verdicts. Review the raw artifacts, and re-run with the right privileges if collectors show "error" badges.
 - **Authorization required.** Only run secgurd on systems you are authorized to investigate.
