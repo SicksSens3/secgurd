@@ -482,14 +482,15 @@ function Invoke-Cleanup {
     # Two-step type-to-confirm
     Write-Flair "  This permanently deletes the items above. This cannot be undone." '1;91' 'Red'
     Write-Host ""
-    Write-Host "  To confirm, type exactly:  " -ForegroundColor DarkGray -NoNewline
-    Write-Host "DELETE" -ForegroundColor Yellow
-    Write-Host "  (anything else cancels)" -ForegroundColor DarkGray
+    Write-Host "  To confirm, type:  " -ForegroundColor DarkGray -NoNewline
+    Write-Host "DELETE" -ForegroundColor Yellow -NoNewline
+    Write-Host "  (any case; anything else cancels)" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  > " -ForegroundColor DarkGray -NoNewline
     $confirm = Read-Host
 
-    if ($confirm -cne 'DELETE') {
+    # Case-insensitive (and whitespace-tolerant): DELETE / delete / Delete all confirm.
+    if ("$confirm".Trim() -ne 'DELETE') {
         Write-Host ""
         Write-Host "  Cancelled - nothing was deleted." -ForegroundColor Green
         Write-Host ""
