@@ -1200,7 +1200,7 @@ function Show-ModuleMenu {
         Write-Host " q " -ForegroundColor Red -NoNewline
         Write-Host (Ex "] quit  ^10  [ ") -ForegroundColor DarkGray -NoNewline
         Write-Host "cleanup" -ForegroundColor Cyan -NoNewline
-        Write-Host " ]" -ForegroundColor DarkGray
+        Write-Host " ] clean_files" -ForegroundColor DarkGray -NoNewline
         Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  collection modules  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
@@ -2059,7 +2059,7 @@ function Write-Section {
 }
 
 function Add-Finding {
-    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '', [switch]$Quiet, [switch]$NoRecord)
+    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '', [switch]$Quiet, [switch]$NoRecord, [string]$HighlightUrl = '')
     # Severity: HIGH / MED / INFO. Artifact (optional) is the exact .txt filename this
     # finding points at, so the HTML report can highlight just that file (not the whole module).
     # We encode it inside the stored string as {file:NAME} and strip it before display.
@@ -2086,7 +2086,24 @@ function Add-Finding {
         $script:RunLineActive = $false
     }
     Write-Host (Ex "       ^26^00 ") -ForegroundColor DarkGray -NoNewline
-    if ($Severity -eq 'HIGH') {
+
+    # Print one segment in the severity colour (HIGH = brick-red, MED = yellow, else gray).
+    $writeSev = {
+        param($t)
+        if ($Severity -eq 'HIGH') { Write-Alert $t -NoNewline }
+        else { Write-Host $t -ForegroundColor $(if ($Severity -eq 'MED') { 'Yellow' } else { 'DarkGray' }) -NoNewline }
+    }
+
+    if ($HighlightUrl -and $Message.Contains($HighlightUrl)) {
+        # Colour the URL mauve (#d7afff) so it stands out; the rest stays severity-coloured, making
+        # it easy to pick out exactly which URL - and where in the line - the finding is about.
+        $idx  = $Message.IndexOf($HighlightUrl)
+        & $writeSev $Message.Substring(0, $idx)
+        Wc $HighlightUrl '38;2;170;130;230' 'Magenta'   # #aa82e6 purple / mauve (NoNewline)
+        & $writeSev $Message.Substring($idx + $HighlightUrl.Length)
+        Write-Host ""   # end the line
+    }
+    elseif ($Severity -eq 'HIGH') {
         # brick-red alert (true-color when supported, DarkRed fallback)
         Write-Alert $Message
     } else {
@@ -4418,10 +4435,10 @@ Save-Output "10_browser_history.txt" {
                     $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u")
                     switch ($verdict.Severity) {
                         'HIGH' {
-                            if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -NoRecord; $highEchoed++ }
+                            if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $highEchoed++ }
                         }
                         'MED' {
-                            if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -NoRecord; $medEchoed++ }
+                            if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $medEchoed++ }
                         }
                         default { }   # INFO: written to the per-user detail file only
                     }
