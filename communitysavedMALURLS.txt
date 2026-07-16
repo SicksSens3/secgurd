@@ -3,40 +3,37 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-07-15 08:42:36 UTC
+# Updated: 2026-07-16 08:40:50 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://airyvineic.help/rebirth.m68k,malware_download
+http://archivoscrosoft.com/MSI.png,malware_download
 http://christophercheung.com/m68k,malware_download
 http://cliftycreek.anondns.net/bins/c.sh,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
 http://gurdjieff-philadelphia.org/giavoni.net/Faldetuno.dwp,malware_download
 http://hostphpwindowsappsconecting.ydns.eu:8015/data/optimized_MSI.png,malware_download
 http://hostphpwindowsnuevas.ydns.eu:8015/data/optimized_MSI.png,malware_download
-http://igmc.duckdns.org/ar-15/ar15.arm,malware_download
+http://igmc.duckdns.org/ar-15/ar15.ppc,malware_download
 http://js.byxly.eu.cc/mipsel,malware_download
-http://organza.rapidbranchzi.com/hiddenbin/zombie.mpsl,malware_download
 http://peachcity.si/n2/mips64,malware_download
 http://purmed.ro/upwork/Odours.prx,malware_download
+http://s467326833rgjs.ddns.net/bins/xnxnxnxnxnxnxnxnriscv32xnxn,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
 http://sc.c1s.su/tplink.sh,malware_download
 http://we.aibotnet.su/arm5,malware_download
-http://zipper.rapidbranchzi.com/main_sh4,malware_download
 http://zynimg.com/1.jpg,malware_download
 https://11032026sver.blob.core.windows.net/homeplus/RMMClient.zip,malware_download
-https://317.wtf/api/download?file=1,malware_download
-https://archivoscrosoft.com/newrem.png,malware_download
 https://balconyresidences.com.br/A64ybzU6h2ndxvVzRdE0wrhclick/download.php,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
-https://commercial.great-site.net/img_011306.png,malware_download
-https://drive.google.com/uc?export=download&id=1m9ysKrEB1M54w1KAMA3IZrtzo5a-HtK0,malware_download
+https://businesseconomics.in/uploads/sp.png,malware_download
+https://deliverymailreport.co.za/img_053354.png,malware_download
+https://drive.google.com/uc?export=download&id=1TMZqDplNRrNoGk2xvGsSEWrreA9pmFn7,malware_download
 https://dynga.pl/common.dat,malware_download
 https://fd.v2downf.shop//tmp/f/10dfff942805d90d6ebb28bd58093653_20251208021850.so,malware_download
 https://gboutros.howto.rocks/img_142806.png,malware_download
 https://goldland8.com/wordpress/wp-content/plugins/yolk/img_234646.png,malware_download
-https://grantexx.com/Pred.inf,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
-https://icioinc.com/files/MSI_PRO.png,malware_download
 https://ipfs.io/ipfs/QmbPifgvVgU4RSccJkUnzWTmDxZEoS2scDEQquqzg6GUat,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://keitarosofts.com/api/download/1542-vortex-valorant,malware_download
@@ -45,18 +42,17 @@ https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,m
 https://lb.nigsv.com/maiv/stego_payloads.png,malware_download
 https://magsa.com.pe/sorma/ogfileimg_110519.png,malware_download
 https://mosselnet.co.za/April_Staff_Appraisal_4qsK_pdf.arj,malware_download
-https://pocopaco.co.za/img_090136.png,malware_download
 https://postelnini.mk/optimized_MSI.png,malware_download
-https://res.cloudinary.com/cj0v11zn/image/upload/v1784072147/img_163145_ojrwfg.jpg,malware_download
+https://protector.great-site.net/img_081312.png,malware_download
+https://res.cloudinary.com/lhut8kxv/image/upload/v1784166040/img_184016_d7agot.jpg,malware_download
 https://ringmycellphone.com/images/rotate/rotate.php,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
+https://sesaddf.kesug.com/img_071015.png,malware_download
 https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
 https://solar-sanat.net/imagetest0071154z7.png,malware_download
 https://spgint.com/rum/optimized_MSI.png,malware_download
 https://sunix-technology.com/admin/MSI_PRO.png,malware_download
 https://surgeonperth.com.au/old-site/files/stegpayd.png,malware_download
 https://tuasesoriadigital.es/default.dat,malware_download
-https://unitedgs.lovestoblog.com/MSI_194837.png,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.kenwillzltd.com/kenwillzltd.zip,malware_download
-https://www.nccommunication.be/images/y11.png,malware_download
