@@ -27,7 +27,7 @@ It's built for the first hour of an investigation: *"something looks off on this
 - **One file, no external dependencies.** Pure PowerShell 5.1+, no modules to install, nothing to compile.
 - **Read-only by default.** Collects and reports; it doesn't change the system (the only write action, `-Cleanup`, requires explicit confirmation).
 - **Offline-friendly.** No internet required. No data leaves the host except the evidence zip you collect.
-- **Self-contained output.** Timestamped folder + auto-zipped archive, with an optional single-file HTML report.
+- **Self-contained output.** Timestamped folder + auto-zipped archive.
 
 ---
 
@@ -74,7 +74,6 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 **Output:**
 
 - Timestamped output folder, auto-zipped.
-- Optional **single-file HTML report** with color-coded, clickable findings that jump to and highlight the exact artifact, plus collapsible per-module sections (with clear "no data" / "error" badges).
 - Returns a PowerShell object (folder, zip path, file count, findings, duration) for scripting.
 
 ---
@@ -137,8 +136,8 @@ Remove-Item "$env:TEMP\secgurd*", "$env:TEMP\communitysavedIOCS.txt", "$env:TEMP
 
 ```
 secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
-            [-OpenWhenDone] [-HtmlReport] [-WithOwners] [-WithSignatures]
-            [-WithTaskInfo] [-IOCHashes <file>] [-DaysBack <N>] [-Find <string>]
+            [-OpenWhenDone] [-WithOwners] [-WithSignatures] [-WithTaskInfo]
+            [-IOCHashes <file>] [-DaysBack <N>] [-Find <string>]
             [-Cleanup] [-MakeS1Paste] [-Help]
 ```
 
@@ -151,7 +150,6 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 | `-OutputPath <dir>` | Where to write output (default: `%TEMP%\secgurd_<host>_<timestamp>`). |
 | `-NoBanner` | Suppress the ASCII banner (useful if glyphs render oddly in a shell). |
 | `-OpenWhenDone` | Open the output folder when finished (interactive desktop only). |
-| `-HtmlReport` | Also build a single-file `report.html` and open it when done. |
 | `-WithOwners` | Resolve process owners (slower; off by default — can stall on domain controllers). |
 | `-WithSignatures` | Verify Authenticode signatures of service binaries / loaded DLLs (slower; can stall offline). |
 | `-WithTaskInfo` | Resolve run times (LastRun/NextRun/LastResult) for **all** scheduled tasks incl. the hundreds of built-in `\Microsoft\*` ones. Off by default — those per-task Task Scheduler calls can take many minutes; without it, run times are resolved only for non-Microsoft tasks (all tasks are still listed). |
@@ -159,14 +157,14 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 | `-DaysBack <N>` | Lookback window in days for time-bounded collectors (default 30). |
 | `-Find <string>` | Scope **all** output to lines/items containing `<string>` (case-insensitive) — see [Targeted find](#targeted-find--scoping-a-run-to-one-artifact). |
 | `-Cleanup` | Remove **all** secgurd artifacts from `%TEMP%` — the script itself, output folders + zips, S1 paste files, and the IOC/URL/manual lists (requires typing `DELETE` to confirm). Also available as the `cleanup` menu command. |
-| `-MakeS1Paste` | Print a copy/paste-ready version for the SentinelOne remote shell. |
+| `-MakeS1Paste` | Copy the compressed (gzip+Base64) "everything" paste (script + community IOC/URL lists) for the remote shell. For the script-only / lists-only variants, use the interactive `p` menu. |
 | `-Help` | Show usage and exit. |
 
 ### Examples
 
 ```powershell
-# Full triage with an HTML report
-.\secgurd.ps1 -Auto -HtmlReport
+# Full triage, no menu
+.\secgurd.ps1 -Auto
 
 # Just persistence + processes + network
 .\secgurd.ps1 -Modules 03,06,05
@@ -194,12 +192,11 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `a` / `n` | Select all / none |
 | `qa` / `net` / `ps` | Presets (quick-assess / network / PowerShell) |
 | `o` | Toggle: open output folder when done |
-| `h` | Toggle: build + open the HTML report |
 | `i` | IOC hashes — load from file `[f]`, paste `[p]`, list `[l]`, or turn off `[x]` |
 | `u` | Malicious URLs (URLhaus) — load from file `[f]`, paste `[p]`, list `[l]`, or toggle `[x]` |
 | `f` | Find — scope all output to a name/string (enter a term, or blank to clear) |
 | `d` | Set the lookback window (days) |
-| `p` | Pastable version for remote shells (single / chunked / compressed) |
+| `p` | Pastable (compressed gzip+Base64) version for remote shells — `[1]` everything, `[2]` community lists only, `[3]` script only |
 | `r` | Run the selected modules |
 | `?` | Help |
 | `q` | Quit |
@@ -300,7 +297,6 @@ secgurd_<HOST>_<timestamp>\
   00_HASHES.txt         SHA-256 of every output file (evidence integrity)
   00_IOC_MATCHES_community.txt   community IOC matches (if community list present)
   00_IOC_MATCHES_manual.txt      your IOC matches (if you supplied a list)
-  report.html           single-file report (only with -HtmlReport)
   01_system_info.txt
   02_rdp_remote_access.txt
   03_remote_access_tools.txt
@@ -319,8 +315,6 @@ Per-user browser-history detail is written under `10_browser_history\<user>\`, o
 
 **Empty / no-data collectors are skipped.** A collector **does not write a file** when it produces no real data — only section headers, `(none found)` placeholders, a `(no matches for '…')` result under `-Find`, or an error. This keeps the folder from filling with empty artifacts (e.g. no `RunMRU` file when there are no RunMRU entries). A collector that produces **actual information is always kept**, even with no flagged findings — e.g. the scheduled-tasks list or a user's browsing history. `00_INDEX.txt` reports how many collectors were skipped for no data and lists any collector **errors** (logged centrally there instead of as per-file `ERROR` artifacts). The `00_*` summaries are always written.
 
-The HTML report groups artifacts by module, color-codes findings by severity, and lets you click a finding to jump straight to the artifact it came from.
-
 ---
 
 ## Running on EDR-managed endpoints
@@ -337,12 +331,16 @@ If you're authorized on the environment:
 
 The S1 remote shell often can't paste, runs non-interactively, and chokes on download-and-run. Secgurd handles this:
 
-- Run secgurd on your own box and press **`p`** (or use `-MakeS1Paste`). It offers three modes: **[1]** a single full-text paste, **[2]** a chunked plain-text paste for size-limited shells, and **[3]** a compressed single paste (gzip+Base64, with the IOC lists bundled in). Before packing, mode [3] auto-**compacts** a copy of the source (see below), so the final paste is as small as possible.
+- Run secgurd on your own box and press **`p`**. Every option is a single compressed (gzip+Base64) block that auto-**compacts** a copy of the source before packing (see below), so the paste is as small as possible:
+  - **[1] Everything** — script + community IOC list + community malicious-URL list, in one block.
+  - **[2] Community lists only** — just `communitysavedIOCS.txt` / `communitysavedMALURLS.txt`.
+  - **[3] Script only** — just `secgurd.ps1` (smallest block).
+- **If [1] is too big** for your shell's paste limit (the community IOC list is the bulk), paste **[2]** first, then **[3]**: [2] drops the lists into `%TEMP%`, and [3] unpacks `secgurd.ps1` and runs it — the wrapper picks up whatever lists are already in `%TEMP%`, so IOC/URL matching works. (You can also just paste **[3]** on its own to run the script with no community lists.)
 - Copy the block, paste it into the S1 Remote Shell, press Enter, and the interactive menu appears there.
 
-All three run secgurd **in the current shell as an in-memory scriptblock** — never a child `powershell.exe`. This matters in the S1 shell: it repaints the banner/menu on the first Enter (a child process doesn't), and it runs even when the endpoint's execution policy has script files disabled (execution policy only restricts `.ps1` *files*, not scriptblocks). The script is also "wrap-safe" (no internal here-strings), so the paste can't break itself.
+Each option runs secgurd **in the current shell as an in-memory scriptblock** — never a child `powershell.exe`. This matters in the S1 shell: it repaints the banner/menu on the first Enter (a child process doesn't), and it runs even when the endpoint's execution policy has script files disabled (execution policy only restricts `.ps1` *files*, not scriptblocks). The script is also "wrap-safe" (no internal here-strings), so the paste can't break itself.
 
-**Auto-compaction (mode [3]).** Rather than maintaining a second minified script, the compressed paste shrinks a *copy* of secgurd's own source on the fly, right before gzip+Base64, via `Compress-Source`. It runs three behavior-preserving passes over the source, using PowerShell's own tokenizer so strings are never touched: (1) strip all comments, (2) alias common cmdlets in command position (`Get-ChildItem`->`gci`, `Where-Object`->`?`, `ForEach-Object`->`%`, `Select-Object`->`select`, `Get-ItemProperty`->`gp`, `Format-Table`->`ft`, ...), and (3) remove indentation and blank lines. It **fails safe** — on any tokenizer error it returns the source unchanged, so compaction can never produce a broken paste. Variable renaming is intentionally **not** done: variable names appear inside expandable strings and `$script:` scope / `param()` binding make an automatic rename unsafe, and gzip already collapses repeated names so shortening them saves almost nothing after compression (comments and whitespace are the real win). `secgurd.ps1` stays the single, human-readable source of truth; only the pasted payload is compacted. The run prints the before/after character count.
+**Auto-compaction.** Rather than maintaining a second minified script, the compressed paste shrinks a *copy* of secgurd's own source on the fly, right before gzip+Base64, via `Compress-Source`. It runs three behavior-preserving passes over the source, using PowerShell's own tokenizer so strings are never touched: (1) strip all comments, (2) alias common cmdlets in command position (`Get-ChildItem`->`gci`, `Where-Object`->`?`, `ForEach-Object`->`%`, `Select-Object`->`select`, `Get-ItemProperty`->`gp`, `Format-Table`->`ft`, ...), and (3) remove indentation and blank lines. It **fails safe** — on any tokenizer error it returns the source unchanged, so compaction can never produce a broken paste. Variable renaming is intentionally **not** done: variable names appear inside expandable strings and `$script:` scope / `param()` binding make an automatic rename unsafe, and gzip already collapses repeated names so shortening them saves almost nothing after compression (comments and whitespace are the real win). `secgurd.ps1` stays the single, human-readable source of truth; only the pasted payload is compacted. The run prints the before/after character count.
 
 ---
 

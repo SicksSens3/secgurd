@@ -64,9 +64,6 @@
     .\secgurd.ps1 -Modules 03,04,06,11
     Run only persistence, PowerShell, processes, and LOLBins.
 .EXAMPLE
-    .\secgurd.ps1 -Auto -HtmlReport
-    Run everything and also produce a single-file report.html for browser review.
-.EXAMPLE
     .\secgurd.ps1 -Cleanup
     Remove all secgurd output from TEMP (asks you to type DELETE first).
 .NOTES
@@ -85,14 +82,12 @@ param(
     [switch]$WithOwners,
     [switch]$WithSignatures,
     [switch]$WithTaskInfo,
-    [switch]$HtmlReport,
     [string]$IOCHashes,
     [string]$CommunityIOCHashes,
     [string]$CommunityMalUrls,
     [int]$DaysBack = 30,
     [string]$Find,
     [switch]$MakeS1Paste,
-    [int]$S1ChunkSize = 0,
     [switch]$Help
 )
 
@@ -155,7 +150,6 @@ $script:RunLineActive = $false
 $script:WithOwners = [bool]$WithOwners
 $script:WithSignatures = [bool]$WithSignatures
 $script:WithTaskInfo = [bool]$WithTaskInfo
-$script:HtmlReport = [bool]$HtmlReport
 $script:IOCHashFile = $null
 $script:IOCHashSet = $null
 $script:IOCHashCount = 0
@@ -378,14 +372,12 @@ function Show-Help {
     Write-Host "    -WithOwners           Include process owners in 06_process_tree (slower)" -ForegroundColor Gray
     Write-Host "    -WithSignatures       Verify Authenticode signatures (slow, may stall offline)" -ForegroundColor Gray
     Write-Host "    -WithTaskInfo         Resolve run times for ALL tasks incl. Microsoft (slow; off by default)" -ForegroundColor Gray
-    Write-Host "    -HtmlReport           Also build a single-file report.html" -ForegroundColor Gray
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
     Write-Host "    -CommunityIOCHashes <file>  Explicit path to the community hash list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -CommunityMalUrls <file>    Explicit path to the community malicious-URL list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
     Write-Host "    -Find <string>        Filter ALL output to lines/items containing <string> (e.g. SmartPDF)" -ForegroundColor Gray
-    Write-Host "    -MakeS1Paste          Copy a paste-ready version for the SentinelOne shell" -ForegroundColor Gray
-    Write-Host "    -S1ChunkSize <N>      With -MakeS1Paste: chunked paste (N chars) for size-limited shells" -ForegroundColor Gray
+    Write-Host "    -MakeS1Paste          Copy a compressed (gzip+Base64) paste-ready version for the S1 shell" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  MENU COMMANDS" -ForegroundColor White
@@ -727,198 +719,6 @@ function Show-IOCList {
     Write-Host ""
 }
 
-function Show-S1PasteVersion {
-    # Generate a SentinelOne-remote-shell-ready, copy/paste version of THIS script and put it
-    # on the CLIPBOARD. secgurd is already wrap-safe (no internal here-strings), so we read our
-    # own source, wrap it in an outer here-string + a ScriptBlock invoke that shows the menu,
-    # and copy the whole thing. (Printing the full block to the console isn't workable - it's
-    # thousands of lines and scrolls out of the buffer.) A file fallback is also written.
-
-    $src = $null
-    if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
-        try { $src = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop } catch {}
-    }
-    if (-not $src) {
-        # running via iex with no file on disk - use the in-memory definition
-        try { $src = $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text } catch {}
-    }
-    if (-not $src) {
-        Write-Host "  Could not read secgurd's own source to build the paste version." -ForegroundColor Yellow
-        Write-Host "  Run it from the .ps1 file (not piped) and try again." -ForegroundColor DarkGray
-        return
-    }
-
-    # Safety: a literal '@ at the start of a line inside the source would close the outer
-    # here-string early. secgurd has none, but guard anyway so we never emit a broken block.
-    if ($src -match "(?m)^'@") {
-        Write-Host "  This build contains a line starting with '@ which would break the wrapper." -ForegroundColor Yellow
-        Write-Host "  Paste version not generated." -ForegroundColor DarkGray
-        return
-    }
-
-    $header = "`$s = @'"
-    $footer = "'@`r`n`$sb = [ScriptBlock]::Create(`$s); Clear-Host; & `$sb"
-    $block  = $header + "`r`n" + $src.TrimEnd() + "`r`n" + $footer
-    $lineCount = ($block -split "`r?`n").Count
-
-    # Always write a file fallback first (so there's a copy even if clipboard fails).
-    $outFile = Join-Path $env:TEMP "secgurd_s1_paste.txt"
-    $wrote = $false
-    try { $block | Out-File -FilePath $outFile -Encoding UTF8 -Force; $wrote = $true } catch {}
-
-    # Primary action: copy to clipboard. Try Set-Clipboard, then a clip.exe fallback.
-    $copied = $false
-    if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
-        try { Set-Clipboard -Value $block -ErrorAction Stop; $copied = $true } catch {}
-    }
-    if (-not $copied) {
-        # Fallback for hosts without Set-Clipboard: pipe through clip.exe
-        try { $block | clip.exe; $copied = $true } catch {}
-    }
-
-    Clear-Host
-    Write-Host ""
-    Write-Host "  ============================================================" -ForegroundColor DarkGray
-    Write-Host "   SentinelOne remote-shell paste version" -ForegroundColor Cyan
-    Write-Host "  ============================================================" -ForegroundColor DarkGray
-    Write-Host ""
-    if ($copied) {
-        Write-Host (Ex "  [^14] Copied to clipboard") -ForegroundColor Green -NoNewline
-        Write-Host "  ($lineCount lines)" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "  Paste it straight into the SentinelOne Remote Shell." -ForegroundColor Gray
-        Write-Host "  It wraps secgurd in a here-string and runs it - the interactive" -ForegroundColor Gray
-        Write-Host "  menu will appear in the shell." -ForegroundColor Gray
-    } else {
-        Write-Host (Ex "  ^16 Clipboard not available in this session.") -ForegroundColor Yellow
-        Write-Host "  Use the saved file instead (below)." -ForegroundColor Gray
-    }
-    Write-Host ""
-    if ($wrote) {
-        Write-Host "  A copy was also saved to:" -ForegroundColor DarkGray
-        Write-Host "    $outFile" -ForegroundColor White
-        Write-Host "  Open it with:  notepad `"$outFile`"" -ForegroundColor DarkGray
-        Write-Host ""
-    }
-}
-
-function Show-S1ChunkedPaste {
-    # For AIR-GAPPED remote shells (e.g. SentinelOne) that allow pasting only up to a size limit
-    # per paste. We split the RAW script on line boundaries into groups small enough to paste,
-    # and each chunk appends its lines to a .ps1 file on the target via a here-string. The final
-    # step just runs that file. NO Base64, NO decode-and-execute pattern - the chunks are plain
-    # script text (the same content that already runs fine via iex in your environment), just
-    # delivered in pieces. secgurd is wrap-safe (no internal line starts with the here-string
-    # closer), so the here-string container can't be broken by the script's own content.
-    param([int]$ChunkSize = 6000)
-
-    $src = $null
-    if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
-        try { $src = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop } catch {}
-    }
-    if (-not $src) {
-        try { $src = $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text } catch {}
-    }
-    if (-not $src) {
-        Write-Host "  Could not read secgurd's own source to build the chunked paste." -ForegroundColor Yellow
-        return
-    }
-
-    # Safety: a line starting with the here-string closer ('@) inside the source would terminate
-    # a chunk's here-string early. secgurd has none, but guard so we never emit a broken chunk.
-    if ($src -match "(?m)^'@") {
-        Write-Host "  This build has a line starting with '@ which would break a chunk. Aborting." -ForegroundColor Yellow
-        return
-    }
-
-    $tgtPs1 = '$env:TEMP\secgurd.ps1'
-
-    # Split the source into line-boundary groups whose total size stays under ChunkSize.
-    $srcLines = $src -split "`r?`n"
-    $groups = @()
-    $cur = New-Object System.Collections.Generic.List[string]
-    $curLen = 0
-    foreach ($ln in $srcLines) {
-        # +2 accounts for the line + newline; if adding it would exceed the limit, close the group
-        if ($curLen -gt 0 -and ($curLen + $ln.Length + 2) -gt $ChunkSize) {
-            $groups += ,($cur.ToArray())
-            $cur = New-Object System.Collections.Generic.List[string]
-            $curLen = 0
-        }
-        $cur.Add($ln)
-        $curLen += $ln.Length + 2
-    }
-    if ($cur.Count -gt 0) { $groups += ,($cur.ToArray()) }
-    $total = $groups.Count
-
-    # Build each chunk: a here-string of raw lines appended to the target file.
-    # First chunk uses Set-Content (create/overwrite); the rest use Add-Content (append).
-    $chunks = @()
-    for ($i = 0; $i -lt $total; $i++) {
-        $body = ($groups[$i] -join "`r`n")
-        $verb = if ($i -eq 0) { 'Set-Content' } else { 'Add-Content' }
-        # @' ... '@ literal here-string: nothing inside is interpreted, so the script's own
-        # quotes/$/backticks are preserved verbatim.
-        $chunks += "$verb -Path `"$tgtPs1`" -Value @'`r`n$body`r`n'@"
-    }
-    # final command: run the assembled file IN-SESSION as a scriptblock (same pattern as the
-    # single/compressed pastes) - not `powershell -File`, which spawns a child process that won't
-    # repaint in the S1 shell and would be blocked by a Restricted execution policy. A scriptblock
-    # runs in the current shell and is immune to the disabled-scripts policy.
-    $finalCmd = "Clear-Host; & ([ScriptBlock]::Create([IO.File]::ReadAllText(`"$tgtPs1`")))"
-
-    Clear-Host
-    Write-Host ""
-    Write-Host "  ============================================================" -ForegroundColor DarkGray
-    Write-Host "   Air-gapped chunked paste  ($total chunks, ~$ChunkSize chars each)" -ForegroundColor Cyan
-    Write-Host "  ============================================================" -ForegroundColor DarkGray
-    Write-Host "  For remote shells that limit paste size. Each step copies one" -ForegroundColor Gray
-    Write-Host "  chunk to your clipboard - paste it into the S1 shell, press Enter" -ForegroundColor Gray
-    Write-Host "  there, then come back here and press Enter for the next chunk." -ForegroundColor Gray
-    Write-Host "  Plain script text (no encoding) - the final step just runs the file." -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "  Tip: if a chunk still won't paste, re-run with a smaller size." -ForegroundColor DarkGray
-    Write-Host ""
-
-    $copy = {
-        param($text)
-        $ok = $false
-        if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
-            try { Set-Clipboard -Value $text -ErrorAction Stop; $ok = $true } catch {}
-        }
-        if (-not $ok) { try { $text | clip.exe; $ok = $true } catch {} }
-        return $ok
-    }
-
-    for ($i = 0; $i -lt $chunks.Count; $i++) {
-        $ok = & $copy $chunks[$i]
-        $label = "CHUNK $($i + 1) of $total"
-        if ($ok) {
-            Write-Host (Ex "  [^14] $label copied to clipboard.") -ForegroundColor Green
-        } else {
-            Write-Host (Ex "  ^16 Clipboard failed for $label - see the saved file.") -ForegroundColor Yellow
-        }
-        Write-Host "      Paste into the S1 shell, press Enter there, then Enter here..." -ForegroundColor DarkGray
-        Read-Host | Out-Null
-    }
-
-    & $copy $finalCmd | Out-Null
-    Write-Host (Ex "  [^14] FINAL command copied (run the assembled file).") -ForegroundColor Green
-    Write-Host "      Paste it into the S1 shell and press Enter - secgurd will launch." -ForegroundColor Gray
-    Write-Host ""
-
-    # Save the full transcript of chunks to a file too, as a fallback / for review.
-    $allFile = Join-Path $env:TEMP "secgurd_s1_chunks.txt"
-    try {
-        $dump = @()
-        for ($i = 0; $i -lt $chunks.Count; $i++) { $dump += "### CHUNK $($i+1) of $total ###"; $dump += $chunks[$i]; $dump += '' }
-        $dump += "### FINAL (run the file) ###"; $dump += $finalCmd
-        $dump | Out-File -FilePath $allFile -Encoding UTF8 -Force
-        Write-Host "  All chunks also saved to: $allFile" -ForegroundColor DarkGray
-        Write-Host ""
-    } catch {}
-}
-
 function Compress-Source {
     # Shrink a PowerShell source string for the compressed remote-shell paste WITHOUT changing what
     # it does. Three safe passes only:
@@ -991,74 +791,97 @@ function Compress-Source {
 }
 
 function Show-S1Compressed {
-    # Compressed SINGLE paste, with IOC lists bundled in. Gzip the script (and the community +
-    # manual hash lists, if present) then Base64 it - roughly one third the size of plain text,
-    # so it fits in one paste even on size-limited shells. On the target, the wrapper decompresses
-    # and writes secgurd.ps1 PLUS communitysavedIOCS.txt (and any manual list) into %TEMP% so the
-    # IOC auto-load works on an air-gapped box, then runs the script.
+    # Compressed SINGLE paste (Compress-Source -> gzip -> Base64), one block, decompressed on the
+    # target. -Mode controls what rides along:
+    #   'all'    - secgurd.ps1 + community IOC list + community malicious-URL list + your manual list
+    #   'script' - secgurd.ps1 ONLY (smallest; add the community lists later with the 'lists' block)
+    #   'lists'  - community IOC + malicious-URL lists ONLY (no script) - paste after a 'script' block
+    #              to drop the intel next to secgurd.ps1 in %TEMP% and re-run with it
+    # The wrapper writes each bundled file to %TEMP% and, if secgurd.ps1 is present there, runs it
+    # in-session (scriptblock, so a Restricted execution policy can't block it) passing whatever
+    # IOC/URL lists exist in %TEMP% - so the pieces compose no matter which order you paste them.
     # NOTE: uses FromBase64String + GzipStream decode (stronger pattern than plain text). If your
     # EDR flags it, fall back to the chunked plain-text option [2].
+    param([ValidateSet('all', 'script', 'lists')][string]$Mode = 'all')
 
-    $src = $null
-    if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
-        try { $src = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop } catch {}
-    }
-    if (-not $src) {
-        try { $src = $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text } catch {}
-    }
-    if (-not $src) {
-        Write-Host "  Could not read secgurd's own source to build the compressed paste." -ForegroundColor Yellow
-        return
-    }
+    $includeScript    = ($Mode -eq 'all' -or $Mode -eq 'script')
+    $includeCommunity = ($Mode -eq 'all' -or $Mode -eq 'lists')
+    $includeManual    = ($Mode -eq 'all')
 
-    # Compact secgurd's own source before packing it - strip comments, indentation and blank lines,
-    # and alias common cmdlets, all WITHOUT changing behavior - so the gzip+Base64 paste comes out
-    # smaller. Compress-Source fails safe (returns the source unchanged on any problem), so this can
-    # never produce a broken paste. Variable renaming is intentionally skipped (see Compress-Source).
-    $origLen = $src.Length
-    try { $src = Compress-Source $src } catch {}
-    $newLen = $src.Length
-
-    # Build a multi-file container. Each file is preceded by a marker line. The marker is
-    # assembled from fragments at runtime so the literal full marker never appears in this
-    # script's own source (otherwise packing secgurd would embed false separators).
     $MK = ('<' * 3) + 'SG' + 'FILE' + ':'
     $END = ('>' * 3)
     $container = New-Object System.Text.StringBuilder
-    [void]$container.AppendLine($MK + 'secgurd.ps1' + $END)
-    [void]$container.Append($src)
-    if (-not $src.EndsWith("`n")) { [void]$container.AppendLine('') }
+    $bundled = @()
+    $origLen = 0
+    $newLen = 0
 
-    $bundled = @('secgurd.ps1')
-    # community list (rides along so the air-gapped box gets current IOCs)
-    if ($script:CommunityHashFile -and (Test-Path $script:CommunityHashFile)) {
-        try {
-            $cTxt = Get-Content -LiteralPath $script:CommunityHashFile -Raw -ErrorAction Stop
-            [void]$container.AppendLine($MK + 'communitysavedIOCS.txt' + $END)
-            [void]$container.Append($cTxt)
-            if (-not $cTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
-            $bundled += "communitysavedIOCS.txt ($($script:CommunityHashCount) hashes)"
-        } catch {}
+    if ($includeScript) {
+        $src = $null
+        if ($PSCommandPath -and (Test-Path $PSCommandPath)) {
+            try { $src = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop } catch {}
+        }
+        if (-not $src) {
+            try { $src = $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text } catch {}
+        }
+        if (-not $src) {
+            Write-Host "  Could not read secgurd's own source to build the compressed paste." -ForegroundColor Yellow
+            return
+        }
+        # Compact the source before packing (strip comments/indentation/blanks, alias cmdlets) so the
+        # paste comes out smaller. Compress-Source fails safe (returns source unchanged on any error).
+        $origLen = $src.Length
+        try { $src = Compress-Source $src } catch {}
+        $newLen = $src.Length
+        [void]$container.AppendLine($MK + 'secgurd.ps1' + $END)
+        [void]$container.Append($src)
+        if (-not $src.EndsWith("`n")) { [void]$container.AppendLine('') }
+        $bundled += 'secgurd.ps1'
     }
-    # community malicious-URL list (rides along so the air-gapped box gets current URLhaus URLs)
-    if ($script:MalUrlFile -and (Test-Path $script:MalUrlFile)) {
-        try {
-            $uTxt = Get-Content -LiteralPath $script:MalUrlFile -Raw -ErrorAction Stop
-            [void]$container.AppendLine($MK + 'communitysavedMALURLS.txt' + $END)
-            [void]$container.Append($uTxt)
-            if (-not $uTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
-            $bundled += "communitysavedMALURLS.txt ($($script:MalUrlCount) URLs)"
-        } catch {}
+
+    if ($includeCommunity) {
+        # community IOC list (rides along so the air-gapped box gets current IOCs)
+        if ($script:CommunityHashFile -and (Test-Path $script:CommunityHashFile)) {
+            try {
+                $cTxt = Get-Content -LiteralPath $script:CommunityHashFile -Raw -ErrorAction Stop
+                [void]$container.AppendLine($MK + 'communitysavedIOCS.txt' + $END)
+                [void]$container.Append($cTxt)
+                if (-not $cTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
+                $bundled += "communitysavedIOCS.txt ($($script:CommunityHashCount) hashes)"
+            } catch {}
+        }
+        # community malicious-URL list (rides along so the air-gapped box gets current URLhaus URLs)
+        if ($script:MalUrlFile -and (Test-Path $script:MalUrlFile)) {
+            try {
+                $uTxt = Get-Content -LiteralPath $script:MalUrlFile -Raw -ErrorAction Stop
+                [void]$container.AppendLine($MK + 'communitysavedMALURLS.txt' + $END)
+                [void]$container.Append($uTxt)
+                if (-not $uTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
+                $bundled += "communitysavedMALURLS.txt ($($script:MalUrlCount) URLs)"
+            } catch {}
+        }
     }
-    # manual list (whatever you loaded via -IOCHashes / the i menu)
-    if ($script:IOCHashFile -and (Test-Path $script:IOCHashFile)) {
-        try {
-            $mTxt = Get-Content -LiteralPath $script:IOCHashFile -Raw -ErrorAction Stop
-            [void]$container.AppendLine($MK + 'manualIOCS.txt' + $END)
-            [void]$container.Append($mTxt)
-            if (-not $mTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
-            $bundled += "manualIOCS.txt ($($script:IOCHashCount) hashes)"
-        } catch {}
+
+    if ($includeManual) {
+        # manual list (whatever you loaded via -IOCHashes / the i menu)
+        if ($script:IOCHashFile -and (Test-Path $script:IOCHashFile)) {
+            try {
+                $mTxt = Get-Content -LiteralPath $script:IOCHashFile -Raw -ErrorAction Stop
+                [void]$container.AppendLine($MK + 'manualIOCS.txt' + $END)
+                [void]$container.Append($mTxt)
+                if (-not $mTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
+                $bundled += "manualIOCS.txt ($($script:IOCHashCount) hashes)"
+            } catch {}
+        }
+    }
+
+    if ($bundled.Count -eq 0) {
+        Write-Host ""
+        Write-Host "  Nothing to pack for this option." -ForegroundColor Yellow
+        if ($Mode -eq 'lists') {
+            Write-Host "  No community IOC / malicious-URL list is loaded to bundle." -ForegroundColor DarkGray
+        }
+        Write-Host ""
+        return
     }
 
     # Gzip-compress the whole container, then Base64-encode.
@@ -1100,11 +923,20 @@ function Show-S1Compressed {
     # files, never in-memory scriptblocks - so this runs even where "running scripts is disabled".
     # Clear-Host first wipes the pasted block; IOC lists are passed via splatting.
     [void]$sb.Append('$sgArgs=@{}; if(Test-Path $com){$sgArgs["CommunityIOCHashes"]=$com}; if(Test-Path $mal){$sgArgs["CommunityMalUrls"]=$mal}; if(Test-Path $man){$sgArgs["IOCHashes"]=$man}; ')
-    [void]$sb.Append('Clear-Host; & ([ScriptBlock]::Create([IO.File]::ReadAllText($sg))) @sgArgs')
+    # Run secgurd only if it's actually in %TEMP% (it is right after a script/all paste; for a
+    # lists-only paste it may not be yet). Otherwise the files are just staged for the next run.
+    [void]$sb.Append('if(Test-Path $sg){ Clear-Host; & ([ScriptBlock]::Create([IO.File]::ReadAllText($sg))) @sgArgs } else { Write-Host "  Lists staged in %TEMP%. Now paste the [3] SCRIPT ONLY block to run secgurd - it will pick these up." -ForegroundColor Yellow }')
     $block = $sb.ToString()
 
+    # Mode-specific labels / fallback filename (all names match the secgurd_s1_* cleanup glob).
+    switch ($Mode) {
+        'script' { $title = 'Compressed single paste  (script only)';                    $outName = 'secgurd_s1_script.txt' }
+        'lists'  { $title = 'Compressed single paste  (community IOC + malicious-URL lists only)'; $outName = 'secgurd_s1_lists.txt' }
+        default  { $title = 'Compressed single paste  (script + all IOC/URL lists)';      $outName = 'secgurd_s1_compressed.txt' }
+    }
+
     # Save a file fallback.
-    $outFile = Join-Path $env:TEMP "secgurd_s1_compressed.txt"
+    $outFile = Join-Path $env:TEMP $outName
     $wrote = $false
     try { $block | Out-File -FilePath $outFile -Encoding UTF8 -Force; $wrote = $true } catch {}
 
@@ -1118,7 +950,7 @@ function Show-S1Compressed {
     Clear-Host
     Write-Host ""
     Write-Host "  ============================================================" -ForegroundColor DarkGray
-    Write-Host "   Compressed single paste  (with IOC lists bundled)" -ForegroundColor Cyan
+    Write-Host "   $title" -ForegroundColor Cyan
     Write-Host "  ============================================================" -ForegroundColor DarkGray
     $kb = [Math]::Round($block.Length / 1KB)
     if ($copied) {
@@ -1135,9 +967,18 @@ function Show-S1Compressed {
     Write-Host "  Bundled into the paste:" -ForegroundColor Gray
     foreach ($b in $bundled) { Write-Host "    - $b" -ForegroundColor DarkGray }
     Write-Host ""
-    Write-Host "  Paste the single block into the S1 shell and press Enter. It unpacks" -ForegroundColor Gray
-    Write-Host "  secgurd + the IOC list(s) into %TEMP% and runs it - IOC matching works" -ForegroundColor Gray
-    Write-Host "  offline, no git pull needed on the target." -ForegroundColor Gray
+    if ($Mode -eq 'lists') {
+        Write-Host "  Paste this into the S1 shell FIRST to drop the community lists into %TEMP%, then" -ForegroundColor Gray
+        Write-Host "  paste the [3] SCRIPT ONLY block - it runs secgurd and picks these lists up. (If" -ForegroundColor Gray
+        Write-Host "  secgurd.ps1 is already in %TEMP%, this re-runs it with the lists right away.)" -ForegroundColor Gray
+    } elseif ($Mode -eq 'script') {
+        Write-Host "  Paste this into the S1 shell and press Enter - it unpacks secgurd.ps1 into %TEMP%" -ForegroundColor Gray
+        Write-Host "  and runs it. For the community IOC/URL lists, paste [2] BEFORE this one." -ForegroundColor Gray
+    } else {
+        Write-Host "  Paste the single block into the S1 shell and press Enter. It unpacks" -ForegroundColor Gray
+        Write-Host "  secgurd + the IOC list(s) into %TEMP% and runs it - IOC matching works" -ForegroundColor Gray
+        Write-Host "  offline, no git pull needed on the target." -ForegroundColor Gray
+    }
     Write-Host ""
     Write-Host "  NOTE: gzip+Base64 decode. If your EDR flags it, use option [2] instead." -ForegroundColor DarkGray
     Write-Host ""
@@ -1243,16 +1084,6 @@ function Show-ModuleMenu {
         Write-Host ("{0,-4}" -f 'o') -ForegroundColor Yellow -NoNewline
         Write-Host ("{0,-36}" -f 'Open output folder when done') -ForegroundColor White -NoNewline
         Write-Host "(local/RDP only)" -ForegroundColor DarkGray
-
-        $hrOn   = $script:HtmlReport
-        $hrMark = if ($hrOn) { (Ex "[^14]") } else { '[ ]' }
-        $hrClr  = if ($hrOn) { 'Green' } else { 'DarkGray' }
-        Write-Host "   " -NoNewline
-        Write-Host $hrMark -ForegroundColor $hrClr -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host ("{0,-4}" -f 'h') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-36}" -f 'Build + open HTML report') -ForegroundColor White -NoNewline
-        Write-Host "(report.html)" -ForegroundColor DarkGray
 
         $iocOn   = [bool]$script:IOCHashFile
         $commOn  = ($script:CommunityHashCount -gt 0)
@@ -1363,14 +1194,6 @@ function Show-ModuleMenu {
             $script:OpenFolderWhenDone = -not $script:OpenFolderWhenDone
             $state = if ($script:OpenFolderWhenDone) { 'ON' } else { 'OFF' }
             $pendingMsg = "Open output folder when done: $state"
-            Clear-Host; Show-secgurdBannerCompact
-            continue
-        }
-
-        if ($cmd -eq 'h') {
-            $script:HtmlReport = -not $script:HtmlReport
-            $state = if ($script:HtmlReport) { 'ON' } else { 'OFF' }
-            $pendingMsg = "Build HTML report: $state"
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -1608,26 +1431,25 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'p') {
             Write-Host ""
-            Write-Host "  SentinelOne / remote-shell paste:" -ForegroundColor Cyan
+            Write-Host "  Remote-shell paste (compressed - gzip+Base64, one block):" -ForegroundColor Cyan
             Write-Host "    [1] " -ForegroundColor Yellow -NoNewline
-            Write-Host "Single paste, full text (shells with no paste limit)" -ForegroundColor White
+            Write-Host "EVERYTHING (script + community IOC/URL lists)" -ForegroundColor White
+            Write-Host ""
             Write-Host "    [2] " -ForegroundColor Yellow -NoNewline
-            Write-Host "Chunked paste, plain text (air-gapped, size-limited shells)" -ForegroundColor White
+            Write-Host "COMMUNITY LISTS ONLY (IOC + malicious-URLs)" -ForegroundColor White
+            Write-Host "        " -NoNewline
+            Write-Host "^ run this BEFORE [3] if you want the community lists" -ForegroundColor DarkGray
+            Write-Host ""
             Write-Host "    [3] " -ForegroundColor Yellow -NoNewline
-            Write-Host "Compressed single paste (~1/3 size, one block - decompresses on target)" -ForegroundColor White
+            Write-Host "SCRIPT ONLY" -ForegroundColor White
             Write-Host "  > " -ForegroundColor DarkGray -NoNewline
             $sMode = (Read-Host).Trim()
             if ($sMode -eq '2') {
-                Write-Host "  Chunk size in characters (Enter for 6000; lower it if pastes still cut off):" -ForegroundColor Cyan
-                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                $csIn = (Read-Host).Trim()
-                $cs = 6000
-                if ($csIn -match '^\d+$' -and [int]$csIn -ge 500) { $cs = [int]$csIn }
-                Show-S1ChunkedPaste -ChunkSize $cs
+                Show-S1Compressed -Mode lists
             } elseif ($sMode -eq '3') {
-                Show-S1Compressed
+                Show-S1Compressed -Mode script
             } else {
-                Show-S1PasteVersion
+                Show-S1Compressed -Mode all
             }
             Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
             Read-Host | Out-Null
@@ -1945,11 +1767,9 @@ if ($malUrlFile) {
 # ---------------------------------------------
 
 if ($MakeS1Paste) {
-    if ($S1ChunkSize -ge 500) {
-        Show-S1ChunkedPaste -ChunkSize $S1ChunkSize
-    } else {
-        Show-S1PasteVersion
-    }
+    # Generate the compressed (gzip+Base64) "everything" paste - script + community IOC/URL lists.
+    # For the smaller script-only / lists-only variants, use the interactive 'p' menu.
+    Show-S1Compressed -Mode all
     return
 }
 
@@ -4868,228 +4688,6 @@ if ($timeline.Count -eq 0) {
 }
 $tlLines | Out-File (Join-Path $OutputPath '00_TIMELINE.txt') -Encoding UTF8 -Force
 
-
-# ---------------------------------------------
-#  OPTIONAL: SINGLE-FILE HTML REPORT
-# ---------------------------------------------
-
-if ($script:HtmlReport) {
-    Write-Host (Ex "  ^27  Building HTML report...") -ForegroundColor Cyan
-
-    # HTML-escape helper
-    function ConvertTo-HtmlText {
-        param([string]$s)
-        if ($null -eq $s) { return '' }
-        $s = $s -replace '&','&amp;'
-        $s = $s -replace '<','&lt;'
-        $s = $s -replace '>','&gt;'
-        return $s
-    }
-
-    $sb = [System.Text.StringBuilder]::new()
-    [void]$sb.AppendLine('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">')
-    [void]$sb.AppendLine('<meta name="viewport" content="width=device-width, initial-scale=1">')
-    [void]$sb.AppendLine("<title>secgurd report - $env:COMPUTERNAME</title>")
-    [void]$sb.AppendLine('<style>')
-    [void]$sb.AppendLine(':root{--bg:#0e1116;--panel:#161b22;--ink:#c9d1d9;--muted:#8b949e;--line:#30363d;--gold:#d8b24a;--hi:#f85149;--med:#d29922;--info:#8b949e;--accent:#58a6ff}')
-    [void]$sb.AppendLine('*{box-sizing:border-box}')
-    [void]$sb.AppendLine('body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}')
-    [void]$sb.AppendLine('header{padding:24px 28px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#11161d,#0e1116)}')
-    [void]$sb.AppendLine('h1{margin:0;font-size:22px;letter-spacing:.08em;color:var(--gold)}')
-    [void]$sb.AppendLine('.logo{margin:0;font:11px/1.18 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow-x:auto}')
-    [void]$sb.AppendLine('.logo .gold{color:#e7c44d}')
-    [void]$sb.AppendLine('.logo .hilt{color:#f0f0f0}')
-    [void]$sb.AppendLine('.logo .tip{color:#e1372d}')
-    [void]$sb.AppendLine('.logo .dim{color:#3a4350}')
-    [void]$sb.AppendLine('.ver{color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-top:2px}')
-    [void]$sb.AppendLine('.tag{color:var(--hi);font-weight:600;font-size:13px;margin-top:4px}')
-    [void]$sb.AppendLine('.meta{display:flex;flex-wrap:wrap;gap:18px;margin-top:14px;font-size:13px;color:var(--muted)}')
-    [void]$sb.AppendLine('.meta b{color:var(--ink);font-weight:600}')
-    [void]$sb.AppendLine('.wrap{max-width:1100px;margin:0 auto;padding:24px 28px}')
-    [void]$sb.AppendLine('h2{font-size:15px;letter-spacing:.05em;color:var(--accent);border-bottom:1px solid var(--line);padding-bottom:6px;margin:32px 0 14px}')
-    [void]$sb.AppendLine('.findings{display:grid;gap:8px}')
-    [void]$sb.AppendLine('.f{padding:10px 12px;border-radius:8px;border-left:4px solid var(--line);background:var(--panel);display:block;color:inherit;text-decoration:none}')
-    [void]$sb.AppendLine('.f.HIGH{border-left-color:var(--hi)}.f.MED{border-left-color:var(--med)}.f.INFO{border-left-color:var(--info)}')
-    [void]$sb.AppendLine('a.f{cursor:pointer;transition:background .12s,transform .12s}')
-    [void]$sb.AppendLine('a.f:hover{background:#1c232c;transform:translateX(2px)}')
-    [void]$sb.AppendLine('a.f .go{float:right;font-size:11px;color:var(--muted);opacity:0;transition:opacity .12s}')
-    [void]$sb.AppendLine('a.f:hover .go{opacity:1}')
-    [void]$sb.AppendLine('/* artifact highlight when jumped-to from a finding */')
-    [void]$sb.AppendLine('details.hl-HIGH{border-color:var(--hi);box-shadow:0 0 0 1px var(--hi),0 0 16px rgba(248,81,73,.25)}')
-    [void]$sb.AppendLine('details.hl-MED{border-color:var(--med);box-shadow:0 0 0 1px var(--med),0 0 16px rgba(210,153,34,.25)}')
-    [void]$sb.AppendLine('details.hl-INFO{border-color:var(--info);box-shadow:0 0 0 1px var(--info),0 0 16px rgba(139,148,158,.25)}')
-    [void]$sb.AppendLine('.modhdr.hl-HIGH{color:var(--hi)}.modhdr.hl-MED{color:var(--med)}.modhdr.hl-INFO{color:var(--gold)}')
-    [void]$sb.AppendLine('.sev{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;margin-right:8px;vertical-align:1px}')
-    [void]$sb.AppendLine('.sev.HIGH{background:rgba(248,81,73,.18);color:#ff7b72}.sev.MED{background:rgba(210,153,34,.18);color:#e3b341}.sev.INFO{background:rgba(139,148,158,.18);color:#adbac7}')
-    [void]$sb.AppendLine('.none{color:var(--muted);font-style:italic}')
-    [void]$sb.AppendLine('details{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:8px 0;overflow:hidden}')
-    [void]$sb.AppendLine('summary{cursor:pointer;padding:10px 14px;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center}')
-    [void]$sb.AppendLine('summary::-webkit-details-marker{display:none}')
-    [void]$sb.AppendLine('summary:hover{background:#1c232c}')
-    [void]$sb.AppendLine('summary .sz{color:var(--muted);font-weight:400;font-size:12px}')
-    [void]$sb.AppendLine('details.empty summary{color:var(--muted)}')
-    [void]$sb.AppendLine('.badge{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:rgba(139,148,158,.14);border:1px solid var(--line);border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:1px}')
-    [void]$sb.AppendLine('.badge.err{color:#b08a86;background:rgba(176,138,134,.10);border-color:rgba(176,138,134,.30)}')
-    [void]$sb.AppendLine('.nodata{padding:14px 16px;border-top:1px solid var(--line);color:var(--muted);font-style:italic;font-size:13px}')
-    [void]$sb.AppendLine('details.errored summary{color:#b6938f}')
-    [void]$sb.AppendLine('.errbox{padding:14px 16px;border-top:1px solid rgba(176,138,134,.25);color:#a98e8a;font-size:13px;background:rgba(176,138,134,.05)}')
-    [void]$sb.AppendLine('.errbox b{color:#c79a95}')
-    [void]$sb.AppendLine('pre{margin:0;padding:14px 16px;border-top:1px solid var(--line);background:#0b0f14;color:#c9d1d9;font:12.5px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:520px;overflow:auto}')
-    [void]$sb.AppendLine('.modhdr{margin-top:26px;color:var(--gold);font-size:13px;letter-spacing:.1em;text-transform:uppercase}')
-    [void]$sb.AppendLine('footer{color:var(--muted);font-size:12px;text-align:center;padding:24px;border-top:1px solid var(--line);margin-top:30px}')
-    [void]$sb.AppendLine('.filter{margin:10px 0 4px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}')
-    [void]$sb.AppendLine('.filter button{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px}')
-    [void]$sb.AppendLine('.filter button:hover{border-color:var(--accent)}')
-    [void]$sb.AppendLine('.filter .clearbtn{margin-left:auto;color:var(--muted)}')
-    [void]$sb.AppendLine('.filter .clearbtn:hover{border-color:var(--muted);color:var(--ink)}')
-    [void]$sb.AppendLine('</style></head><body>')
-
-    # Header
-    $hHost = ConvertTo-HtmlText $env:COMPUTERNAME
-    $hUser = ConvertTo-HtmlText "$env:USERDOMAIN\$env:USERNAME"
-    [void]$sb.AppendLine('<header>')
-    [void]$sb.AppendLine('<pre class="logo">')
-    [void]$sb.AppendLine((Ex '<span class="dim"> ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^12</span>'))
-    [void]$sb.AppendLine((Ex '<span class="hilt">      ^07^03^06 </span><span class="gold">^02^02^02^02^02^02^02^06^02^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06 ^02^02^06   ^02^02^06^02^02^02^02^02^02^06 ^02^02^02^02^02^02^06</span>'))
-    [void]$sb.AppendLine((Ex '<span class="hilt">      ^04 ^15^03</span><span class="gold">^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05^02^02^07^03^03^03^03^05 ^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^07^03^03^02^02^06</span><span class="tip">^03^03^03^03^03^03^18</span>'))
-    [void]$sb.AppendLine((Ex '<span class="hilt">(</span><span class="gold">o</span><span class="hilt">)^03^03^03^19 ^04 </span><span class="gold">^02^02^02^02^02^02^02^06^02^02^02^02^02^06  ^02^02^04     ^02^02^04  ^02^02^02^06^02^02^04   ^02^02^04^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04</span><span class="tip">^03^03^03^03^03^03^03^20</span>'))
-    [void]$sb.AppendLine((Ex '<span class="hilt">      ^04 ^15^03</span><span class="gold">^08^03^03^03^03^02^02^04^02^02^07^03^03^05  ^02^02^04     ^02^02^04   ^02^02^04^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^04  ^02^02^04</span><span class="tip">^03^03^03^03^03^03^21</span>'))
-    [void]$sb.AppendLine((Ex '<span class="hilt">      ^08^03^05 </span><span class="gold">^02^02^02^02^02^02^02^04^02^02^02^02^02^02^02^06^08^02^02^02^02^02^02^06^08^02^02^02^02^02^02^07^05^08^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04^02^02^02^02^02^02^07^05</span>'))
-    [void]$sb.AppendLine((Ex '<span class="gold">          ^08^03^03^03^03^03^03^05^08^03^03^03^03^03^03^05 ^08^03^03^03^03^03^05 ^08^03^03^03^03^03^05  ^08^03^03^03^03^03^05 ^08^03^05  ^08^03^05^08^03^03^03^03^03^05</span>'))
-    [void]$sb.AppendLine((Ex '<span class="dim">                    ^22  F O R E N S I C   T R I A G E  ^22</span>'))
-    [void]$sb.AppendLine((Ex '<span class="dim"> ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11</span>'))
-    [void]$sb.AppendLine('</pre>')
-    [void]$sb.AppendLine((Ex '<div class="tag">^13 Slayer of threats. Keeper of truth. ^13</div>'))
-    [void]$sb.AppendLine("<div class=`"ver`">$($script:secgurdVersion) &middot; Forensic Triage</div>")
-    [void]$sb.AppendLine('<div class="meta">')
-    [void]$sb.AppendLine("<span><b>Host:</b> $hHost</span>")
-    [void]$sb.AppendLine("<span><b>User:</b> $hUser</span>")
-    [void]$sb.AppendLine("<span><b>Admin:</b> $isAdminNow</span>")
-    [void]$sb.AppendLine("<span><b>Started:</b> $($script:RunStart.ToString('yyyy-MM-dd HH:mm:ss'))</span>")
-    [void]$sb.AppendLine("<span><b>Duration:</b> $elapsedStr</span>")
-    [void]$sb.AppendLine("<span><b>Lookback:</b> $($script:DaysBack)d</span>")
-    [void]$sb.AppendLine("<span><b>Collected:</b> $($script:CollectedCount) files</span>")
-    [void]$sb.AppendLine("<span><b>Errors:</b> $($script:ErrorCount)</span>")
-    [void]$sb.AppendLine('</div></header>')
-
-    [void]$sb.AppendLine('<div class="wrap">')
-
-    # Findings section
-    [void]$sb.AppendLine("<h2>Findings ($($script:Findings.Count))</h2>")
-    if ($script:Findings.Count -eq 0) {
-        [void]$sb.AppendLine('<p class="none">No high-signal indicators auto-flagged. Absence of flags is not proof of a clean host - review the raw artifacts below.</p>')
-    } else {
-        [void]$sb.AppendLine('<div class="filter"><button onclick="ff(0)">All</button><button onclick="ff(1)">HIGH</button><button onclick="ff(2)">MED</button><button onclick="ff(3)">INFO</button><button class="clearbtn" onclick="clearHl()">Clear highlight</button></div>')
-        [void]$sb.AppendLine('<div class="findings" id="findings">')
-        foreach ($f in ($script:Findings | Sort-Object)) {
-            $sev = 'INFO'
-            if ($f -like '`[HIGH`]*') { $sev = 'HIGH' }
-            elseif ($f -like '`[MED`]*') { $sev = 'MED' }
-            # module number is stored as "(NN)" right after the severity prefix
-            $fmod = ''
-            if ($f -match '^\[(?:HIGH|MED|INFO)\]\s*\((\d{2})\)') { $fmod = $matches[1] }
-            # optional precise target file encoded as {file:NAME}
-            $ffile = ''
-            if ($f -match '\{file:([^}]+)\}') { $ffile = $matches[1] }
-            # strip the "[SEV] " prefix AND the {file:...} tag before display
-            $msg = $f -replace '^\[(HIGH|MED|INFO)\]\s*',''
-            $msg = $msg -replace '\s*\{file:[^}]+\}\s*$',''
-            $msg = ConvertTo-HtmlText $msg
-            if ($fmod -or $ffile) {
-                # data-file (exact artifact) takes priority; data-mod is the fallback target
-                $anchor = if ($ffile) { "#art-$([System.IO.Path]::GetFileNameWithoutExtension($ffile))" } else { "#mod-$fmod" }
-                [void]$sb.AppendLine("<a class=`"f $sev`" href=`"$anchor`" data-mod=`"$fmod`" data-file=`"$ffile`" data-sev=`"$sev`" onclick=`"jump(this);return false;`"><span class=`"sev $sev`">$sev</span>$msg<span class=`"go`">view &darr;</span></a>")
-            } else {
-                [void]$sb.AppendLine("<div class=`"f $sev`"><span class=`"sev $sev`">$sev</span>$msg</div>")
-            }
-        }
-        [void]$sb.AppendLine('</div>')
-    }
-
-    # Artifacts: each txt file as a collapsible section, grouped by module number
-    [void]$sb.AppendLine('<h2>Artifacts</h2>')
-    $files = Get-ChildItem $OutputPath -Filter '*.txt' | Sort-Object Name
-    $lastMod = ''
-    # Skip only the pure-meta files (shown elsewhere); DO render the actionable 00_ outputs
-    # (IOC matches, browser alerts) so findings that link to them resolve and their content shows.
-    $metaSkip = @('00_INDEX.txt','00_SUMMARY.txt','00_TIMELINE.txt','00_HASHES.txt')
-    foreach ($file in $files) {
-        if ($metaSkip -contains $file.Name) { continue }
-        $modNum = if ($file.Name -match '^(\d{2})_') { $matches[1] } else { '' }
-        $modName = if ($modNum -eq '00') { 'Key outputs' } else { ($script:ModuleCatalogue | Where-Object { $_.Id -eq $modNum }).Name }
-        if ($modNum -and $modNum -ne $lastMod) {
-            [void]$sb.AppendLine("<div class=`"modhdr`" id=`"mod-$modNum`">$modNum &middot; $(ConvertTo-HtmlText $modName)</div>")
-            $lastMod = $modNum
-        }
-        $rawContent = ''
-        try { $rawContent = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue } catch {}
-        if ($null -eq $rawContent) { $rawContent = '' }
-
-        # Decide if this artifact actually has data. A Write-Section block is exactly:
-        #   ===...   /   <Title>   /   ===...
-        # so a "title" line is any non-divider line that sits directly next to a === rule.
-        # We strip dividers, those title lines, and common "(none found)" placeholders; if
-        # nothing meaningful remains, the artifact is empty even though it has a banner.
-        $allLines = $rawContent -split "`r?`n"
-        $isDivider = { param($s) $s.Trim() -match '^[=\-]{3,}$' }
-        $hasData = $false
-        for ($li = 0; $li -lt $allLines.Count; $li++) {
-            $t = $allLines[$li].Trim()
-            if ($t -eq '') { continue }
-            if (& $isDivider $t) { continue }
-            # placeholder lines like "(none found)" / "(not found)" / "(disabled)"
-            if ($t -match '^\(.*(none|not found|no .*found|disabled|unavailable|empty).*\)$') { continue }
-            # section title? adjacent (prev or next non-blank line) is a === divider
-            $prev = ''; for ($p = $li-1; $p -ge 0; $p--) { if ($allLines[$p].Trim() -ne '') { $prev = $allLines[$p].Trim(); break } }
-            $next = ''; for ($n = $li+1; $n -lt $allLines.Count; $n++) { if ($allLines[$n].Trim() -ne '') { $next = $allLines[$n].Trim(); break } }
-            if ((& $isDivider $prev) -and (& $isDivider $next)) { continue }   # it's a section title (=== / title / ===)
-            # anything left is real data
-            $hasData = $true
-            break
-        }
-
-        $kb = '{0:N0} KB' -f ($file.Length/1KB)
-        $nameHtml = ConvertTo-HtmlText $file.Name
-        $artId = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-
-        # An errored collector writes "ERROR: ..." into its file (see Save-Output catch block).
-        $isError = $rawContent -match '(?m)^\s*ERROR:\s'
-
-        if ($isError) {
-            # Pull the error message text for the banner.
-            $errMsg = ''
-            if ($rawContent -match '(?m)^\s*ERROR:\s*(.+)$') { $errMsg = $matches[1].Trim() }
-            $errHtml = ConvertTo-HtmlText $errMsg
-            [void]$sb.AppendLine("<details class=`"errored`" id=`"art-$artId`" data-mod=`"$modNum`" data-file=`"$($file.Name)`"><summary><span>$nameHtml <span class=`"badge err`">error</span></span><span class=`"sz`">$kb</span></summary><div class=`"errbox`"><b>This collector failed to run.</b><br>$errHtml</div></details>")
-        }
-        elseif (-not $hasData) {
-            # Empty / no findings in this artifact: badge on the summary + a friendly banner inside.
-            [void]$sb.AppendLine("<details class=`"empty`" id=`"art-$artId`" data-mod=`"$modNum`" data-file=`"$($file.Name)`"><summary><span>$nameHtml <span class=`"badge`">no data</span></span><span class=`"sz`">$kb</span></summary><div class=`"nodata`">Nothing collected for this artifact &mdash; nothing was present on this host, or it was not accessible.</div></details>")
-        } else {
-            $content = ConvertTo-HtmlText $rawContent
-            [void]$sb.AppendLine("<details id=`"art-$artId`" data-mod=`"$modNum`" data-file=`"$($file.Name)`"><summary><span>$nameHtml</span><span class=`"sz`">$kb</span></summary><pre>$content</pre></details>")
-        }
-    }
-
-    [void]$sb.AppendLine('</div>')  # /wrap
-    [void]$sb.AppendLine("<footer>Generated by secgurd $($script:secgurdVersion) on $($runEnd.ToString('yyyy-MM-dd HH:mm:ss')). Single-file report - safe to copy off-host.</footer>")
-
-    # tiny JS for findings filter (self-contained, no external deps)
-    [void]$sb.AppendLine('<script>')
-    [void]$sb.AppendLine('function ff(n){var m=["","HIGH","MED","INFO"][n];var L=document.querySelectorAll("#findings .f");for(var i=0;i<L.length;i++){L[i].style.display=(!m||L[i].classList.contains(m))?"":"none"}}')
-    [void]$sb.AppendLine('function clearHl(){var sevs=["HIGH","MED","INFO"];for(var s=0;s<sevs.length;s++){var rm=document.querySelectorAll(".hl-"+sevs[s]);for(var j=0;j<rm.length;j++){rm[j].classList.remove("hl-"+sevs[s])}}}')
-    [void]$sb.AppendLine('function jump(el){clearHl();var sev=el.getAttribute("data-sev")||"INFO";var file=el.getAttribute("data-file")||"";var mod=el.getAttribute("data-mod")||"";var target=null;var ds=document.getElementsByTagName("details");for(var k=0;k<ds.length;k++){var d=ds[k];var match=file?(d.getAttribute("data-file")===file):(d.getAttribute("data-mod")===mod);if(match){d.classList.add("hl-"+sev);d.open=true;if(!target)target=d}}if(!file&&mod){var hdr=document.getElementById("mod-"+mod);if(hdr){hdr.classList.add("hl-"+sev);if(!target)target=hdr}}if(target){target.scrollIntoView({behavior:"smooth",block:"start"})}}')
-    [void]$sb.AppendLine('</script>')
-    [void]$sb.AppendLine('</body></html>')
-
-    try {
-        $sb.ToString() | Out-File (Join-Path $OutputPath 'report.html') -Encoding UTF8 -Force
-        Write-Host (Ex "  ^14 report.html built") -ForegroundColor Green
-    } catch {
-        Write-Host "  [!] Could not write report.html: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
-}
-
 # ---------------------------------------------
 #  00_HASHES.txt   SHA-256 of every artifact (evidence integrity)
 # ---------------------------------------------
@@ -5449,10 +5047,6 @@ Write-Host (Ex "  [^14] Raw     : ") -ForegroundColor Green -NoNewline
 Write-Host $OutputPath -ForegroundColor White
 Write-Host (Ex "  [^14] Start   : ") -ForegroundColor Green -NoNewline
 Write-Host (Ex "00_SUMMARY.txt (findings) ^10 00_INDEX.txt (file map)") -ForegroundColor White
-if ($script:HtmlReport -and (Test-Path (Join-Path $OutputPath 'report.html'))) {
-    Write-Host (Ex "  [^14] Report  : ") -ForegroundColor Green -NoNewline
-    Write-Host (Join-Path $OutputPath 'report.html') -ForegroundColor White
-}
 Write-Host ""
 
 # Retrieval hint for remote sessions
@@ -5470,21 +5064,10 @@ Write-Host ""
 Write-Host (Ex " ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^12") -ForegroundColor DarkGray
 Write-Host ""
 
-# Optionally open the output folder (interactive desktop only)
+# Optionally open the output folder when done (interactive desktop only; the 'o' menu toggle).
 
-# Open results when done (interactive desktop only).
-#  - HTML report toggle (h) opens report.html on its own.
-#  - Open-folder toggle (o) opens the output folder.
-# These are independent; if both are on, the report opens and the folder opens.
-
-if ([Environment]::UserInteractive) {
-    $reportPath = Join-Path $OutputPath 'report.html'
-    if ($script:HtmlReport -and (Test-Path $reportPath)) {
-        try { Invoke-Item $reportPath } catch {}
-    }
-    if ($script:OpenFolderWhenDone) {
-        try { Invoke-Item $OutputPath } catch {}
-    }
+if ([Environment]::UserInteractive -and $script:OpenFolderWhenDone) {
+    try { Invoke-Item $OutputPath } catch {}
 }
 
 # Return paths for caller use
@@ -5492,7 +5075,6 @@ if ([Environment]::UserInteractive) {
 [PSCustomObject]@{
     OutputFolder   = $OutputPath
     ZipArchive     = if ($zipOk) { $zipPath } else { $null }
-    HtmlReport     = if ($script:HtmlReport -and (Test-Path (Join-Path $OutputPath 'report.html'))) { Join-Path $OutputPath 'report.html' } else { $null }
     FilesCollected = $script:CollectedCount
     Errors         = $script:ErrorCount
     Findings       = $script:Findings
