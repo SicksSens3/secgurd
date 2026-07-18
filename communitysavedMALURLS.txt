@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-07-17 08:34:33 UTC
+# Updated: 2026-07-18 08:20:08 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://airyvineic.help/rebirth.m68k,malware_download
@@ -16,11 +16,13 @@ http://js.byxly.eu.cc/mipsel,malware_download
 http://peachcity.si/n2/mips64,malware_download
 http://purmed.ro/upwork/Odours.prx,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
-http://sc.c1s.su/no_killer/arm5,malware_download
+http://scan.ivankozlovsky.com/bins/px86,malware_download
+http://ths.lat/eclipse.x86_64,malware_download
 http://zynimg.com/1.jpg,malware_download
 https://11032026sver.blob.core.windows.net/homeplus/RMMClient.zip,malware_download
 https://balconyresidences.com.br/A64ybzU6h2ndxvVzRdE0wrhclick/download.php,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
+https://businesseconomics.in/uploads/sp.png,malware_download
 https://deliverymailreport.co.za/img_053354.png,malware_download
 https://drive.google.com/uc?export=download&id=1Y4Di2kSB6tnWnVSOkS581g_wJgeu_BpT,malware_download
 https://dynga.pl/common.dat,malware_download
@@ -34,7 +36,6 @@ https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,malware_download
 https://lb.nigsv.com/maiv/stego_payloads.png,malware_download
-https://magsa.com.pe/sorma/ogfileimg_110519.png,malware_download
 https://mosselnet.co.za/April_Staff_Appraisal_4qsK_pdf.arj,malware_download
 https://postelnini.mk/optimized_MSI.png,malware_download
 https://ringmycellphone.com/images/rotate/rotate.php,malware_download
