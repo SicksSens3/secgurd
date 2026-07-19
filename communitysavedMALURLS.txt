@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-07-18 08:20:08 UTC
+# Updated: 2026-07-19 08:42:38 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://airyvineic.help/rebirth.m68k,malware_download
@@ -24,11 +24,12 @@ https://balconyresidences.com.br/A64ybzU6h2ndxvVzRdE0wrhclick/download.php,malwa
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
 https://businesseconomics.in/uploads/sp.png,malware_download
 https://deliverymailreport.co.za/img_053354.png,malware_download
-https://drive.google.com/uc?export=download&id=1Y4Di2kSB6tnWnVSOkS581g_wJgeu_BpT,malware_download
+https://deyetechnical.com/winsconsx86.zip,malware_download
+https://drive.google.com/uc?export=download&id=1atl3cZJNCTsuxmHAymvb7_c873JOXC0x,malware_download
 https://dynga.pl/common.dat,malware_download
-https://fd.v2downf.shop//tmp/f/10dfff942805d90d6ebb28bd58093653_20251208021850.so,malware_download
 https://gboutros.howto.rocks/img_142806.png,malware_download
 https://goldland8.com/wordpress/wp-content/plugins/yolk/img_234646.png,malware_download
+https://grantexx.com/Tilsee.cur,malware_download
 https://gsmtoolpack.com/Setup.rar,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://ipfs.io/ipfs/QmbPifgvVgU4RSccJkUnzWTmDxZEoS2scDEQquqzg6GUat,malware_download
