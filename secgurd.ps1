@@ -85,6 +85,7 @@ param(
     [string]$IOCHashes,
     [string]$CommunityIOCHashes,
     [string]$CommunityMalUrls,
+    [string]$SquatDomains,
     [int]$DaysBack = 30,
     [string]$Find,
     [switch]$MakeS1Paste,
@@ -167,6 +168,14 @@ $script:MalUrlHostSet = $null   # hosts extracted from those URLs
 $script:MalUrlCount = 0
 $script:MalUrlFile = $null
 $script:MalUrlBackup = $null    # stashed sets when the 'u' menu toggles matching OFF (so it can flip back ON)
+# Squat-domain watchlist: auto-loaded from squat_domains.txt next to the script (refreshed via
+# git pull from the openSquat GitHub Action). Module 10 checks every browser-history host and
+# download-origin host against it - a hit is a look-alike/typosquat of one of the org's brand terms.
+$script:SquatDomainSet = $null    # normalized watchlist domains (lowercased, www./scheme/path stripped)
+$script:SquatDomainCount = 0
+$script:SquatDomainFile = $null
+$script:SquatMatches = New-Object System.Collections.Generic.List[object]   # module-10 hits, for 10_squat_watchlist.txt
+$script:SquatSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)  # dedupe key: "user|host"
 # Browser flagging: module 10 records every flagged URL here (user/browser/host/severity/reason)
 # so the post-collection correlation step (after IOC matching) can cross-reference these hosts
 # with on-disk artifacts and write 00_BROWSER_ALERTS.txt.
@@ -375,6 +384,7 @@ function Show-Help {
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
     Write-Host "    -CommunityIOCHashes <file>  Explicit path to the community hash list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -CommunityMalUrls <file>    Explicit path to the community malicious-URL list (else auto-found next to script)" -ForegroundColor Gray
+    Write-Host "    -SquatDomains <file>        Explicit path to the openSquat squat-domain watchlist (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
     Write-Host "    -Find <string>        Filter ALL output to lines/items containing <string> (e.g. SmartPDF)" -ForegroundColor Gray
     Write-Host "    -MakeS1Paste          Copy a compressed (gzip+Base64) paste-ready version for the S1 shell" -ForegroundColor Gray
@@ -385,9 +395,7 @@ function Show-Help {
     Write-Host "    a / n                 Select all / none" -ForegroundColor Gray
     Write-Host "    qa / net / ps         Apply a preset" -ForegroundColor Gray
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
-    Write-Host "    h                     Toggle: build + open HTML report" -ForegroundColor Gray
-    Write-Host "    i                     Toggle: match hashes vs IOC list (load/paste/list under here)" -ForegroundColor Gray
-    Write-Host "    u                     Toggle: match browser URLs vs URLhaus list (load/paste/list under here)" -ForegroundColor Gray
+    Write-Host "    deps                  Dependencies sub-menu: IOC hashes / malicious URLs / squat domains (load/paste/list/toggle)" -ForegroundColor Gray
     Write-Host "    d                     Set lookback window in days (time-bounded collectors)" -ForegroundColor Gray
     Write-Host "    f                     Find/filter: scope all output to a name/string (blank clears)" -ForegroundColor Gray
     Write-Host "    p                     Pastable version for remote shells - single/chunked/compressed" -ForegroundColor Gray
@@ -416,13 +424,14 @@ function Invoke-Cleanup {
     # prompt so it can't fire accidentally. Targets: the script itself (secgurd.ps1, e.g. the copy
     # unpacked on an endpoint), output folders (secgurd_<host>_<ts>) and their .zip archives, the
     # SentinelOne paste text files (secgurd_s1_*.txt), and the auto-loaded lists
-    # (communitysavedIOCS.txt, communitysavedMALURLS.txt, manualIOCS.txt).
+    # (communitysavedIOCS.txt, communitysavedMALURLS.txt, squat_domains.txt, manualIOCS.txt).
     if (-not $NoBanner -and -not $SkipBanner) { Show-secgurdBanner }
 
     $patterns = @(
         'secgurd*'                      # secgurd.ps1 + secgurd_<host>_<ts> folders + .zip + secgurd_s1_*.txt
         'communitysavedIOCS.txt'
         'communitysavedMALURLS.txt'
+        'squat_domains.txt'
         'manualIOCS.txt'
     )
     $items = @(foreach ($p in $patterns) { Get-ChildItem (Join-Path $env:TEMP $p) -Force -ErrorAction SilentlyContinue }) |
@@ -595,6 +604,53 @@ function Get-MalUrlHost {
     if ($h -match '@') { $h = ($h -split '@', 2)[-1] }  # drop userinfo
     $h = ($h -split ':', 2)[0]                      # drop port
     return $h.Trim('.')
+}
+
+function Get-NormalizedDomain {
+    # Normalize a domain watchlist entry OR a host for comparison: lowercase, defensively strip any
+    # leading scheme / userinfo / port / path, and drop a leading 'www.'. Returns '' if unusable.
+    # (openSquat writes bare domains, but we normalize anyway so a stray scheme/path never slips in.)
+    param([string]$Value)
+    if (-not $Value) { return '' }
+    $d = $Value.Trim().ToLower()
+    $d = $d -replace '^[a-z][a-z0-9+.-]*://', ''   # strip scheme
+    $d = ($d -split '[/?#]', 2)[0]                 # drop path/query/fragment
+    if ($d -match '@') { $d = ($d -split '@', 2)[-1] }  # drop userinfo
+    $d = ($d -split ':', 2)[0]                      # drop port
+    $d = $d -replace '^www\.', ''                   # drop leading www.
+    return $d.Trim('.')
+}
+
+function Import-SquatDomains {
+    # Load the squat-domain watchlist from a FILE (squat_domains.txt, openSquat output). One domain
+    # per line; blank lines and '#' comment lines are skipped; each entry is normalized and deduped
+    # into a HashSet[string] (OrdinalIgnoreCase). Returns the set (empty on any read error).
+    param([string]$Path)
+    $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    try { $lines = Get-Content -LiteralPath $Path -ErrorAction Stop }
+    catch { return $set }
+    foreach ($line in $lines) {
+        $t = $line.Trim()
+        if ($t -eq '' -or $t.StartsWith('#')) { continue }
+        $d = Get-NormalizedDomain $t
+        if ($d) { [void]$set.Add($d) }
+    }
+    return $set
+}
+
+function Test-SquatHost {
+    # Return the matched watchlist domain if $HostName is on the squat watchlist - either an exact
+    # match, or a subdomain of a watched entry (login.example-brand.com matches example-brand.com) -
+    # else $null. Case-insensitive. (Param is $HostName, NOT $Host: $Host is a PowerShell automatic.)
+    param([string]$HostName)
+    if (-not $HostName -or -not $script:SquatDomainSet -or $script:SquatDomainSet.Count -eq 0) { return $null }
+    $h = Get-NormalizedDomain $HostName
+    if (-not $h) { return $null }
+    if ($script:SquatDomainSet.Contains($h)) { return $h }
+    foreach ($d in $script:SquatDomainSet) {
+        if ($h.EndsWith('.' + $d)) { return $d }
+    }
+    return $null
 }
 
 function ConvertFrom-MalUrlText {
@@ -859,6 +915,16 @@ function Show-S1Compressed {
                 $bundled += "communitysavedMALURLS.txt ($($script:MalUrlCount) URLs)"
             } catch {}
         }
+        # squat-domain watchlist (rides along so the air-gapped box gets the current openSquat list)
+        if ($script:SquatDomainFile -and (Test-Path $script:SquatDomainFile)) {
+            try {
+                $sqTxt = Get-Content -LiteralPath $script:SquatDomainFile -Raw -ErrorAction Stop
+                [void]$container.AppendLine($MK + 'squat_domains.txt' + $END)
+                [void]$container.Append($sqTxt)
+                if (-not $sqTxt.EndsWith("`n")) { [void]$container.AppendLine('') }
+                $bundled += "squat_domains.txt ($($script:SquatDomainCount) domains)"
+            } catch {}
+        }
     }
 
     if ($includeManual) {
@@ -914,6 +980,7 @@ function Show-S1Compressed {
     [void]$sb.Append('$man=Join-Path $env:TEMP "manualIOCS.txt"; ')
     [void]$sb.Append('$com=Join-Path $env:TEMP "communitysavedIOCS.txt"; ')
     [void]$sb.Append('$mal=Join-Path $env:TEMP "communitysavedMALURLS.txt"; ')
+    [void]$sb.Append('$sq=Join-Path $env:TEMP "squat_domains.txt"; ')
     [void]$sb.Append('$sg=Join-Path $env:TEMP "secgurd.ps1"; ')
     # Run secgurd IN THE CURRENT SESSION (like the single-paste option) rather than spawning a
     # child powershell.exe: in the SentinelOne remote shell a child interactive process doesn't
@@ -922,7 +989,7 @@ function Show-S1Compressed {
     # FILE and is blocked by a Restricted execution policy). Execution policy only gates script
     # files, never in-memory scriptblocks - so this runs even where "running scripts is disabled".
     # Clear-Host first wipes the pasted block; IOC lists are passed via splatting.
-    [void]$sb.Append('$sgArgs=@{}; if(Test-Path $com){$sgArgs["CommunityIOCHashes"]=$com}; if(Test-Path $mal){$sgArgs["CommunityMalUrls"]=$mal}; if(Test-Path $man){$sgArgs["IOCHashes"]=$man}; ')
+    [void]$sb.Append('$sgArgs=@{}; if(Test-Path $com){$sgArgs["CommunityIOCHashes"]=$com}; if(Test-Path $mal){$sgArgs["CommunityMalUrls"]=$mal}; if(Test-Path $sq){$sgArgs["SquatDomains"]=$sq}; if(Test-Path $man){$sgArgs["IOCHashes"]=$man}; ')
     # Run secgurd only if it's actually in %TEMP% (it is right after a script/all paste; for a
     # lists-only paste it may not be yet). Otherwise the files are just staged for the next run.
     [void]$sb.Append('if(Test-Path $sg){ Clear-Host; & ([ScriptBlock]::Create([IO.File]::ReadAllText($sg))) @sgArgs } else { Write-Host "  Lists staged in %TEMP%. Now paste the [3] SCRIPT ONLY block to run secgurd - it will pick these up." -ForegroundColor Yellow }')
@@ -985,6 +1052,286 @@ function Show-S1Compressed {
     if ($wrote) {
         Write-Host "  Also saved to: $outFile" -ForegroundColor DarkGray
         Write-Host ""
+    }
+}
+
+function Show-SquatList {
+    # Print the currently-loaded squat-domain watchlist (capped at 50 for readability).
+    if (-not $script:SquatDomainSet -or $script:SquatDomainCount -le 0) {
+        Write-Host ""
+        Write-Host "  No squat domains loaded." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+    Write-Host ""
+    Write-Host "  " -NoNewline
+    Write-Host (Ex "[^14] ") -ForegroundColor Green -NoNewline
+    Write-Host "SQUAT-DOMAIN WATCHLIST" -ForegroundColor White -NoNewline
+    Write-Host "   source: $($script:SquatDomainFile)" -ForegroundColor DarkGray
+    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+    $n = 0
+    foreach ($d in ($script:SquatDomainSet | Sort-Object)) {
+        $n++
+        Write-Host ("   {0,3}. " -f $n) -ForegroundColor DarkGray -NoNewline
+        Write-Host $d -ForegroundColor Gray
+        if ($n -ge 50) {
+            Write-Host ("        ... and $($script:SquatDomainCount - 50) more") -ForegroundColor DarkGray
+            break
+        }
+    }
+    Write-Host "  $('-' * 64)" -ForegroundColor DarkGray
+    Write-Host "  $($script:SquatDomainCount) domain(s). Matched against module-10 hosts at run time." -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+function Invoke-IOCDependency {
+    # Manage the IOC hash list (the manual set you add; the community list auto-loads separately).
+    # Returns a status message string for the Dependencies menu to echo (or $null).
+    $iocLoaded = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
+    Write-Host ""
+    Write-Host "  IOC hash matching" -ForegroundColor Cyan -NoNewline
+    if ($iocLoaded) {
+        Write-Host "  ($($script:IOCHashCount) manual hashes loaded)" -ForegroundColor Green
+    } else {
+        Write-Host "  (no manual list - community list auto-loads separately)" -ForegroundColor DarkGray
+    }
+    Write-Host "    [f] " -ForegroundColor Yellow -NoNewline; Write-Host "load hashes from a file" -ForegroundColor White
+    Write-Host "    [p] " -ForegroundColor Yellow -NoNewline; Write-Host "paste hashes (comma, space, or newline separated)" -ForegroundColor White
+    Write-Host "    [l] " -ForegroundColor Yellow -NoNewline; Write-Host "list / show loaded hashes" -ForegroundColor White
+    if ($iocLoaded) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn manual IOC matching off" -ForegroundColor White }
+    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+    $how = (Read-Host).Trim().ToLower()
+
+    if ($how -eq 'x') {
+        if ($iocLoaded) {
+            $script:IOCHashFile = $null; $script:IOCHashSet = $null; $script:IOCHashCount = 0
+            return "IOC hash matching: OFF"
+        }
+        return "Nothing to turn off - no manual hashes loaded."
+    }
+    if ($how -eq 'l') {
+        Clear-Host; Show-secgurdBannerCompact
+        if ($iocLoaded -or $script:CommunityHashCount -gt 0) {
+            Show-IOCList
+        } else {
+            Write-Host ""
+            Write-Host "  No hashes loaded." -ForegroundColor Yellow
+            Write-Host "  Use [f] to load from a file or [p] to paste some first." -ForegroundColor DarkGray
+            Write-Host ""
+        }
+        Write-Host "  Press Enter to continue..." -ForegroundColor DarkGray; Read-Host | Out-Null
+        return $null
+    }
+
+    $loaded = @{}; $src = ''
+    if ($how -eq 'f') {
+        Write-Host "  Path to hash list file:" -ForegroundColor Cyan
+        Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+        $iocPath = (Read-Host).Trim('"').Trim()
+        if ($iocPath -and (Test-Path $iocPath)) { $loaded = Import-IOCHashes $iocPath; $src = $iocPath }
+        else { return "File not found - IOC matching not enabled." }
+    } elseif ($how -eq 'p') {
+        Write-Host "  Paste hashes, then press Enter (commas/spaces/newlines all OK):" -ForegroundColor Cyan
+        Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+        $loaded = ConvertFrom-IOCText (Read-Host); $src = '(pasted)'
+    } else {
+        return "Cancelled - pick f, p, l, or x."
+    }
+
+    if ($loaded.Count -gt 0) {
+        $script:IOCHashFile = $src; $script:IOCHashSet = $loaded; $script:IOCHashCount = $loaded.Count
+        Clear-Host; Show-secgurdBannerCompact; Show-IOCList
+        Write-Host "  Press Enter to continue..." -ForegroundColor DarkGray; Read-Host | Out-Null
+        return "IOC hash matching: ON ($($loaded.Count) hashes)"
+    }
+    return "No valid hashes found (need MD5/SHA-1/SHA-256 hex values)."
+}
+
+function Invoke-MalUrlDependency {
+    # Manage the community malicious-URL list (URLhaus). Returns a status message (or $null).
+    $malLoaded = ($script:MalUrlSet -and $script:MalUrlCount -gt 0)
+    Write-Host ""
+    Write-Host "  Community malicious-URL matching" -ForegroundColor Cyan -NoNewline
+    if ($malLoaded) {
+        Write-Host "  ($($script:MalUrlCount) URLs loaded)" -ForegroundColor Green
+    } else {
+        Write-Host "  (none loaded)" -ForegroundColor DarkGray
+    }
+    Write-Host "  Browser-history URLs (module 10) are checked against this list; a hit on the" -ForegroundColor DarkGray
+    Write-Host "  full URL or its host is flagged HIGH. Auto-loaded from communitysavedMALURLS.txt." -ForegroundColor DarkGray
+    Write-Host "    [f] " -ForegroundColor Yellow -NoNewline; Write-Host "load URLs from a file" -ForegroundColor White
+    Write-Host "    [p] " -ForegroundColor Yellow -NoNewline; Write-Host "paste URLs (space-separated, or one per line)" -ForegroundColor White
+    Write-Host "    [l] " -ForegroundColor Yellow -NoNewline; Write-Host "list / show loaded URLs" -ForegroundColor White
+    if ($malLoaded) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn URL matching off" -ForegroundColor White }
+    elseif ($script:MalUrlBackup) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn URL matching back on" -ForegroundColor White }
+    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+    $how = (Read-Host).Trim().ToLower()
+
+    if ($how -eq 'x') {
+        if ($malLoaded) {
+            $script:MalUrlBackup = @{ Urls=$script:MalUrlSet; Hosts=$script:MalUrlHostSet; Count=$script:MalUrlCount; File=$script:MalUrlFile }
+            $script:MalUrlSet = $null; $script:MalUrlHostSet = $null; $script:MalUrlCount = 0; $script:MalUrlFile = $null
+            return "Community malicious-URL matching: OFF"
+        } elseif ($script:MalUrlBackup) {
+            $script:MalUrlSet     = $script:MalUrlBackup.Urls
+            $script:MalUrlHostSet = $script:MalUrlBackup.Hosts
+            $script:MalUrlCount   = $script:MalUrlBackup.Count
+            $script:MalUrlFile    = $script:MalUrlBackup.File
+            $script:MalUrlBackup  = $null
+            return "Community malicious-URL matching: ON ($($script:MalUrlCount) URLs)"
+        }
+        return "Nothing to toggle - no URLs loaded."
+    }
+    if ($how -eq 'l') {
+        Clear-Host; Show-secgurdBannerCompact
+        if ($malLoaded) {
+            Show-MalUrlList
+        } else {
+            Write-Host ""
+            Write-Host "  No URLs loaded." -ForegroundColor Yellow
+            Write-Host "  Use [f] to load from a file or [p] to paste some first." -ForegroundColor DarkGray
+            Write-Host ""
+        }
+        Write-Host "  Press Enter to continue..." -ForegroundColor DarkGray; Read-Host | Out-Null
+        return $null
+    }
+
+    $loaded = $null; $src = ''
+    if ($how -eq 'f') {
+        Write-Host "  Path to malicious-URL list file:" -ForegroundColor Cyan
+        Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+        $malPath = (Read-Host).Trim('"').Trim()
+        if ($malPath -and (Test-Path $malPath)) { $loaded = Import-MalUrls $malPath; $src = $malPath }
+        else { return "File not found - URL matching not changed." }
+    } elseif ($how -eq 'p') {
+        Write-Host "  Paste URLs (space-separated, or one per line), then press Enter:" -ForegroundColor Cyan
+        Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+        $loaded = ConvertFrom-MalUrlText (Read-Host); $src = '(pasted)'
+    } else {
+        return "Cancelled - pick f, p, l, or x."
+    }
+
+    if ($loaded -and $loaded.Urls.Count -gt 0) {
+        $script:MalUrlFile    = $src
+        $script:MalUrlSet     = $loaded.Urls
+        $script:MalUrlHostSet = $loaded.Hosts
+        $script:MalUrlCount   = $loaded.Urls.Count
+        $script:MalUrlBackup  = $null
+        Clear-Host; Show-secgurdBannerCompact; Show-MalUrlList
+        Write-Host "  Press Enter to continue..." -ForegroundColor DarkGray; Read-Host | Out-Null
+        return "Community malicious-URL matching: ON ($($script:MalUrlCount) URLs)"
+    }
+    return "No valid URLs found (need http:// or https:// entries)."
+}
+
+function Invoke-SquatDependency {
+    # Manage the openSquat squat-domain watchlist. Returns a status message (or $null).
+    $sqLoaded = ($script:SquatDomainSet -and $script:SquatDomainCount -gt 0)
+    Write-Host ""
+    Write-Host "  Squat-domain watchlist (openSquat)" -ForegroundColor Cyan -NoNewline
+    if ($sqLoaded) {
+        Write-Host "  ($($script:SquatDomainCount) domains loaded)" -ForegroundColor Green
+    } else {
+        Write-Host "  (none loaded)" -ForegroundColor DarkGray
+    }
+    Write-Host "  Module 10 flags any browser-history / download-origin host that matches a" -ForegroundColor DarkGray
+    Write-Host "  watchlisted look-alike domain. Auto-loaded from squat_domains.txt." -ForegroundColor DarkGray
+    Write-Host "    [f] " -ForegroundColor Yellow -NoNewline; Write-Host "load domains from a file" -ForegroundColor White
+    Write-Host "    [l] " -ForegroundColor Yellow -NoNewline; Write-Host "list / show loaded domains" -ForegroundColor White
+    if ($sqLoaded) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn squat matching off" -ForegroundColor White }
+    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+    $how = (Read-Host).Trim().ToLower()
+
+    if ($how -eq 'x') {
+        if ($sqLoaded) {
+            $script:SquatDomainSet = $null; $script:SquatDomainCount = 0; $script:SquatDomainFile = $null
+            return "Squat-domain matching: OFF"
+        }
+        return "Nothing to turn off - no domains loaded."
+    }
+    if ($how -eq 'l') {
+        Clear-Host; Show-secgurdBannerCompact
+        if ($sqLoaded) {
+            Show-SquatList
+        } else {
+            Write-Host ""
+            Write-Host "  No squat domains loaded." -ForegroundColor Yellow
+            Write-Host "  Use [f] to load a squat_domains.txt file first." -ForegroundColor DarkGray
+            Write-Host ""
+        }
+        Write-Host "  Press Enter to continue..." -ForegroundColor DarkGray; Read-Host | Out-Null
+        return $null
+    }
+    if ($how -eq 'f') {
+        Write-Host "  Path to squat-domain list file:" -ForegroundColor Cyan
+        Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+        $sqPath = (Read-Host).Trim('"').Trim()
+        if ($sqPath -and (Test-Path $sqPath)) {
+            $set = Import-SquatDomains $sqPath
+            if ($set.Count -gt 0) {
+                $script:SquatDomainSet = $set; $script:SquatDomainCount = $set.Count; $script:SquatDomainFile = $sqPath
+                Clear-Host; Show-secgurdBannerCompact; Show-SquatList
+                Write-Host "  Press Enter to continue..." -ForegroundColor DarkGray; Read-Host | Out-Null
+                return "Squat-domain matching: ON ($($set.Count) domains)"
+            }
+            return "No valid domains found in that file."
+        }
+        return "File not found - squat watchlist unchanged."
+    }
+    return "Cancelled - pick f, l, or x."
+}
+
+function Invoke-DependenciesMenu {
+    # Grouped management of secgurd's external data dependencies: the community IOC-hash list, the
+    # community malicious-URL list, and the squat-domain watchlist. Loops until the operator backs
+    # out. Returns the last status message for the main menu to echo (or $null).
+    $msg = $null
+    # One status/selectable row: mark, key, label, note.
+    $row = {
+        param($key, $on, $label, $note)
+        $mk  = if ($on) { (Ex "[^14]") } else { '[ ]' }
+        $clr = if ($on) { 'Green' } else { 'DarkGray' }
+        Write-Host "   " -NoNewline
+        Write-Host $mk -ForegroundColor $clr -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f $key) -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-38}" -f $label) -ForegroundColor White -NoNewline
+        Write-Host $note -ForegroundColor DarkGray
+    }
+    while ($true) {
+        Clear-Host; Show-secgurdBannerCompact
+        Write-Host ""
+        if ($msg) { Write-Host "   $msg" -ForegroundColor Cyan; Write-Host ""; $msg = $null }
+        Write-Host "  DEPENDENCIES - external data lists secgurd matches against" -ForegroundColor Cyan
+        Write-Host "  Each auto-loads from beside secgurd.ps1 (git pull) and rides along in the S1 paste." -ForegroundColor DarkGray
+        Write-Host ""
+
+        $commOn = ($script:CommunityHashCount -gt 0); $iocOn = [bool]$script:IOCHashFile
+        $p = @()
+        if ($commOn) { $p += "community $($script:CommunityHashCount)" }
+        if ($iocOn)  { $p += "you-added $($script:IOCHashCount)" }
+        $note1 = if ($p.Count) { "($($p -join ' + ') hashes)" } else { '(none loaded)' }
+        & $row '1' ($commOn -or $iocOn) 'IOC hashes (on-disk binaries)' $note1
+
+        $note2 = if ($script:MalUrlCount -gt 0) { "($($script:MalUrlCount) URLs)" } else { '(none loaded)' }
+        & $row '2' ($script:MalUrlCount -gt 0) 'Malicious URLs - URLhaus (module 10)' $note2
+
+        $note3 = if ($script:SquatDomainCount -gt 0) { "($($script:SquatDomainCount) domains)" } else { '(none loaded)' }
+        & $row '3' ($script:SquatDomainCount -gt 0) 'Squat domains - openSquat (module 10)' $note3
+
+        Write-Host ""
+        Write-Host "    [1/2/3] manage a list    [b] back to main menu" -ForegroundColor DarkGray
+        Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+        $choice = (Read-Host).Trim().ToLower()
+        switch ($choice) {
+            '1' { $msg = Invoke-IOCDependency }
+            '2' { $msg = Invoke-MalUrlDependency }
+            '3' { $msg = Invoke-SquatDependency }
+            default {
+                if ($choice -in @('b', 'q', 'back', '')) { return $msg }
+                $msg = "Pick 1, 2, 3, or b."
+            }
+        }
     }
 }
 
@@ -1085,36 +1432,23 @@ function Show-ModuleMenu {
         Write-Host ("{0,-36}" -f 'Open output folder when done') -ForegroundColor White -NoNewline
         Write-Host "(local/RDP only)" -ForegroundColor DarkGray
 
-        $iocOn   = [bool]$script:IOCHashFile
-        $commOn  = ($script:CommunityHashCount -gt 0)
-        $iocMark = if ($iocOn -or $commOn) { (Ex "[^14]") } else { '[ ]' }
-        $iocClr  = if ($iocOn -or $commOn) { 'Green' } else { 'DarkGray' }
-        # Build a note describing what's loaded from each source.
-        if ($iocOn -or $commOn) {
-            $parts = @()
-            if ($commOn) { $parts += "community $($script:CommunityHashCount)" }
-            if ($iocOn)  { $parts += "you-added $($script:IOCHashCount)" }
-            $iocNote = "($($parts -join ' + '))"
-        } else {
-            $iocNote = '(prompts for hash list)'
-        }
+        # Single grouped entry for all three external data lists (IOC hashes, malicious URLs, squat
+        # domains). 'deps' opens a sub-menu to view/load/toggle each - see Invoke-DependenciesMenu.
+        $hashOn = (($script:CommunityHashCount -gt 0) -or [bool]$script:IOCHashFile)
+        $depAny = ($hashOn -or ($script:MalUrlCount -gt 0) -or ($script:SquatDomainCount -gt 0))
+        $depMark = if ($depAny) { (Ex "[^14]") } else { '[ ]' }
+        $depClr  = if ($depAny) { 'Green' } else { 'DarkGray' }
+        $depParts = @()
+        if ($hashOn)                        { $depParts += "$($script:CommunityHashCount + $script:IOCHashCount) hashes" }
+        if ($script:MalUrlCount -gt 0)      { $depParts += "$($script:MalUrlCount) URLs" }
+        if ($script:SquatDomainCount -gt 0) { $depParts += "$($script:SquatDomainCount) squat" }
+        $depNote = if ($depParts.Count) { "($($depParts -join ', '))" } else { '(none loaded)' }
         Write-Host "   " -NoNewline
-        Write-Host $iocMark -ForegroundColor $iocClr -NoNewline
+        Write-Host $depMark -ForegroundColor $depClr -NoNewline
         Write-Host "  " -NoNewline
-        Write-Host ("{0,-4}" -f 'i') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-36}" -f 'Match hashes against IOC list') -ForegroundColor White -NoNewline
-        Write-Host $iocNote -ForegroundColor DarkGray
-
-        $malOn   = ($script:MalUrlCount -gt 0)
-        $malMark = if ($malOn) { (Ex "[^14]") } else { '[ ]' }
-        $malClr  = if ($malOn) { 'Green' } else { 'DarkGray' }
-        $malNote = if ($malOn) { "($($script:MalUrlCount) URLs loaded)" } else { '(URLhaus feed - off/empty)' }
-        Write-Host "   " -NoNewline
-        Write-Host $malMark -ForegroundColor $malClr -NoNewline
-        Write-Host "  " -NoNewline
-        Write-Host ("{0,-4}" -f 'u') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-36}" -f 'Match browser URLs vs URLhaus list') -ForegroundColor White -NoNewline
-        Write-Host $malNote -ForegroundColor DarkGray
+        Write-Host ("{0,-4}" -f 'deps') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-36}" -f 'Dependencies (IOC / URL / squat lists)') -ForegroundColor White -NoNewline
+        Write-Host $depNote -ForegroundColor DarkGray
 
         $fOn   = [bool]$script:FindFilter
         $fMark = if ($fOn) { (Ex "[^14]") } else { '[ ]' }
@@ -1198,186 +1532,8 @@ function Show-ModuleMenu {
             continue
         }
 
-        if ($cmd -eq 'i') {
-            $iocLoaded = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
-            Write-Host ""
-            Write-Host "  IOC hash matching" -ForegroundColor Cyan -NoNewline
-            if ($iocLoaded) {
-                Write-Host "  ($($script:IOCHashCount) hashes loaded)" -ForegroundColor Green
-            } else {
-                Write-Host "  (none loaded)" -ForegroundColor DarkGray
-            }
-            Write-Host "    [f] " -ForegroundColor Yellow -NoNewline
-            Write-Host "load hashes from a file" -ForegroundColor White
-            Write-Host "    [p] " -ForegroundColor Yellow -NoNewline
-            Write-Host "paste hashes (comma, space, or newline separated)" -ForegroundColor White
-            Write-Host "    [l] " -ForegroundColor Yellow -NoNewline
-            Write-Host "list / show loaded hashes" -ForegroundColor White
-            if ($iocLoaded) {
-                Write-Host "    [x] " -ForegroundColor Yellow -NoNewline
-                Write-Host "turn IOC matching off" -ForegroundColor White
-            }
-            Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-            $how = (Read-Host).Trim().ToLower()
-
-            if ($how -eq 'x') {
-                if ($iocLoaded) {
-                    $script:IOCHashFile = $null; $script:IOCHashSet = $null; $script:IOCHashCount = 0
-                    $pendingMsg = "IOC hash matching: OFF"
-                } else {
-                    $pendingMsg = "Nothing to turn off - no hashes loaded."
-                }
-                Clear-Host; Show-secgurdBannerCompact; continue
-            }
-
-            if ($how -eq 'l') {
-                Clear-Host; Show-secgurdBannerCompact
-                if ($iocLoaded) {
-                    Show-IOCList
-                } else {
-                    Write-Host ""
-                    Write-Host "  No hashes loaded." -ForegroundColor Yellow
-                    Write-Host "  Use [f] to load from a file or [p] to paste some first." -ForegroundColor DarkGray
-                    Write-Host ""
-                }
-                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
-                Read-Host | Out-Null
-                Clear-Host; Show-secgurdBannerCompact; continue
-            }
-
-            $loaded = @{}; $src = ''
-            if ($how -eq 'f') {
-                Write-Host "  Path to hash list file:" -ForegroundColor Cyan
-                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                $iocPath = (Read-Host).Trim('"').Trim()
-                if ($iocPath -and (Test-Path $iocPath)) {
-                    $loaded = Import-IOCHashes $iocPath
-                    $src = $iocPath
-                } else {
-                    $pendingMsg = "File not found - IOC matching not enabled."
-                }
-            } elseif ($how -eq 'p') {
-                Write-Host "  Paste hashes, then press Enter (commas/spaces/newlines all OK):" -ForegroundColor Cyan
-                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                $pasted = Read-Host
-                $loaded = ConvertFrom-IOCText $pasted
-                $src = '(pasted)'
-            } else {
-                $pendingMsg = "Cancelled - pick f, p, l, or x."
-            }
-
-            if ($loaded.Count -gt 0) {
-                $script:IOCHashFile = $src
-                $script:IOCHashSet = $loaded
-                $script:IOCHashCount = $loaded.Count
-                Clear-Host; Show-secgurdBannerCompact
-                Show-IOCList
-                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
-                Read-Host | Out-Null
-                $pendingMsg = "IOC hash matching: ON ($($loaded.Count) hashes)"
-            } elseif (($how -eq 'f' -or $how -eq 'p') -and -not $pendingMsg) {
-                $pendingMsg = "No valid hashes found (need MD5/SHA-1/SHA-256 hex values)."
-            }
-            Clear-Host; Show-secgurdBannerCompact
-            continue
-        }
-
-        if ($cmd -eq 'u') {
-            $malLoaded = ($script:MalUrlSet -and $script:MalUrlCount -gt 0)
-            Write-Host ""
-            Write-Host "  Community malicious-URL matching" -ForegroundColor Cyan -NoNewline
-            if ($malLoaded) {
-                Write-Host "  ($($script:MalUrlCount) URLs loaded)" -ForegroundColor Green
-            } else {
-                Write-Host "  (none loaded)" -ForegroundColor DarkGray
-            }
-            Write-Host "  Browser-history URLs (module 10) are checked against this list; a hit on the" -ForegroundColor DarkGray
-            Write-Host "  full URL or its host is flagged HIGH. Auto-loaded from communitysavedMALURLS.txt." -ForegroundColor DarkGray
-            Write-Host "    [f] " -ForegroundColor Yellow -NoNewline
-            Write-Host "load URLs from a file" -ForegroundColor White
-            Write-Host "    [p] " -ForegroundColor Yellow -NoNewline
-            Write-Host "paste URLs (space-separated, or one per line)" -ForegroundColor White
-            Write-Host "    [l] " -ForegroundColor Yellow -NoNewline
-            Write-Host "list / show loaded URLs" -ForegroundColor White
-            if ($malLoaded) {
-                Write-Host "    [x] " -ForegroundColor Yellow -NoNewline
-                Write-Host "turn URL matching off" -ForegroundColor White
-            } elseif ($script:MalUrlBackup) {
-                Write-Host "    [x] " -ForegroundColor Yellow -NoNewline
-                Write-Host "turn URL matching back on" -ForegroundColor White
-            }
-            Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-            $how = (Read-Host).Trim().ToLower()
-
-            if ($how -eq 'x') {
-                if ($malLoaded) {
-                    # Stash the loaded sets so it can be toggled back on without re-reading disk.
-                    $script:MalUrlBackup = @{ Urls=$script:MalUrlSet; Hosts=$script:MalUrlHostSet; Count=$script:MalUrlCount; File=$script:MalUrlFile }
-                    $script:MalUrlSet = $null; $script:MalUrlHostSet = $null; $script:MalUrlCount = 0; $script:MalUrlFile = $null
-                    $pendingMsg = "Community malicious-URL matching: OFF"
-                } elseif ($script:MalUrlBackup) {
-                    $script:MalUrlSet     = $script:MalUrlBackup.Urls
-                    $script:MalUrlHostSet = $script:MalUrlBackup.Hosts
-                    $script:MalUrlCount   = $script:MalUrlBackup.Count
-                    $script:MalUrlFile    = $script:MalUrlBackup.File
-                    $script:MalUrlBackup  = $null
-                    $pendingMsg = "Community malicious-URL matching: ON ($($script:MalUrlCount) URLs)"
-                } else {
-                    $pendingMsg = "Nothing to toggle - no URLs loaded."
-                }
-                Clear-Host; Show-secgurdBannerCompact; continue
-            }
-
-            if ($how -eq 'l') {
-                Clear-Host; Show-secgurdBannerCompact
-                if ($malLoaded) {
-                    Show-MalUrlList
-                } else {
-                    Write-Host ""
-                    Write-Host "  No URLs loaded." -ForegroundColor Yellow
-                    Write-Host "  Use [f] to load from a file or [p] to paste some first." -ForegroundColor DarkGray
-                    Write-Host ""
-                }
-                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
-                Read-Host | Out-Null
-                Clear-Host; Show-secgurdBannerCompact; continue
-            }
-
-            $loaded = $null; $src = ''
-            if ($how -eq 'f') {
-                Write-Host "  Path to malicious-URL list file:" -ForegroundColor Cyan
-                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                $malPath = (Read-Host).Trim('"').Trim()
-                if ($malPath -and (Test-Path $malPath)) {
-                    $loaded = Import-MalUrls $malPath
-                    $src = $malPath
-                } else {
-                    $pendingMsg = "File not found - URL matching not changed."
-                }
-            } elseif ($how -eq 'p') {
-                Write-Host "  Paste URLs (space-separated, or one per line), then press Enter:" -ForegroundColor Cyan
-                Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-                $pasted = Read-Host
-                $loaded = ConvertFrom-MalUrlText $pasted
-                $src = '(pasted)'
-            } else {
-                $pendingMsg = "Cancelled - pick f, p, l, or x."
-            }
-
-            if ($loaded -and $loaded.Urls.Count -gt 0) {
-                $script:MalUrlFile    = $src
-                $script:MalUrlSet     = $loaded.Urls
-                $script:MalUrlHostSet = $loaded.Hosts
-                $script:MalUrlCount   = $loaded.Urls.Count
-                $script:MalUrlBackup  = $null
-                Clear-Host; Show-secgurdBannerCompact
-                Show-MalUrlList
-                Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
-                Read-Host | Out-Null
-                $pendingMsg = "Community malicious-URL matching: ON ($($script:MalUrlCount) URLs)"
-            } elseif (($how -eq 'f' -or $how -eq 'p') -and -not $pendingMsg) {
-                $pendingMsg = "No valid URLs found (need http:// or https:// entries)."
-            }
+        if ($cmd -eq 'deps' -or $cmd -eq 'dep' -or $cmd -eq 'dependencies') {
+            $pendingMsg = Invoke-DependenciesMenu
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -1757,6 +1913,30 @@ if ($malUrlFile) {
         $script:MalUrlHostSet = $mset.Hosts
         $script:MalUrlCount   = $mset.Urls.Count
         $script:MalUrlFile    = $malUrlFile
+    }
+}
+
+# Squat-domain watchlist. Same discovery order as the community lists: explicit -SquatDomains path
+# (used by the bundled S1 paste), else squat_domains.txt next to the script (the normal git-pull
+# case, refreshed by the openSquat GitHub Action). Feeds module 10's host cross-referencing.
+$squatFile = $null
+if ($SquatDomains -and (Test-Path $SquatDomains)) {
+    $squatFile = $SquatDomains
+} else {
+    $scriptDir3 = $null
+    if ($PSScriptRoot) { $scriptDir3 = $PSScriptRoot }
+    elseif ($PSCommandPath) { $scriptDir3 = Split-Path -Parent $PSCommandPath }
+    if ($scriptDir3) {
+        $cand3 = Join-Path $scriptDir3 'squat_domains.txt'
+        if (Test-Path $cand3) { $squatFile = $cand3 }
+    }
+}
+if ($squatFile) {
+    $sqset = Import-SquatDomains $squatFile
+    if ($sqset.Count -gt 0) {
+        $script:SquatDomainSet   = $sqset
+        $script:SquatDomainCount = $sqset.Count
+        $script:SquatDomainFile  = $squatFile
     }
 }
 
@@ -4204,6 +4384,10 @@ Save-Output "10_browser_history.txt" {
         "Community malicious-URL feed active: $($script:MalUrlCount) URL(s) from communitysavedMALURLS.txt"
         "(abuse.ch URLhaus) - any visited URL or host on the feed is flagged HIGH."
     }
+    if ($script:SquatDomainCount -gt 0) {
+        "Squat-domain watchlist active: $($script:SquatDomainCount) domain(s) from squat_domains.txt"
+        "(openSquat) - any host matching a watchlisted look-alike is flagged HIGH; see 10_squat_watchlist.txt."
+    }
     ""
 
     $browsers = @(
@@ -4261,6 +4445,20 @@ Save-Output "10_browser_history.txt" {
                             if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $medEchoed++ }
                         }
                         default { }   # INFO: written to the per-user detail file only
+                    }
+                }
+
+                # Squat-domain watchlist - checked on EVERY host, independent of the heuristic
+                # verdict above (a look-alike host may not trip any other rule). Deduped per
+                # (user, host); feeds 10_squat_watchlist.txt and 00_BROWSER_ALERTS.txt.
+                if ($script:SquatDomainSet -and $script:SquatDomainCount -gt 0) {
+                    $sqHost  = Get-UrlHost $u
+                    $sqMatch = Test-SquatHost $sqHost
+                    if ($sqMatch -and $script:SquatSeen.Add("$user|$sqHost")) {
+                        $reason = "matches openSquat squat-domain watchlist ($sqMatch)"
+                        $script:SquatMatches.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Url=$u; Host=$sqHost; Matched=$sqMatch; Source='browser-history' })
+                        Add-Finding 'HIGH' '10' (Ex "Browser URL [$user/$($b.Name)] ^09 $($reason): $u") '10_squat_watchlist.txt' -HighlightUrl $u
+                        $script:BrowserFlagged.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Host=$sqHost; Severity='HIGH'; Reason=$reason; Url=$u })
                     }
                 }
             }
@@ -4329,6 +4527,56 @@ Save-Output "10_browser_history.txt" {
     if ($grandFlagged -gt 0) {
         # The ONE browser entry that goes in the findings list: an aggregate pointer, not a URL.
         Add-Finding 'INFO' '10' "Browser history: $grandFlagged potentially-suspicious URL(s) across $($usersSeen.Keys.Count) user(s) - review 10_browser_history\<user>\" '10_browser_history.txt'
+    }
+}
+
+Save-Output "10_squat_watchlist.txt" {
+    Write-Section "SQUAT-DOMAIN WATCHLIST (openSquat) - MATCHES"
+    "Cross-references browser-history hosts and download-origin hosts (module 03 BITS + module 07"
+    "Zone.Identifier) against the openSquat squat-domain watchlist (squat_domains.txt). A match means"
+    "a visited or downloaded host is a look-alike / typosquat of one of your brand terms - a likely"
+    "phishing or drive-by domain. Matching is host-based: an exact host, or any subdomain of a"
+    "watchlist entry. Browser-history hits are collected during 10_browser_history; download origins"
+    "are folded in here. Every match is a HIGH finding and also appears in 00_BROWSER_ALERTS.txt."
+    ""
+    if (-not $script:SquatDomainSet -or $script:SquatDomainCount -le 0) {
+        "Watchlist not loaded: squat_domains.txt was not found next to secgurd.ps1 (or was empty)."
+        "Generate it with the 'Refresh squat-domain watchlist' GitHub Action (it runs openSquat over"
+        "keywords.txt), or pass -SquatDomains <file>. Nothing to cross-reference."
+        return
+    }
+    "Watchlist domains loaded : $($script:SquatDomainCount)"
+    "Source                   : $($script:SquatDomainFile)"
+    ""
+
+    # Fold in download-origin hosts. Deduped per (user, host) via the same $script:SquatSeen set the
+    # browser loop used, so a host seen in both places is reported once.
+    foreach ($ds in $script:DownloadSources) {
+        foreach ($cand in @($ds.HostUrl, $ds.ReferrerUrl)) {
+            if (-not $cand) { continue }
+            $dh = Get-UrlHost $cand
+            $dm = Test-SquatHost $dh
+            if (-not $dm) { continue }
+            $du = if ($ds.User) { $ds.User } else { 'unknown' }
+            if (-not $script:SquatSeen.Add("$du|$dh")) { continue }
+            $reason = "matches openSquat squat-domain watchlist ($dm)"
+            $script:SquatMatches.Add([PSCustomObject]@{ User=$du; Browser="download-origin ($($ds.Source))"; Url=$cand; Host=$dh; Matched=$dm; Source='download-origin' })
+            Add-Finding 'HIGH' '10' (Ex "Download origin [$du] ^09 $($reason): $cand") '10_squat_watchlist.txt'
+            $script:BrowserFlagged.Add([PSCustomObject]@{ User=$du; Browser='download-origin'; Host=$dh; Severity='HIGH'; Reason=$reason; Url=$cand })
+        }
+    }
+
+    if ($script:SquatMatches.Count -eq 0) {
+        "No browser-history or download-origin host matched the watchlist."
+        return
+    }
+
+    Write-Section "MATCHES ($($script:SquatMatches.Count))"
+    foreach ($sm in ($script:SquatMatches | Sort-Object Matched, User, Host)) {
+        "[$($sm.Matched)]  user=$($sm.User)  via=$($sm.Browser)"
+        "        host : $($sm.Host)"
+        "        url  : $($sm.Url)"
+        ""
     }
 }
 

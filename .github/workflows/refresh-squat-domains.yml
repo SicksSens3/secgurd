@@ -1,0 +1,50 @@
+name: Refresh squat-domain watchlist
+
+# Auto-updates squat_domains.txt using openSquat (https://github.com/atenreiro/opensquat),
+# which finds newly-registered look-alike / typosquat / combosquat domains of your brand terms
+# (listed in keywords.txt). Runs in GitHub's cloud (NOT on any endpoint) and commits the refreshed
+# file to the repo. Your endpoints stay offline - they just get the new domains on the next
+# `git pull`. Free mode (confidence level -c 1) uses openSquat's built-in public feed and needs
+# NO API key.
+
+on:
+  schedule:
+    - cron: '15 6 * * *'        # daily at 06:15 UTC
+  workflow_dispatch:            # also allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: write               # needed to commit the refreshed file back to the repo
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install openSquat
+        run: pip install opensquat
+
+      - name: Hunt squat domains
+        # -k keywords.txt : your brand/domain terms (repo root)
+        # -c 1            : confidence level - openSquat uses 0=very high .. 4=very low, i.e. LOWER
+        #                   is stricter. 1 = HIGH confidence: fewer, higher-quality matches (good for
+        #                   a watchlist that auto-flags HIGH). Raise toward 4 to catch more (noisier).
+        #                   Free mode - no API key required.
+        # -o / -t txt     : write one matching domain per line to squat_domains.txt
+        run: opensquat -k keywords.txt -c 1 -o squat_domains.txt -t txt
+
+      - name: Commit changes if the list changed
+        run: |
+          set -euo pipefail
+          git config user.name  "secgurd-ioc-bot"
+          git config user.email "secgurd-ioc-bot@users.noreply.github.com"
+          git add squat_domains.txt
+          # Commit ONLY if the staged file actually changed, then push.
+          git diff --cached --quiet || git commit -m "Auto-refresh squat-domain watchlist ($(date -u '+%Y-%m-%d'))"
+          git push

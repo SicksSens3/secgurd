@@ -52,7 +52,7 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 | 07 | Filesystem | temp executables, ADS, recently-modified files |
 | 08 | Event logs | account changes, log clearing, log status |
 | 09 | Software & Defender | installed apps, **per-user AppData / all-hive PUP & clone-browser detection**, patches, Defender status & exclusions |
-| 10 | Browser & creds | **per-user browser history + URL analysis (Chrome/Edge/Firefox)**, history file paths, `.ssh`, `.aws`, credential files |
+| 10 | Browser & creds | **per-user browser history + URL analysis (Chrome/Edge/Firefox)**, **squat-domain watchlist cross-ref**, history file paths, `.ssh`, `.aws`, credential files |
 | 11 | LOLBins | certutil, mshta, rundll32, regsvr32 usage |
 | 12 | AmCache / ShimCache | execution-artifact locations |
 | 13 | Prefetch | `.pf` files, last-run times |
@@ -192,8 +192,7 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `a` / `n` | Select all / none |
 | `qa` / `net` / `ps` | Presets (quick-assess / network / PowerShell) |
 | `o` | Toggle: open output folder when done |
-| `i` | IOC hashes — load from file `[f]`, paste `[p]`, list `[l]`, or turn off `[x]` |
-| `u` | Malicious URLs (URLhaus) — load from file `[f]`, paste `[p]`, list `[l]`, or toggle `[x]` |
+| `deps` | Dependencies sub-menu — manage all three external data lists in one place: **IOC hashes**, **malicious URLs** (URLhaus), and **squat domains** (openSquat). Pick `[1]`/`[2]`/`[3]` to load from file `[f]`, paste `[p]`, list `[l]`, or toggle `[x]`. |
 | `f` | Find — scope all output to a name/string (enter a term, or blank to clear) |
 | `d` | Set the lookback window (days) |
 | `p` | Pastable (compressed gzip+Base64) version for remote shells — `[1]` everything, `[2]` community lists only, `[3]` script only |
@@ -261,6 +260,20 @@ https://evil-cdn.example/a,b,c/payload,CobaltStrike
 The GitHub Action `.github/workflows/refresh-malurls.yml` runs daily (06:30 UTC, just after the hash refresh) and manually from the **Actions** tab. It fetches the URLhaus "online" export **in GitHub's cloud**, keeps the URL plus its threat/tags label, and commits the refreshed `communitysavedMALURLS.txt` back to the repo. Your next `git pull` picks up the new URLs — the endpoints never touch the internet. It also rides along inside the compressed SentinelOne paste, so an air-gapped box gets the current URL feed too.
 
 **The feed is aggressively filtered to stay small.** The raw URLhaus export is ~15k URLs, but ~87% of them are things secgurd **already flags on its own heuristics** — so listing them adds nothing. The Action drops every entry the tool would already catch (direct payload downloads like `.exe`/`.dll`/`.ps1`, raw-IP hosts, GitHub-hosted content, known C2/file-drop infrastructure, URL shorteners, high-abuse TLDs, punycode), keeps only URLs added in the last **90 days**, and emits **one representative URL per host** (module 10 matches on host too, so extra URLs on an already-listed host are redundant). What survives — a few hundred hosts — is the real value-add: confirmed-malicious sites on *otherwise normal-looking* domains that the heuristics would miss. Tune the window via `MAXAGE_DAYS` in the workflow.
+
+---
+
+## Squat-domain watchlist (openSquat)
+
+A third auto-loaded list, `squat_domains.txt`, holds **look-alike / typosquat domains impersonating your own brand**. It's built by [openSquat](https://github.com/atenreiro/opensquat), which scans newly-registered domains for typosquats (`exmaple-brand.com`), homoglyphs, and combosquats (`example-brand-login.com`) of the terms you list in **`keywords.txt`** at the repo root. Like the other lists it is **auto-loaded** from beside `secgurd.ps1` (or via `-SquatDomains <file>`), rides along in the compressed S1 paste, and is cleaned up by the cleanup command.
+
+**Where it's used.** Module 10 checks **every browser-history host and every download-origin host** (module 03 BITS jobs + module 07 `Zone.Identifier` streams) against the watchlist — an exact host match or any subdomain of a watchlisted entry. A hit raises a **HIGH** finding (*"matches openSquat squat-domain watchlist"*), is written to **`10_squat_watchlist.txt`** (listing user / browser / URL / matched domain), and flows into the end-of-run `00_BROWSER_ALERTS.txt` correlation. Matches are deduped per user+host so a heavily-visited squat host is reported once.
+
+**Setup:** edit `keywords.txt` with your organisation's real brand/product terms (one per line, just the word — not the TLD; `#` comments and blank lines ignored). The starter file ships with placeholders you must replace.
+
+### Keeping the squat watchlist fresh automatically
+
+The GitHub Action `.github/workflows/refresh-squat-domains.yml` runs daily (06:15 UTC) and manually from the **Actions** tab. It installs openSquat in GitHub's cloud, runs it over `keywords.txt` in **free mode** (confidence level 1 — no API key needed), and commits the refreshed `squat_domains.txt` back to the repo only if it changed. Your next `git pull` picks up the new domains — the endpoints never touch the internet.
 
 ---
 

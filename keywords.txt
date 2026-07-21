@@ -1,0 +1,14 @@
+# openSquat keyword list - one term per line.
+#
+# These are YOUR organisation's brand / product / primary-domain terms. openSquat hunts
+# newly-registered domains that are look-alikes of them - typosquats (exmaple-brand.com),
+# homoglyphs (examp1e-brand.com), and combosquats (example-brand-login.com) - so a match in
+# squat_domains.txt is a likely phishing / drive-by domain impersonating you.
+#
+# Replace the PLACEHOLDERS below with your real brand words. Use just the term, not the TLD
+# (e.g. "acme", not "acme.com"). Lines starting with '#' and blank lines are ignored.
+#
+example-brand
+exampleproduct
+example-portal
+myco-login
