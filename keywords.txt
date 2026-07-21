@@ -1,13 +1,42 @@
-# openSquat keyword list - one term per line.
+# ==========================================================================================
+#  secgurd squat-domain keywords  -  openSquat input list
+# ==========================================================================================
 #
-# These are YOUR organisation's brand / product / primary-domain terms. openSquat hunts
-# newly-registered domains that are look-alikes of them - typosquats (exmaple-brand.com),
-# homoglyphs (examp1e-brand.com), and combosquats (example-brand-login.com) - so a match in
-# squat_domains.txt is a likely phishing / drive-by domain impersonating you.
+#  WHAT THIS IS
+#  Your organisation's brand / product / domain terms. The "Refresh squat-domain watchlist"
+#  GitHub Action runs openSquat over this file daily, finds NEWLY-REGISTERED domains that
+#  look like these terms (typosquats, homoglyphs, combosquats), and writes the matches to
+#  squat_domains.txt. secgurd (module 10) then flags any browser-history or download-origin
+#  host that matches one of those domains as HIGH.
 #
-# Replace the PLACEHOLDERS below with your real brand words. Use just the term, not the TLD
-# (e.g. "acme", not "acme.com"). Lines starting with '#' and blank lines are ignored.
+#  HOW TO USE
+#    1. Add your terms below, ONE PER LINE - just the word, NOT the TLD ("acmebank", not
+#       "acmebank.com"). Lines starting with '#' and blank lines are ignored.
+#    2. Commit and PUSH to main (the Action runs in GitHub's cloud, so it only sees pushed
+#       changes - editing this file locally does nothing on its own).
+#    3. Run it: repo -> Actions tab -> "Refresh squat-domain watchlist" -> Run workflow
+#       (or just wait for the daily 06:15 UTC run).
+#    4. The Action updates squat_domains.txt; `git pull` on endpoints picks it up.
 #
+#  PICK DISTINCTIVE TERMS
+#  Use brand-specific strings. Generic words ("card", "pay", "login", "mail") match thousands
+#  of unrelated new domains and bury the real hits in noise. Distinctive = clean, useful hits.
+#
+#  EXAMPLE
+#  If you listed:
+#      acmebank
+#      acme-pay
+#  a run might catch domains like:
+#      acmebank-login.com     (combosquat: brand + lure word)
+#      acmebank.co            (TLD swap)
+#      acnebank.com           (typo: m -> n)
+#      acmebаnk.com           (homoglyph: look-alike character)
+#      acme-pay-verify.com    (combosquat on acme-pay)
+#  ...and a user visiting acmebank-login.com would then be flagged HIGH by secgurd.
+#
+# ==========================================================================================
+#  ADD YOUR TERMS BELOW  (replace these placeholders with your real brand/product words)
+# ==========================================================================================
 example-brand
 exampleproduct
 example-portal
