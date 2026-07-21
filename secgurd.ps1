@@ -277,7 +277,6 @@ function Show-secgurdBanner {
     $hilt   = 'White'
     $pommel = 'Yellow'
     $tip    = 'Red'
-    $rust   = 'DarkRed'
     $dim    = 'DarkGray'
     $info   = 'Gray'
     $ok     = 'Green'
@@ -4736,7 +4735,6 @@ Save-Output "12_amcache_shimcache.txt" {
     Write-Section "APPCOMPAT CACHE (ShimCache) - Registry"
     $shimKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache'
     if (Test-Path $shimKey) {
-        $data = Get-ItemProperty $shimKey
         "ShimCache registry key found."
         "  NOTE: Parse the binary blob offline with AppCompatCacheParser (EricZimmerman)."
         "  Key: $shimKey"
