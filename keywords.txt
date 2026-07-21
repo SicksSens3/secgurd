@@ -22,6 +22,17 @@
 #  Use brand-specific strings. Generic words ("card", "pay", "login", "mail") match thousands
 #  of unrelated new domains and bury the real hits in noise. Distinctive = clean, useful hits.
 #
+#  SENSITIVITY  (the -c confidence level - set in the workflow, NOT here)
+#  openSquat's -c flag controls how loose the matching is. It is a whole-run setting, so it
+#  lives in .github/workflows/refresh-squat-domains.yml, not in this file. Scale (LOWER = stricter):
+#      -c 0  very high confidence  (near-exact only; fewest results)
+#      -c 1  high confidence       <- current setting: fewer, higher-quality matches
+#      -c 2  medium
+#      -c 3  low
+#      -c 4  very low              (loosest; most matches, most false positives)
+#  We use -c 1 because matches auto-flag HIGH in secgurd, so quality > quantity. If you feel
+#  you're missing squats, first tighten your keywords; only then raise -c toward 4 in the workflow.
+#
 #  EXAMPLE
 #  If you listed:
 #      acmebank
