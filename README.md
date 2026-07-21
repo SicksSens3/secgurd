@@ -123,12 +123,12 @@ Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/SicksSen
 ### One-liner for cleanup
 
 ```powershell
-Remove-Item "$env:TEMP\secgurd*", "$env:TEMP\communitysavedIOCS.txt", "$env:TEMP\communitysavedMALURLS.txt", "$env:TEMP\manualIOCS.txt", "$env:TEMP\secgurd_s1_*.txt" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:TEMP\secgurd*", "$env:TEMP\communitysavedIOCS.txt", "$env:TEMP\communitysavedMALURLS.txt", "$env:TEMP\squat_domains.txt", "$env:TEMP\manualIOCS.txt", "$env:TEMP\secgurd_s1_*.txt" -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
 > This clears everything secgurd (or the compressed S1 paste) can leave in `%TEMP%`: the `secgurd_<host>_<timestamp>` output folder, the unpacked `secgurd.ps1`, the S1 paste files, and the IOC-hash / malicious-URL lists. `"$env:TEMP\secgurd*"` already covers `secgurd.ps1` and the `secgurd_s1_*.txt` files, so those entries are belt-and-suspenders.
 >
-> To check after cleanup run `Get-ChildItem "$env:TEMP" -Filter "secgurd*" -ErrorAction SilentlyContinue; Get-ChildItem "$env:TEMP" -Include "communitysavedIOCS.txt","communitysavedMALURLS.txt","manualIOCS.txt" -ErrorAction SilentlyContinue`.
+> To check after cleanup run `Get-ChildItem "$env:TEMP" -Filter "secgurd*" -ErrorAction SilentlyContinue; Get-ChildItem "$env:TEMP" -Include "communitysavedIOCS.txt","communitysavedMALURLS.txt","squat_domains.txt","manualIOCS.txt" -ErrorAction SilentlyContinue`.
 
 ---
 
@@ -153,11 +153,14 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 | `-WithOwners` | Resolve process owners (slower; off by default — can stall on domain controllers). |
 | `-WithSignatures` | Verify Authenticode signatures of service binaries / loaded DLLs (slower; can stall offline). |
 | `-WithTaskInfo` | Resolve run times (LastRun/NextRun/LastResult) for **all** scheduled tasks incl. the hundreds of built-in `\Microsoft\*` ones. Off by default — those per-task Task Scheduler calls can take many minutes; without it, run times are resolved only for non-Microsoft tasks (all tasks are still listed). |
-| `-IOCHashes <file>` | Match on-disk binaries against an MD5/SHA-1/SHA-256 IOC hash list. |
+| `-IOCHashes <file>` | Match on-disk binaries against an MD5/SHA-1/SHA-256 IOC hash list (your own/manual list). |
+| `-CommunityIOCHashes <file>` | Explicit path to the community hash list (otherwise auto-found next to the script). |
+| `-CommunityMalUrls <file>` | Explicit path to the community malicious-URL list (otherwise auto-found next to the script). |
+| `-SquatDomains <file>` | Explicit path to the openSquat squat-domain watchlist (otherwise auto-found next to the script). |
 | `-DaysBack <N>` | Lookback window in days for time-bounded collectors (default 30). |
 | `-Find <string>` | Scope **all** output to lines/items containing `<string>` (case-insensitive) — see [Targeted find](#targeted-find--scoping-a-run-to-one-artifact). |
-| `-Cleanup` | Remove **all** secgurd artifacts from `%TEMP%` — the script itself, output folders + zips, S1 paste files, and the IOC/URL/manual lists (requires typing `DELETE` to confirm). Also available as the `cleanup` menu command. |
-| `-MakeS1Paste` | Copy the compressed (gzip+Base64) "everything" paste (script + community IOC/URL lists) for the remote shell. For the script-only / lists-only variants, use the interactive `p` menu. |
+| `-Cleanup` | Remove **all** secgurd artifacts from `%TEMP%` — the script itself, output folders + zips, S1 paste files, and the IOC / malicious-URL / squat-domain / manual lists (requires typing `DELETE` to confirm). Also available as the `cleanup` menu command. |
+| `-MakeS1Paste` | Copy the compressed (gzip+Base64) "everything" paste (script + IOC / malicious-URL / squat-domain lists) for the remote shell. For the script-only / lists-only variants, use the interactive `p` menu. |
 | `-Help` | Show usage and exit. |
 
 ### Examples
@@ -195,11 +198,11 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `deps` | Dependencies sub-menu — manage all three external data lists in one place: **IOC hashes**, **malicious URLs** (URLhaus), and **squat domains** (openSquat). Pick `[1]`/`[2]`/`[3]` to load from file `[f]`, paste `[p]`, list `[l]`, or toggle `[x]`. |
 | `f` | Find — scope all output to a name/string (enter a term, or blank to clear) |
 | `d` | Set the lookback window (days) |
-| `p` | Pastable (compressed gzip+Base64) version for remote shells — `[1]` everything, `[2]` community lists only, `[3]` script only |
+| `p` | Pastable (compressed gzip+Base64) version for remote shells — `[1]` everything, `[2]` dependency lists only (IOC + URL + squat), `[3]` script only |
 | `r` | Run the selected modules |
 | `?` | Help |
 | `q` | Quit |
-| `cleanup` | Remove **all** secgurd artifacts from `%TEMP%` (script, output folders + zips, S1 paste files, IOC/URL/manual lists) — type-to-confirm, then exit. Same as `-Cleanup`. |
+| `cleanup` | Remove **all** secgurd artifacts from `%TEMP%` (script, output folders + zips, S1 paste files, IOC / malicious-URL / squat-domain / manual lists) — type-to-confirm, then exit. Same as `-Cleanup`. |
 
 ---
 
@@ -347,10 +350,10 @@ If you're authorized on the environment:
 The S1 remote shell often can't paste, runs non-interactively, and chokes on download-and-run. Secgurd handles this:
 
 - Run secgurd on your own box and press **`p`**. Every option is a single compressed (gzip+Base64) block that auto-**compacts** a copy of the source before packing (see below), so the paste is as small as possible:
-  - **[1] Everything** — script + community IOC list + community malicious-URL list, in one block.
-  - **[2] Community lists only** — just `communitysavedIOCS.txt` / `communitysavedMALURLS.txt`.
+  - **[1] Everything** — script + all dependency lists (IOC hashes + malicious URLs + squat domains), in one block.
+  - **[2] Dependency lists only** — just `communitysavedIOCS.txt` / `communitysavedMALURLS.txt` / `squat_domains.txt`.
   - **[3] Script only** — just `secgurd.ps1` (smallest block).
-- **If [1] is too big** for your shell's paste limit (the community IOC list is the bulk), paste **[2]** first, then **[3]**: [2] drops the lists into `%TEMP%`, and [3] unpacks `secgurd.ps1` and runs it — the wrapper picks up whatever lists are already in `%TEMP%`, so IOC/URL matching works. (You can also just paste **[3]** on its own to run the script with no community lists.)
+- **If [1] is too big** for your shell's paste limit (the community IOC list is the bulk), paste **[2]** first, then **[3]**: [2] drops the lists into `%TEMP%`, and [3] unpacks `secgurd.ps1` and runs it — the wrapper picks up whatever lists are already in `%TEMP%`, so IOC / URL / squat matching works. (You can also just paste **[3]** on its own to run the script with no dependency lists.)
 - Copy the block, paste it into the S1 Remote Shell, press Enter, and the interactive menu appears there.
 
 Each option runs secgurd **in the current shell as an in-memory scriptblock** — never a child `powershell.exe`. This matters in the S1 shell: it repaints the banner/menu on the first Enter (a child process doesn't), and it runs even when the endpoint's execution policy has script files disabled (execution policy only restricts `.ps1` *files*, not scriptblocks). The script is also "wrap-safe" (no internal here-strings), so the paste can't break itself.
