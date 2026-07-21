@@ -39,6 +39,35 @@ jobs:
         # -o / -t txt     : write one matching domain per line to squat_domains.txt
         run: opensquat -k keywords.txt -c 1 -o squat_domains.txt -t txt
 
+      - name: Prune, dedupe and cap the list
+        # Keeps squat_domains.txt lean - it rides inside the compressed SentinelOne paste, which must
+        # stay small. Two reductions:
+        #   1) Drop domains secgurd ALREADY flags on its own heuristics, so the watchlist never
+        #      duplicates a built-in detection: punycode (xn--) hosts and high-abuse TLDs (same list
+        #      as Test-SuspiciousUrl in secgurd.ps1 - keep the two in sync).
+        #   2) Keep only valid-looking domains, sort -u, and hard-cap the count (CAP). openSquat
+        #      overwrites this file each run (it is one day's matches, not cumulative), so a large
+        #      file means the keywords are too generic - the cap is a safety backstop and logs drops.
+        run: |
+          set -euo pipefail
+          F="squat_domains.txt"
+          CAP=500
+          [ -f "$F" ] || { echo "openSquat produced no output; nothing to prune."; exit 0; }
+          ABUSE_TLDS='\.(tk|top|xyz|gq|ml|cf|work|click|country|kim|men|loan|download|zip|mov|rest|cfd|sbs|lol|quest)$'
+          TMP="$(mktemp)"
+          grep -viE '(^|\.)xn--' "$F" \
+            | grep -viE "$ABUSE_TLDS" \
+            | grep -iE '^[a-z0-9-]+(\.[a-z0-9-]+)+$' \
+            | sort -u > "$TMP"
+          TOTAL=$(wc -l < "$TMP" | tr -d ' ')
+          echo "Kept $TOTAL domain(s) after prune+dedupe."
+          if [ "$TOTAL" -gt "$CAP" ]; then
+            echo "Over cap ($CAP) - dropping $((TOTAL-CAP)). Consider tightening keywords.txt."
+            head -n "$CAP" "$TMP" > "$F"
+          else
+            cp "$TMP" "$F"
+          fi
+
       - name: Commit changes if the list changed
         run: |
           set -euo pipefail

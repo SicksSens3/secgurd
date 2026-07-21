@@ -180,6 +180,10 @@ $script:SquatSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([St
 # so the post-collection correlation step (after IOC matching) can cross-reference these hosts
 # with on-disk artifacts and write 00_BROWSER_ALERTS.txt.
 $script:BrowserFlagged = New-Object System.Collections.Generic.List[object]
+# Dedupe guard for the above: keyed "user|host|reason" so the same host isn't flagged twice with
+# the same reason (repeat visits, or a heuristic + dependency-list hit on one host). Squat matches
+# additionally take precedence over generic heuristics for the same URL (see module 10).
+$script:BrowserFlaggedSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 # Download origins (module 07 Zone.Identifier streams + module 03 BITS jobs): file -> URL.
 # The end-of-run correlation folds suspicious origins into 00_BROWSER_ALERTS.txt.
 $script:DownloadSources = New-Object System.Collections.Generic.List[object]
@@ -2108,6 +2112,19 @@ function Add-Finding {
     } else {
         $color = if ($Severity -eq 'MED') { 'Yellow' } else { 'DarkGray' }
         Write-Host $Message -ForegroundColor $color
+    }
+}
+
+function Add-BrowserFlag {
+    # Record a flagged browser/download host for the end-of-run 00_BROWSER_ALERTS correlation,
+    # de-duplicated by (user, host, reason). Without this, a host visited via many URLs - or one
+    # caught by both a built-in heuristic AND a dependency list - would produce multiple identical
+    # correlation rows. Squat precedence is handled at the call site (module 10 skips the heuristic
+    # add when the same URL is a squat hit), so this only collapses genuine repeats.
+    param([string]$User, [string]$Browser, [string]$HostName, [string]$Severity, [string]$Reason, [string]$Url)
+    $key = "$User|$HostName|$Reason".ToLower()
+    if ($script:BrowserFlaggedSeen.Add($key)) {
+        [void]$script:BrowserFlagged.Add([PSCustomObject]@{ User=$User; Browser=$Browser; Host=$HostName; Severity=$Severity; Reason=$Reason; Url=$Url })
     }
 }
 
@@ -4425,40 +4442,38 @@ Save-Output "10_browser_history.txt" {
 
             $flagged = New-Object System.Collections.Generic.List[object]
             foreach ($u in $urlList) {
+                $uHost = Get-UrlHost $u
+                # Is this host on the squat watchlist? Resolved up-front so a squat hit can OWN the
+                # alert for this URL: the squat reason (impersonates one of our brands) is more
+                # specific than any generic heuristic, so we do NOT also emit a heuristic alert for
+                # the same URL - that is the "no duplicate hardcoded-vs-dependency alert" guarantee.
+                $sqMatch = if ($script:SquatDomainCount -gt 0) { Test-SquatHost $uHost } else { $null }
+
                 $verdict = Test-SuspiciousUrl $u
                 if ($verdict) {
-                    # The URL is already in $flagged and gets written to the per-user detail file in
-                    # full. Below we ONLY decide the live-scan echo - NOTHING here is added to the
-                    # post-run FINDINGS list / 00_SUMMARY (all -NoRecord). A few HIGH/MED are echoed
-                    # for awareness; INFO is not echoed at all. The detail files hold everything.
+                    # Always list the heuristic/feed verdict in the per-user detail file (raw data).
                     $flagged.Add([PSCustomObject]@{ Severity = $verdict.Severity; Reason = $verdict.Reason; URL = $u })
-                    # Also record to the script-scope list so the post-collection correlation step
-                    # (after IOC matching) can cross-reference these hosts with on-disk artifacts.
-                    $script:BrowserFlagged.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Host=(Get-UrlHost $u); Severity=$verdict.Severity; Reason=$verdict.Reason; Url=$u })
-                    $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u")
-                    switch ($verdict.Severity) {
-                        'HIGH' {
-                            if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $highEchoed++ }
+                    # But only feed the correlation + live echo when squat is NOT also claiming this
+                    # URL (else the host double-alerts). Add-BrowserFlag further dedupes identical
+                    # (user, host, reason). Echoes stay -NoRecord (kept out of the FINDINGS list).
+                    if (-not $sqMatch) {
+                        Add-BrowserFlag $user $b.Name $uHost $verdict.Severity $verdict.Reason $u
+                        $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u")
+                        switch ($verdict.Severity) {
+                            'HIGH' { if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $highEchoed++ } }
+                            'MED'  { if ($medEchoed  -lt $medCap)  { Add-Finding 'MED'  '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $medEchoed++ } }
+                            default { }   # INFO: written to the per-user detail file only
                         }
-                        'MED' {
-                            if ($medEchoed -lt $medCap) { Add-Finding 'MED' '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $medEchoed++ }
-                        }
-                        default { }   # INFO: written to the per-user detail file only
                     }
                 }
 
-                # Squat-domain watchlist - checked on EVERY host, independent of the heuristic
-                # verdict above (a look-alike host may not trip any other rule). Deduped per
-                # (user, host); feeds 10_squat_watchlist.txt and 00_BROWSER_ALERTS.txt.
-                if ($script:SquatDomainSet -and $script:SquatDomainCount -gt 0) {
-                    $sqHost  = Get-UrlHost $u
-                    $sqMatch = Test-SquatHost $sqHost
-                    if ($sqMatch -and $script:SquatSeen.Add("$user|$sqHost")) {
-                        $reason = "matches openSquat squat-domain watchlist ($sqMatch)"
-                        $script:SquatMatches.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Url=$u; Host=$sqHost; Matched=$sqMatch; Source='browser-history' })
-                        Add-Finding 'HIGH' '10' (Ex "Browser URL [$user/$($b.Name)] ^09 $($reason): $u") '10_squat_watchlist.txt' -HighlightUrl $u
-                        $script:BrowserFlagged.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Host=$sqHost; Severity='HIGH'; Reason=$reason; Url=$u })
-                    }
+                # Squat hit: the one, most-specific alert for this host. Deduped per (user, host);
+                # feeds 10_squat_watchlist.txt and 00_BROWSER_ALERTS.txt.
+                if ($sqMatch -and $script:SquatSeen.Add("$user|$uHost")) {
+                    $reason = "matches openSquat squat-domain watchlist ($sqMatch)"
+                    $script:SquatMatches.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Url=$u; Host=$uHost; Matched=$sqMatch; Source='browser-history' })
+                    Add-Finding 'HIGH' '10' (Ex "Browser URL [$user/$($b.Name)] ^09 $($reason): $u") '10_squat_watchlist.txt' -HighlightUrl $u
+                    Add-BrowserFlag $user $b.Name $uHost 'HIGH' $reason $u
                 }
             }
             $grandFlagged += $flagged.Count
@@ -4561,7 +4576,7 @@ Save-Output "10_squat_watchlist.txt" {
             $reason = "matches openSquat squat-domain watchlist ($dm)"
             $script:SquatMatches.Add([PSCustomObject]@{ User=$du; Browser="download-origin ($($ds.Source))"; Url=$cand; Host=$dh; Matched=$dm; Source='download-origin' })
             Add-Finding 'HIGH' '10' (Ex "Download origin [$du] ^09 $($reason): $cand") '10_squat_watchlist.txt'
-            $script:BrowserFlagged.Add([PSCustomObject]@{ User=$du; Browser='download-origin'; Host=$dh; Severity='HIGH'; Reason=$reason; Url=$cand })
+            Add-BrowserFlag $du 'download-origin' $dh 'HIGH' $reason $cand
         }
     }
 
@@ -5146,7 +5161,7 @@ if (($script:BrowserFlagged -and $script:BrowserFlagged.Count -gt 0) -or ($scrip
         if ($v -or $sameAsBrowser) {
             $sev = if ($v) { $v.Severity } else { 'MED' }
             $rsn = "download origin ($($ds.Source)) of $($ds.FileLeaf)$(if ($v) { " - $($v.Reason)" })"
-            [void]$script:BrowserFlagged.Add([PSCustomObject]@{ User=$ds.User; Browser='download-origin'; Host=$dsHost; Severity=$sev; Reason=$rsn; Url=$srcUrl })
+            Add-BrowserFlag $ds.User 'download-origin' $dsHost $sev $rsn $srcUrl
             # ensure the downloaded file's own name is in the host-file set for corroboration
             & $addLeaf $ds.FileLeaf
         }

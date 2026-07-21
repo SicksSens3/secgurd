@@ -275,6 +275,8 @@ A third auto-loaded list, `squat_domains.txt`, holds **look-alike / typosquat do
 
 The GitHub Action `.github/workflows/refresh-squat-domains.yml` runs daily (06:15 UTC) and manually from the **Actions** tab. It installs openSquat in GitHub's cloud, runs it over `keywords.txt` in **free mode** (confidence level 1 — no API key needed), and commits the refreshed `squat_domains.txt` back to the repo only if it changed. Your next `git pull` picks up the new domains — the endpoints never touch the internet.
 
+**Kept lean for the paste.** `squat_domains.txt` rides inside the compressed SentinelOne paste, which has to stay small, so the Action prunes and caps it: it drops domains secgurd **already flags on its own heuristics** (punycode hosts, high-abuse TLDs) so the watchlist never duplicates a built-in detection, then de-dupes, sorts, and hard-caps the count (500 — a backstop; openSquat overwrites the file each run, so a large result means the keywords are too generic). At runtime the reverse guard also holds: if a visited host is on the squat list **and** trips a built-in heuristic, only the squat alert fires (it's the more specific "impersonates your brand" signal), and repeat visits to the same host collapse to one correlation entry — so no double-alerting in `00_BROWSER_ALERTS.txt`.
+
 ---
 
 ## Targeted find — scoping a run to one artifact
