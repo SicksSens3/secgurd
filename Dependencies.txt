@@ -1,2 +1,3 @@
 communitysavedIOCS.txt
 communitysavedMALURLS.txt
+squat_domains.txt

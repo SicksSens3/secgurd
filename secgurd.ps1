@@ -849,10 +849,10 @@ function Compress-Source {
 function Show-S1Compressed {
     # Compressed SINGLE paste (Compress-Source -> gzip -> Base64), one block, decompressed on the
     # target. -Mode controls what rides along:
-    #   'all'    - secgurd.ps1 + community IOC list + community malicious-URL list + your manual list
-    #   'script' - secgurd.ps1 ONLY (smallest; add the community lists later with the 'lists' block)
-    #   'lists'  - community IOC + malicious-URL lists ONLY (no script) - paste after a 'script' block
-    #              to drop the intel next to secgurd.ps1 in %TEMP% and re-run with it
+    #   'all'    - secgurd.ps1 + community IOC + malicious-URL + squat-domain lists + your manual list
+    #   'script' - secgurd.ps1 ONLY (smallest; add the dependency lists later with the 'lists' block)
+    #   'lists'  - dependency lists ONLY (IOC + malicious-URL + squat, no script) - paste after a
+    #              'script' block to drop the intel next to secgurd.ps1 in %TEMP% and re-run with it
     # The wrapper writes each bundled file to %TEMP% and, if secgurd.ps1 is present there, runs it
     # in-session (scriptblock, so a Restricted execution policy can't block it) passing whatever
     # IOC/URL lists exist in %TEMP% - so the pieces compose no matter which order you paste them.
@@ -944,7 +944,7 @@ function Show-S1Compressed {
         Write-Host ""
         Write-Host "  Nothing to pack for this option." -ForegroundColor Yellow
         if ($Mode -eq 'lists') {
-            Write-Host "  No community IOC / malicious-URL list is loaded to bundle." -ForegroundColor DarkGray
+            Write-Host "  No community IOC / malicious-URL / squat-domain list is loaded to bundle." -ForegroundColor DarkGray
         }
         Write-Host ""
         return
@@ -998,8 +998,8 @@ function Show-S1Compressed {
     # Mode-specific labels / fallback filename (all names match the secgurd_s1_* cleanup glob).
     switch ($Mode) {
         'script' { $title = 'Compressed single paste  (script only)';                    $outName = 'secgurd_s1_script.txt' }
-        'lists'  { $title = 'Compressed single paste  (community IOC + malicious-URL lists only)'; $outName = 'secgurd_s1_lists.txt' }
-        default  { $title = 'Compressed single paste  (script + all IOC/URL lists)';      $outName = 'secgurd_s1_compressed.txt' }
+        'lists'  { $title = 'Compressed single paste  (dependency lists only: IOC + malicious-URL + squat)'; $outName = 'secgurd_s1_lists.txt' }
+        default  { $title = 'Compressed single paste  (script + all IOC/URL/squat lists)';      $outName = 'secgurd_s1_compressed.txt' }
     }
 
     # Save a file fallback.
@@ -1589,12 +1589,12 @@ function Show-ModuleMenu {
             Write-Host ""
             Write-Host "  Remote-shell paste (compressed - gzip+Base64, one block):" -ForegroundColor Cyan
             Write-Host "    [1] " -ForegroundColor Yellow -NoNewline
-            Write-Host "EVERYTHING (script + community IOC/URL lists)" -ForegroundColor White
+            Write-Host "EVERYTHING (script + IOC/URL/squat dependency lists)" -ForegroundColor White
             Write-Host ""
             Write-Host "    [2] " -ForegroundColor Yellow -NoNewline
-            Write-Host "COMMUNITY LISTS ONLY (IOC + malicious-URLs)" -ForegroundColor White
+            Write-Host "DEPENDENCY LISTS ONLY (IOC + malicious-URLs + squat)" -ForegroundColor White
             Write-Host "        " -NoNewline
-            Write-Host "^ run this BEFORE [3] if you want the community lists" -ForegroundColor DarkGray
+            Write-Host "^ run this BEFORE [3] if you want the dependency lists" -ForegroundColor DarkGray
             Write-Host ""
             Write-Host "    [3] " -ForegroundColor Yellow -NoNewline
             Write-Host "SCRIPT ONLY" -ForegroundColor White
