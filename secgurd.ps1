@@ -114,10 +114,10 @@ function Ex {
         '15' = [char]0x2560
         '16' = [char]0x0021
         '17' = [char]0x003E
-        '18' = [char]0x2572
+        '18' = [char]0x005C   # sword edge '\' (was U+2572; not in legacy console codepages)
         '19' = [char]0x2563
         '20' = [char]0x003E   # sword tip '>' (was U+25B6 right-triangle; missing in some console codepages)
-        '21' = [char]0x2571
+        '21' = [char]0x002F   # sword edge '/' (was U+2571; not in legacy console codepages)
         '22' = [char]0x16CA
         '23' = [char]0x0078
         '24' = [char]0x0021
