@@ -227,6 +227,8 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `q` | Quit |
 | `cleanup` | Remove **all** secgurd artifacts from `%TEMP%` (script, output folders + zips, S1 paste files, IOC / malicious-URL / squat-domain / manual lists) — type-to-confirm, then exit. Same as `-Cleanup`. |
 
+> While the menu sits idle, blood drips off the sword tip in the banner (a small ASCII animation). It stops the instant you press a key, and only runs on a local interactive console tall enough to show the banner — it silently no-ops on remote/redirected/ISE hosts or short windows, so it never affects input.
+
 ---
 
 ## IOC hash matching

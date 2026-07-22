@@ -1455,6 +1455,10 @@ function Show-ModuleMenu {
         return
     }
 
+    # Draw the compact banner on entry (subsequent redraws happen in the handlers before `continue`).
+    # This also records the sword-tip coordinates that Read-MenuInput's idle blood-drip animation uses.
+    Clear-Host
+    Show-secgurdBannerCompact
     $pendingMsg = $null
     while ($true) {
         Write-Host ""
@@ -1580,7 +1584,7 @@ function Show-ModuleMenu {
 
         Write-Host ""
         Write-Host "   > " -ForegroundColor DarkGray -NoNewline
-        $userInput = Read-Host
+        $userInput = Read-MenuInput   # animates the sword-tip blood-drip while idle; stops on keypress
 
         if ([string]::IsNullOrWhiteSpace($userInput)) { continue }
         $cmd = $userInput.Trim().ToLower()
@@ -1768,6 +1772,11 @@ function Show-ModuleMenu {
 }
 
 function Show-secgurdBannerCompact {
+    # Records the sword-tip screen coordinates ($script:BannerTip*) so the menu's idle blood-drip
+    # animation knows where the blade tip is. Purely informational - drawing is unchanged.
+    $script:BannerTop = -1
+    try { $script:BannerTop = [Console]::CursorTop } catch { $script:BannerTop = -1 }
+    $l3 = "^02^02^02^02^02^02^02^06^02^02^02^02^02^06  ^02^02^04     ^02^02^04  ^02^02^02^06^02^02^04   ^02^02^04^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04"
     Write-Host ""
     Write-Host (Ex " ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^12") -ForegroundColor DarkGray
     Write-Host (Ex "      ^07^03^06 ") -ForegroundColor White -NoNewline
@@ -1778,7 +1787,7 @@ function Show-secgurdBannerCompact {
     Write-Host "(" -ForegroundColor White -NoNewline
     Write-Host "o" -ForegroundColor Yellow -NoNewline
     Write-Host (Ex ")^03^03^03^19 ^04 ") -ForegroundColor White -NoNewline
-    Write-Host (Ex "^02^02^02^02^02^02^02^06^02^02^02^02^02^06  ^02^02^04     ^02^02^04  ^02^02^02^06^02^02^04   ^02^02^04^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04") -ForegroundColor Yellow -NoNewline
+    Write-Host (Ex $l3) -ForegroundColor Yellow -NoNewline
     Write-Host (Ex "^03^03^03^03^03^03^03^20") -ForegroundColor Red
     Write-Host (Ex "      ^04 ^15^03") -ForegroundColor White -NoNewline
     Write-Host (Ex "^08^03^03^03^03^02^02^04^02^02^07^03^03^05  ^02^02^04     ^02^02^04   ^02^02^04^02^02^04   ^02^02^04^02^02^07^03^03^02^02^06^02^02^04  ^02^02^04") -ForegroundColor Yellow -NoNewline
@@ -1787,6 +1796,87 @@ function Show-secgurdBannerCompact {
     Write-Host (Ex "^02^02^02^02^02^02^02^04^02^02^02^02^02^02^02^06^08^02^02^02^02^02^02^06^08^02^02^02^02^02^02^07^05^08^02^02^02^02^02^02^07^05^02^02^04  ^02^02^04^02^02^02^02^02^02^07^05") -ForegroundColor Yellow
     Write-Host (Ex "          ^08^03^03^03^03^03^03^05^08^03^03^03^03^03^03^05 ^08^03^03^03^03^03^05 ^08^03^03^03^03^03^05  ^08^03^03^03^03^03^05 ^08^03^05  ^08^03^05^08^03^03^03^03^03^05") -ForegroundColor Yellow
     Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor DarkGray
+
+    # Sword-tip cell: the '>' is the last char of the '(o)...' row (blank line + border are above it,
+    # so it sits 4 rows below where this banner started drawing).
+    $tipLine = '(o' + (Ex ")^03^03^03^19 ^04 ") + (Ex $l3) + (Ex "^03^03^03^03^03^03^03^20")
+    $script:BannerTipCol = $tipLine.Length - 1
+    $script:BannerTipRow = if ($script:BannerTop -ge 0) { $script:BannerTop + 4 } else { -1 }
+}
+
+function Read-MenuInput {
+    # Drip-aware line reader for the MAIN MENU prompt ONLY. While the operator is idle it animates
+    # blood dripping off the sword tip; the instant a key is pressed it wipes the drips and hands off
+    # to the native Read-Host (which still receives that keystroke), so choosing an option stops the
+    # animation at once. Falls back to a plain Read-Host whenever the console can't be animated -
+    # input redirected, non-interactive, ISE / remote-paste host, or the banner isn't on screen -
+    # so the menu can never hang or break. Coordinates come from Show-secgurdBannerCompact.
+    $tipCol = $script:BannerTipCol
+    $tipRow = $script:BannerTipRow
+
+    $canAnimate = $true
+    try { if ([Console]::IsInputRedirected) { $canAnimate = $false } } catch { $canAnimate = $false }
+    if (-not [Environment]::UserInteractive) { $canAnimate = $false }
+    if ($Host.Name -eq 'ServerRemoteHost' -or $Host.Name -eq 'Windows PowerShell ISE Host') { $canAnimate = $false }
+    if ($null -eq $tipRow -or $tipRow -lt 0 -or $null -eq $tipCol) { $canAnimate = $false }
+    if ($canAnimate) {
+        try {
+            # Only animate when the sword tip is actually visible - on a short window the long menu
+            # scrolls the banner off the top, so animating there would be invisible (and pointless).
+            $winTop = [Console]::WindowTop; $winH = [Console]::WindowHeight
+            if ($tipRow -lt $winTop -or ($tipRow + 3) -ge ($winTop + $winH)) { $canAnimate = $false }
+        } catch { $canAnimate = $false }
+    }
+    if (-not $canAnimate) { return (Read-Host) }
+
+    $promptL = 0; $promptT = 0
+    try { $promptL = [Console]::CursorLeft; $promptT = [Console]::CursorTop } catch { return (Read-Host) }
+
+    $dripChars   = @("'", '"', '`')
+    $redLeft     = $tipCol - 7; if ($redLeft -lt 0) { $redLeft = 0 }
+    $dripTop     = $tipRow + 2
+    $maxFall     = 2
+    $spawnChance = 25
+    $rand = New-Object System.Random
+    $live = New-Object System.Collections.ArrayList
+    $prev = New-Object System.Collections.ArrayList
+    $cursorWasVisible = $true
+
+    try {
+        try { $cursorWasVisible = [Console]::CursorVisible } catch {}
+        try { [Console]::CursorVisible = $false } catch {}
+        while (-not [Console]::KeyAvailable) {
+            foreach ($cell in $prev) { $c = $cell -split ','; [Console]::SetCursorPosition([int]$c[0], [int]$c[1]); [Console]::Write(' ') }
+            if ($rand.Next(0,100) -lt $spawnChance) {
+                $col = $redLeft + $rand.Next(0, ($tipCol - $redLeft + 1))
+                $ch  = $dripChars[$rand.Next(0, $dripChars.Count)]
+                if ($col -eq $tipCol) { $startRow = $dripTop - 1; $fall = $maxFall + 1 }
+                else                  { $startRow = $dripTop;     $fall = $maxFall }
+                [void]$live.Add(@{ Col = $col; Off = 0; Ch = $ch; Top = $startRow; Fall = $fall })
+            }
+            $prev = New-Object System.Collections.ArrayList
+            $fg = [Console]::ForegroundColor
+            [Console]::ForegroundColor = [ConsoleColor]::Red
+            foreach ($d in $live) {
+                $row = $d.Top + $d.Off
+                [Console]::SetCursorPosition($d.Col, $row); [Console]::Write($d.Ch)
+                [void]$prev.Add("$($d.Col),$row")
+            }
+            [Console]::ForegroundColor = $fg
+            $next = New-Object System.Collections.ArrayList
+            foreach ($d in $live) { $d.Off++; if ($d.Off -lt $d.Fall) { [void]$next.Add($d) } }
+            $live = $next
+            [Console]::SetCursorPosition($promptL, $promptT)
+            Start-Sleep -Milliseconds 200
+        }
+        # a key is waiting: wipe the drips, restore cursor + visibility, then read the line natively.
+        foreach ($cell in $prev) { $c = $cell -split ','; [Console]::SetCursorPosition([int]$c[0], [int]$c[1]); [Console]::Write(' ') }
+        [Console]::SetCursorPosition($promptL, $promptT)
+        try { [Console]::CursorVisible = $cursorWasVisible } catch {}
+    } catch {
+        try { [Console]::CursorVisible = $true } catch {}
+    }
+    return (Read-Host)
 }
 
 function Show-DeadDragon {
