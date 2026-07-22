@@ -201,6 +201,64 @@ $script:TrustedPathRx = '(?i)\\(Windows Defender|Windows Defender Advanced Threa
     '(?i)\\Packages\\Microsoft\.|' +
     '(?i)\\Microsoft\\EdgeUpdate\\|' +
     '(?i)\\Microsoft\\EdgeWebView\\'
+
+# ---------------------------------------------------------------------------------------------
+#  Shared detection patterns for the process / command-line / autorun heuristics (modules 03/06/11).
+#  Grouped here so the same tuned regexes are reused (and easy to adjust) across collectors.
+# ---------------------------------------------------------------------------------------------
+# Interpreter + fetch/decode/hidden/URL markers - a value that looks like paste-and-run / download-exec.
+# (Also used by the RunMRU/ClickFix check.)
+$script:SuspExecRx = '(?i)(powershell|pwsh|cmd(\.exe)?|%comspec%|comspec|mshta|wscript|cscript|rundll32|' +
+    'regsvr32|certutil|bitsadmin|curl|wget|msiexec|forfiles|installutil|-enc(odedcommand)?|' +
+    'frombase64string|iex\b|invoke-expression|invoke-webrequest|invoke-restmethod|downloadstring|' +
+    'downloadfile|-nop\b|-noni|-w(indowstyle)?\s+hidden|hidden|http[s]?://|ftp://|\.hta\b|scrobj|' +
+    'start-process|new-object\s+net\.webclient)'
+# LSASS / credential dumping command lines.
+$script:CredDumpRx = '(?i)(comsvcs\.dll[^\n]{0,40}minidump|rundll32[^\n]{0,60}minidump|' +
+    'procdump(64)?(\.exe)?[^\n]{0,40}lsass|nanodump|\-ma\s+lsass|out-minidump|dumpert|\blsass\.dmp\b|sekurlsa)'
+# Volume-shadow / registry-hive / NTDS theft.
+$script:HiveTheftRx = '(?i)(vssadmin[^\n]{0,40}create\s+shadow|wmic[^\n]{0,30}shadowcopy[^\n]{0,20}call[^\n]{0,20}create|' +
+    'reg(\.exe)?\s+save\s+hk(lm|ey_local_machine)?\\?(sam|system|security)|esentutl[^\n]{0,40}(ntds|/vss)|' +
+    'ntdsutil[^\n]{0,40}ifm|\\ntds\.dit|diskshadow)'
+# LOLBin download / proxy-execution invocation patterns (beyond the module-11 4688 name list).
+$script:LolbinCmdRx = '(?i)(regsvr32[^\n]{0,40}(/i:http|scrobj)|mshta[^\n]{0,40}(http|javascript:|vbscript:)|' +
+    'wmic[^\n]{0,20}process[^\n]{0,10}call[^\n]{0,10}create|bitsadmin[^\n]{0,20}/transfer|' +
+    'certutil[^\n]{0,20}(-urlcache|-decode|-encode)|installutil[^\n]{0,20}/logfile|\bregasm\b|\bregsvcs\b|' +
+    '\bmavinject\b|forfiles[^\n]{0,20}/c)'
+# Obfuscated / download-and-exec command line. Deliberately has NO bare-URL alternative (too noisy
+# for live processes) - only strong encode/decode/download/hidden markers.
+$script:ObfCmdRx = '(?i)(-enc(odedcommand)?\b|\-e(nc(odedcommand)?)?\s+[A-Za-z0-9+/=]{20,}|frombase64string|' +
+    '\biex\b|invoke-expression|downloadstring|downloadfile|new-object\s+net\.webclient|start-bitstransfer|' +
+    '-w(indowstyle)?\s+hidden|\[char\[\]\]|gzipstream|::frombase64string)'
+# Running-process image paths that are high-signal DROP locations. Tighter than the services/tasks
+# writable regex: users legitimately run apps from AppData\Local, so only Temp/Public/Downloads/
+# Desktop/Recycle-Bin count here.
+$script:ProcDropRx = '(?i)\\(Temp|Windows\\Temp|Users\\Public|Public|Downloads|Desktop|\$Recycle\.Bin|AppData\\Local\\Temp|AppData\\Roaming\\Temp)\\'
+# Core Windows processes that only ever run from a fixed directory - anything else = masquerade.
+$script:CoreSystemImages = @{
+    'smss.exe'='System32'; 'csrss.exe'='System32'; 'wininit.exe'='System32'; 'winlogon.exe'='System32';
+    'services.exe'='System32'; 'lsass.exe'='System32'; 'lsaiso.exe'='System32'; 'svchost.exe'='System32';
+    'spoolsv.exe'='System32'; 'taskhostw.exe'='System32'; 'dllhost.exe'='System32'; 'conhost.exe'='System32';
+    'runtimebroker.exe'='System32'; 'explorer.exe'='Windows'
+}
+
+function Get-CmdLineFindings {
+    # High-signal command-line heuristics shared by module 06 (live processes) and 11 (4688 logs).
+    # Returns @( @{Severity;Reason}, ... ). $Name is the image leaf (e.g. powershell.exe).
+    param([string]$Name, [string]$CommandLine)
+    $c = ("{0} {1}" -f $Name, $CommandLine).Trim()
+    if (-not $c) { return @() }
+    $f = New-Object System.Collections.Generic.List[object]
+    if ($c -match $script:CredDumpRx)  { [void]$f.Add(@{ Severity='HIGH'; Reason='possible LSASS / credential dumping' }) }
+    if ($c -match $script:HiveTheftRx) { [void]$f.Add(@{ Severity='HIGH'; Reason='shadow-copy / SAM|SYSTEM|NTDS hive theft' }) }
+    if ($c -match $script:LolbinCmdRx) { [void]$f.Add(@{ Severity='HIGH'; Reason='LOLBin download / proxy-execution pattern' }) }
+    if ($c -match $script:ObfCmdRx) {
+        $sev = if ($Name -match '(?i)^(powershell|pwsh|cmd|mshta|wscript|cscript|rundll32|regsvr32)(\.exe)?$') { 'HIGH' } else { 'MED' }
+        [void]$f.Add(@{ Severity=$sev; Reason='obfuscated / download-and-exec command line' })
+    }
+    return $f.ToArray()
+}
+
 # Lookback window (days) for all time-bounded collectors. Clamp to a sane 1..3650 range.
 if ($DaysBack -lt 1) { $DaysBack = 1 }
 if ($DaysBack -gt 3650) { $DaysBack = 3650 }
@@ -2602,6 +2660,26 @@ Save-Output "03_persistence_registry.txt" {
             "  (key not found)"
         }
     }
+
+    # Findings hook: an autorun VALUE that carries a download/decode/LOLBin/cred-dump pattern is
+    # ClickFix-style persistence living in the Run keys themselves. Uses the STRONG patterns only
+    # (not the broad interpreter regex) so ordinary autoruns that merely call powershell aren't flagged.
+    $autorunKeys = $runKeys | Where-Object { $_ -match '(?i)\\Run(Once)?(Ex)?$' }
+    foreach ($key in $autorunKeys) {
+        if (-not (Test-Path $key)) { continue }
+        $props = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+        if (-not $props) { continue }
+        foreach ($prop in $props.PSObject.Properties) {
+            if ($prop.Name -like 'PS*') { continue }   # PowerShell metadata, not a real value
+            $val = [string]$prop.Value
+            if (-not $val) { continue }
+            if ($val -match $script:ObfCmdRx -or $val -match $script:LolbinCmdRx -or
+                $val -match $script:CredDumpRx -or $val -match $script:HiveTheftRx) {
+                $short = if ($val.Length -gt 160) { $val.Substring(0,160) + '...' } else { $val }
+                Add-Finding 'HIGH' '03' (Ex "Autorun value looks like download-exec / paste-and-run: '$($prop.Name)' ^17 $short") '03_persistence_registry.txt'
+            }
+        }
+    }
 }
 
 Save-Output "03_runmru_clickfix.txt" {
@@ -2615,11 +2693,8 @@ Save-Output "03_runmru_clickfix.txt" {
     ""
 
     # Hallmark of a malicious Run entry = a script interpreter and/or a fetch/decode/hidden pattern.
-    $badRx = '(?i)(powershell|pwsh|cmd(\.exe)?|%comspec%|comspec|mshta|wscript|cscript|rundll32|' +
-        'regsvr32|certutil|bitsadmin|curl|wget|msiexec|forfiles|installutil|-enc(odedcommand)?|' +
-        'frombase64string|iex\b|invoke-expression|invoke-webrequest|invoke-restmethod|downloadstring|' +
-        'downloadfile|-nop\b|-noni|-w(indowstyle)?\s+hidden|hidden|http[s]?://|ftp://|\.hta\b|scrobj|' +
-        'start-process|new-object\s+net\.webclient)'
+    # (Shared with the autorun-value and process command-line checks - see $script:SuspExecRx.)
+    $badRx = $script:SuspExecRx
 
     $hv = Get-AllUserHives
     $rows = New-Object System.Collections.Generic.List[object]
@@ -3641,6 +3716,51 @@ Save-Output "06_process_tree.txt" {
     } else {
         "(none detected among currently-running processes)"
     }
+
+    # ---- Additional running-process heuristics: masquerade / drop-path / command-line ----
+    # All operate on the $procs already gathered (no extra collection). Deduped so one host can't
+    # flood the findings list; each is a recorded finding pointing back to this file.
+    Write-Section "PROCESS HEURISTICS (masquerade / drop-path / command line)"
+    $procSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $heurHits = 0
+    foreach ($p in $procs) {
+        $pname = "$($p.Name)"
+        $pimg  = "$($p.ExecutablePath)"
+        $pcmd  = "$($p.CommandLine)"
+
+        # Masquerade: a core system process running from a non-canonical directory. (Image path is
+        # often blank for protected processes without admin - we simply skip those, never guess.)
+        $expected = $script:CoreSystemImages[$pname.ToLower()]
+        if ($expected -and $pimg) {
+            $okDir = switch ($expected) {
+                'System32' { $pimg -match '(?i)\\Windows\\(System32|SysWOW64|WinSxS)\\' }
+                'Windows'  { $pimg -match '(?i)\\Windows\\explorer\.exe$' }
+                default    { $true }
+            }
+            if (-not $okDir -and $procSeen.Add("masq|$pname|$pimg")) {
+                $heurHits++
+                Add-Finding 'HIGH' '06' (Ex "Masqueraded system process: $pname running from $pimg ^09 not its expected location") '06_process_tree.txt'
+            }
+        }
+
+        # Drop-path: process image in a high-signal drop location (Temp/Public/Downloads/Desktop/...).
+        if ($pimg -and ($pimg -match $script:ProcDropRx) -and ($pimg -notmatch $script:TrustedPathRx)) {
+            if ($procSeen.Add("drop|$pimg")) {
+                $heurHits++
+                Add-Finding 'MED' '06' (Ex "Process running from a drop location: $pname ^17 $pimg") '06_process_tree.txt'
+            }
+        }
+
+        # Command-line heuristics: cred-dump / hive-theft / LOLBin / obfuscation.
+        foreach ($cf in (Get-CmdLineFindings $pname $pcmd)) {
+            $short = if ($pcmd.Length -gt 160) { $pcmd.Substring(0,160) + '...' } else { $pcmd }
+            if ($procSeen.Add("$($cf.Reason)|$pname|$short")) {
+                $heurHits++
+                Add-Finding $cf.Severity '06' (Ex "$pname (PID $($p.ProcessId)) ^09 $($cf.Reason): $short") '06_process_tree.txt'
+            }
+        }
+    }
+    if ($heurHits -eq 0) { "(no masquerade / drop-path / suspicious-command-line processes detected)" }
 }
 
 Save-Output "06_loaded_dlls.txt" {
@@ -4763,28 +4883,35 @@ Save-Output "11_lolbin_usage.txt" {
                   'esentutl','expand','extrac32','findstr','replace','makecab',
                   'ie4uinit','infdefaultinstall','microsoft.workflow.compiler')
 
-    $lolHits = Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688 } -MaxEvents 500 -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            $msg = $_.Message
-            $exe = if ($msg -match 'New Process Name:\s+(.+)') { $matches[1].Trim() } else { '' }
-            $cmd = if ($msg -match 'Process Command Line:\s+(.+)') { $matches[1].Trim() } else { '' }
-            $exe_lower = $exe.ToLower()
-            # Match leaf filename only   '\wmic.exe' won't match 'wmic_helper.exe' or paths containing 'wmic'.
-
-            $leaf = Split-Path -Leaf $exe_lower
-            foreach ($bin in $lolbins) {
-                if ($leaf -eq "$bin.exe" -or $leaf -eq $bin) {
-                    [PSCustomObject]@{
-                        Time    = $_.TimeCreated
-                        Binary  = $bin
-                        Process = $exe
-                        CmdLine = $cmd
-                    }
-                    break
-                }
+    # Fetch the 4688 events once, then (a) match the LOLBin name list and (b) scan every command
+    # line for the shared high-signal patterns (cred-dump / hive-theft / LOLBin-args / obfuscation).
+    # Command Line is only present when process-command-line auditing is enabled; if it's off, $cmd
+    # is empty and the pattern scan simply finds nothing (no false data).
+    $evts4688 = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688 } -MaxEvents 500 -ErrorAction SilentlyContinue)
+    $lolHits = New-Object System.Collections.Generic.List[object]
+    $cmdSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($e in $evts4688) {
+        $msg = $e.Message
+        $exe = if ($msg -match 'New Process Name:\s+(.+)') { $matches[1].Trim() } else { '' }
+        $cmd = if ($msg -match 'Process Command Line:\s+(.+)') { $matches[1].Trim() } else { '' }
+        # Match leaf filename only: '\wmic.exe' won't match 'wmic_helper.exe' or a path containing 'wmic'.
+        $leaf = if ($exe) { Split-Path -Leaf $exe.ToLower() } else { '' }
+        foreach ($bin in $lolbins) {
+            if ($leaf -eq "$bin.exe" -or $leaf -eq $bin) {
+                [void]$lolHits.Add([PSCustomObject]@{ Time = $e.TimeCreated; Binary = $bin; Process = $exe; CmdLine = $cmd })
+                break
             }
         }
-    if ($lolHits) {
+        # HIGH-severity command-line patterns from historical execution (deduped by reason+image+cmd).
+        foreach ($cf in (Get-CmdLineFindings $leaf $cmd)) {
+            if ($cf.Severity -ne 'HIGH') { continue }
+            $short = if ($cmd.Length -gt 160) { $cmd.Substring(0,160) + '...' } else { $cmd }
+            if ($cmdSeen.Add("$($cf.Reason)|$leaf|$short")) {
+                Add-Finding 'HIGH' '11' (Ex "4688 command line ^09 $($cf.Reason): $leaf $short") '11_lolbin_usage.txt'
+            }
+        }
+    }
+    if ($lolHits.Count) {
         $distinct = ($lolHits.Binary | Sort-Object -Unique) -join ', '
         Add-Finding 'MED' '11' "$($lolHits.Count) LOLBin execution(s) in 4688 logs: $distinct" '11_lolbin_usage.txt'
     }
