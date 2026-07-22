@@ -52,3 +52,5 @@ example-brand
 exampleproduct
 example-portal
 myco-login
+# test term (openSquat hunts look-alikes of it, e.g. 0utlook-office.com - NOT the domain itself):
+outlook.office.com

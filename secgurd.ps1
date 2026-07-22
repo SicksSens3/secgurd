@@ -160,6 +160,7 @@ $script:IOCHashCount = 0
 $script:CommunityHashSet = $null
 $script:CommunityHashCount = 0
 $script:CommunityHashFile = $null
+$script:IOCBackup = $null        # stashed community+manual hash state when the deps menu toggles IOC OFF (so it flips back ON)
 # Community malicious-URL list: auto-loaded from dependencies\communitysavedMALURLS.txt (or flat
 # beside the script), refreshed via git pull from abuse.ch URLhaus. Module 10 checks URLs against
 # these. We keep TWO sets: exact full-URL matches (strongest) and host-only matches (payload
@@ -175,6 +176,7 @@ $script:MalUrlBackup = $null    # stashed sets when the 'u' menu toggles matchin
 $script:SquatDomainSet = $null    # normalized watchlist domains (lowercased, www./scheme/path stripped)
 $script:SquatDomainCount = 0
 $script:SquatDomainFile = $null
+$script:SquatBackup = $null        # stashed set when the deps menu toggles squat matching OFF (so it flips back ON)
 $script:SquatMatches = New-Object System.Collections.Generic.List[object]   # module-10 hits, for 10_squat_watchlist.txt
 $script:SquatSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)  # dedupe key: "user|host"
 # Browser flagging: module 10 records every flagged URL here (user/browser/host/severity/reason)
@@ -1147,33 +1149,50 @@ function Show-SquatList {
 }
 
 function Invoke-IOCDependency {
-    # Manage the IOC hash list (the manual set you add; the community list auto-loads separately).
+    # Manage IOC hash matching (community auto-loaded + your manual set). [x] toggles the WHOLE
+    # thing off and back on (stash then restore), like the malicious-URL and squat dependencies.
     # Returns a status message string for the Dependencies menu to echo (or $null).
-    $iocLoaded = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
+    $manLoaded = ($script:IOCHashSet -and $script:IOCHashCount -gt 0)
+    $iocOn = ($script:CommunityHashCount -gt 0) -or $manLoaded
     Write-Host ""
     Write-Host "  IOC hash matching" -ForegroundColor Cyan -NoNewline
-    if ($iocLoaded) {
-        Write-Host "  ($($script:IOCHashCount) manual hashes loaded)" -ForegroundColor Green
+    if ($iocOn) {
+        $bits = @()
+        if ($script:CommunityHashCount -gt 0) { $bits += "community $($script:CommunityHashCount)" }
+        if ($manLoaded) { $bits += "you-added $($script:IOCHashCount)" }
+        Write-Host "  ($($bits -join ' + ') hashes)" -ForegroundColor Green
     } else {
-        Write-Host "  (no manual list - community list auto-loads separately)" -ForegroundColor DarkGray
+        Write-Host "  (off / none loaded)" -ForegroundColor DarkGray
     }
-    Write-Host "    [f] " -ForegroundColor Yellow -NoNewline; Write-Host "load hashes from a file" -ForegroundColor White
+    Write-Host "    [f] " -ForegroundColor Yellow -NoNewline; Write-Host "load hashes from a file (adds your manual set)" -ForegroundColor White
     Write-Host "    [p] " -ForegroundColor Yellow -NoNewline; Write-Host "paste hashes (comma, space, or newline separated)" -ForegroundColor White
     Write-Host "    [l] " -ForegroundColor Yellow -NoNewline; Write-Host "list / show loaded hashes" -ForegroundColor White
-    if ($iocLoaded) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn manual IOC matching off" -ForegroundColor White }
+    if ($iocOn) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn IOC matching off" -ForegroundColor White }
+    elseif ($script:IOCBackup) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn IOC matching back on" -ForegroundColor White }
     Write-Host "  > " -ForegroundColor DarkGray -NoNewline
     $how = (Read-Host).Trim().ToLower()
 
     if ($how -eq 'x') {
-        if ($iocLoaded) {
-            $script:IOCHashFile = $null; $script:IOCHashSet = $null; $script:IOCHashCount = 0
+        if ($iocOn) {
+            # Stash BOTH the community and manual sets, then clear them, so matching fully stops.
+            $script:IOCBackup = @{
+                Comm = $script:CommunityHashSet; CommCount = $script:CommunityHashCount; CommFile = $script:CommunityHashFile
+                Man  = $script:IOCHashSet;       ManCount  = $script:IOCHashCount;       ManFile  = $script:IOCHashFile
+            }
+            $script:CommunityHashSet = $null; $script:CommunityHashCount = 0; $script:CommunityHashFile = $null
+            $script:IOCHashSet = $null;       $script:IOCHashCount = 0;       $script:IOCHashFile = $null
             return "IOC hash matching: OFF"
+        } elseif ($script:IOCBackup) {
+            $script:CommunityHashSet = $script:IOCBackup.Comm; $script:CommunityHashCount = $script:IOCBackup.CommCount; $script:CommunityHashFile = $script:IOCBackup.CommFile
+            $script:IOCHashSet = $script:IOCBackup.Man;        $script:IOCHashCount = $script:IOCBackup.ManCount;        $script:IOCHashFile = $script:IOCBackup.ManFile
+            $script:IOCBackup = $null
+            return "IOC hash matching: ON ($($script:CommunityHashCount + $script:IOCHashCount) hashes)"
         }
-        return "Nothing to turn off - no manual hashes loaded."
+        return "Nothing to toggle - no hashes loaded."
     }
     if ($how -eq 'l') {
         Clear-Host; Show-secgurdBannerCompact
-        if ($iocLoaded -or $script:CommunityHashCount -gt 0) {
+        if ($iocOn) {
             Show-IOCList
         } else {
             Write-Host ""
@@ -1202,6 +1221,7 @@ function Invoke-IOCDependency {
 
     if ($loaded.Count -gt 0) {
         $script:IOCHashFile = $src; $script:IOCHashSet = $loaded; $script:IOCHashCount = $loaded.Count
+        $script:IOCBackup = $null   # a deliberate load supersedes any stashed off-state
         Clear-Host; Show-secgurdBannerCompact; Show-IOCList
         Write-Host "  Press Enter to continue..." -ForegroundColor DarkGray; Read-Host | Out-Null
         return "IOC hash matching: ON ($($loaded.Count) hashes)"
@@ -1301,15 +1321,23 @@ function Invoke-SquatDependency {
     Write-Host "    [f] " -ForegroundColor Yellow -NoNewline; Write-Host "load domains from a file" -ForegroundColor White
     Write-Host "    [l] " -ForegroundColor Yellow -NoNewline; Write-Host "list / show loaded domains" -ForegroundColor White
     if ($sqLoaded) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn squat matching off" -ForegroundColor White }
+    elseif ($script:SquatBackup) { Write-Host "    [x] " -ForegroundColor Yellow -NoNewline; Write-Host "turn squat matching back on" -ForegroundColor White }
     Write-Host "  > " -ForegroundColor DarkGray -NoNewline
     $how = (Read-Host).Trim().ToLower()
 
     if ($how -eq 'x') {
         if ($sqLoaded) {
+            $script:SquatBackup = @{ Set = $script:SquatDomainSet; Count = $script:SquatDomainCount; File = $script:SquatDomainFile }
             $script:SquatDomainSet = $null; $script:SquatDomainCount = 0; $script:SquatDomainFile = $null
             return "Squat-domain matching: OFF"
+        } elseif ($script:SquatBackup) {
+            $script:SquatDomainSet   = $script:SquatBackup.Set
+            $script:SquatDomainCount = $script:SquatBackup.Count
+            $script:SquatDomainFile  = $script:SquatBackup.File
+            $script:SquatBackup = $null
+            return "Squat-domain matching: ON ($($script:SquatDomainCount) domains)"
         }
-        return "Nothing to turn off - no domains loaded."
+        return "Nothing to toggle - no domains loaded."
     }
     if ($how -eq 'l') {
         Clear-Host; Show-secgurdBannerCompact
@@ -1332,6 +1360,7 @@ function Invoke-SquatDependency {
             $set = Import-SquatDomains $sqPath
             if ($set.Count -gt 0) {
                 $script:SquatDomainSet = $set; $script:SquatDomainCount = $set.Count; $script:SquatDomainFile = $sqPath
+                $script:SquatBackup = $null   # a deliberate load supersedes any stashed off-state
                 Clear-Host; Show-secgurdBannerCompact; Show-SquatList
                 Write-Host "  Press Enter to continue..." -ForegroundColor DarkGray; Read-Host | Out-Null
                 return "Squat-domain matching: ON ($($set.Count) domains)"
