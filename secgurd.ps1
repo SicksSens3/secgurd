@@ -116,7 +116,7 @@ function Ex {
         '17' = [char]0x003E
         '18' = [char]0x2572
         '19' = [char]0x2563
-        '20' = [char]0x25B6
+        '20' = [char]0x003E   # sword tip '>' (was U+25B6 right-triangle; missing in some console codepages)
         '21' = [char]0x2571
         '22' = [char]0x16CA
         '23' = [char]0x0078
