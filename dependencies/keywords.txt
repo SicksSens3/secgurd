@@ -46,7 +46,12 @@
 #  ...and a user visiting acmebank-login.com would then be flagged HIGH by secgurd.
 #
 # ==========================================================================================
-#  ADD YOUR TERMS BELOW  (replace these placeholders with your real brand/product words)
+#  ADD YOUR TERMS BELOW  (one plain word per line - a brand/product, NOT a domain or TLD).
+#  These are common phishing-target terms; add/replace with your own distinctive brand words.
 # ==========================================================================================
-# test term (openSquat hunts look-alikes of it, e.g. 0utlook-office.com - NOT the domain itself):
-outlook.office.com
+outlook
+office365
+microsoft
+sharepoint
+onedrive
+docusign
