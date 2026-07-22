@@ -31,13 +31,15 @@ jobs:
         run: pip install opensquat
 
       - name: Hunt squat domains
-        # -k keywords.txt : your brand/domain terms (repo root)
+        # -k dependencies/keywords.txt : your brand/domain terms
         # -c 1            : confidence level - openSquat uses 0=very high .. 4=very low, i.e. LOWER
         #                   is stricter. 1 = HIGH confidence: fewer, higher-quality matches (good for
         #                   a watchlist that auto-flags HIGH). Raise toward 4 to catch more (noisier).
         #                   Free mode - no API key required.
-        # -o / -t txt     : write one matching domain per line to squat_domains.txt
-        run: opensquat -k keywords.txt -c 1 -o squat_domains.txt -t txt
+        # -o / -t txt     : write one matching domain per line to dependencies/squat_domains.txt
+        run: |
+          mkdir -p dependencies
+          opensquat -k dependencies/keywords.txt -c 1 -o dependencies/squat_domains.txt -t txt
 
       - name: Prune, dedupe and cap the list
         # Keeps squat_domains.txt lean - it rides inside the compressed SentinelOne paste, which must
@@ -50,7 +52,7 @@ jobs:
         #      file means the keywords are too generic - the cap is a safety backstop and logs drops.
         run: |
           set -euo pipefail
-          F="squat_domains.txt"
+          F="dependencies/squat_domains.txt"
           CAP=500
           [ -f "$F" ] || { echo "openSquat produced no output; nothing to prune."; exit 0; }
           ABUSE_TLDS='\.(tk|top|xyz|gq|ml|cf|work|click|country|kim|men|loan|download|zip|mov|rest|cfd|sbs|lol|quest)$'
@@ -73,7 +75,7 @@ jobs:
           set -euo pipefail
           git config user.name  "secgurd-ioc-bot"
           git config user.email "secgurd-ioc-bot@users.noreply.github.com"
-          git add squat_domains.txt
+          git add dependencies/squat_domains.txt
           # Commit ONLY if the staged file actually changed, then push.
           git diff --cached --quiet || git commit -m "Auto-refresh squat-domain watchlist ($(date -u '+%Y-%m-%d'))"
           git push

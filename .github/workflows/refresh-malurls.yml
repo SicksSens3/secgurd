@@ -22,7 +22,8 @@ jobs:
       - name: Download and build community malicious-URL list
         run: |
           set -euo pipefail
-          OUT="communitysavedMALURLS.txt"
+          mkdir -p dependencies
+          OUT="dependencies/communitysavedMALURLS.txt"
           TMP="$(mktemp)"
 
           # Only keep URLs first seen within this many days (drops stale long-lived infra).
@@ -113,10 +114,10 @@ jobs:
           set -euo pipefail
           git config user.name  "secgurd-ioc-bot"
           git config user.email "secgurd-ioc-bot@users.noreply.github.com"
-          if git diff --quiet -- communitysavedMALURLS.txt; then
+          if git diff --quiet -- dependencies/communitysavedMALURLS.txt; then
             echo "No changes to commit."
           else
-            git add communitysavedMALURLS.txt
+            git add dependencies/communitysavedMALURLS.txt
             git commit -m "Auto-refresh community malicious-URL list ($(date -u '+%Y-%m-%d'))"
             git push
             echo "Committed updated community malicious-URL list."

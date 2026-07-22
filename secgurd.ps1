@@ -154,13 +154,14 @@ $script:WithTaskInfo = [bool]$WithTaskInfo
 $script:IOCHashFile = $null
 $script:IOCHashSet = $null
 $script:IOCHashCount = 0
-# Community IOC list: auto-loaded from communitysavedIOCS.txt next to the script (refreshed
-# via git pull). Kept SEPARATE from the manual set above so matches can be labeled by source.
+# Community IOC list: auto-loaded from dependencies\communitysavedIOCS.txt (repo layout) or flat
+# beside the script (endpoint/paste), via Resolve-DependencyFile. Refreshed via git pull. Kept
+# SEPARATE from the manual set above so matches can be labeled by source.
 $script:CommunityHashSet = $null
 $script:CommunityHashCount = 0
 $script:CommunityHashFile = $null
-# Community malicious-URL list: auto-loaded from communitysavedMALURLS.txt next to the script
-# (refreshed via git pull from abuse.ch URLhaus). Module 10 checks browser-history URLs against
+# Community malicious-URL list: auto-loaded from dependencies\communitysavedMALURLS.txt (or flat
+# beside the script), refreshed via git pull from abuse.ch URLhaus. Module 10 checks URLs against
 # these. We keep TWO sets: exact full-URL matches (strongest) and host-only matches (payload
 # URLs rotate paths, so the host is the durable signal).
 $script:MalUrlSet = $null       # normalized full URLs (lowercased, trailing slash trimmed)
@@ -168,8 +169,8 @@ $script:MalUrlHostSet = $null   # hosts extracted from those URLs
 $script:MalUrlCount = 0
 $script:MalUrlFile = $null
 $script:MalUrlBackup = $null    # stashed sets when the 'u' menu toggles matching OFF (so it can flip back ON)
-# Squat-domain watchlist: auto-loaded from squat_domains.txt next to the script (refreshed via
-# git pull from the openSquat GitHub Action). Module 10 checks every browser-history host and
+# Squat-domain watchlist: auto-loaded from dependencies\squat_domains.txt (or flat beside the
+# script), refreshed via git pull from the openSquat GitHub Action. Module 10 checks every host and
 # download-origin host against it - a hit is a look-alike/typosquat of one of the org's brand terms.
 $script:SquatDomainSet = $null    # normalized watchlist domains (lowercased, www./scheme/path stripped)
 $script:SquatDomainCount = 0
@@ -1870,21 +1871,29 @@ function Show-DeadDragon {
 
 # ---------------------------------------------
 
-# Look for the community list. Priority: an explicit -CommunityIOCHashes path (used by the
-# bundled S1 paste so it doesn't depend on $PSScriptRoot resolving), then communitysavedIOCS.txt
-# sitting next to secgurd.ps1 (the normal git-pull case). Kept separate from the manual list.
-$communityFile = $null
-if ($CommunityIOCHashes -and (Test-Path $CommunityIOCHashes)) {
-    $communityFile = $CommunityIOCHashes
-} else {
-    $scriptDir = $null
-    if ($PSScriptRoot) { $scriptDir = $PSScriptRoot }
-    elseif ($PSCommandPath) { $scriptDir = Split-Path -Parent $PSCommandPath }
-    if ($scriptDir) {
-        $cand = Join-Path $scriptDir 'communitysavedIOCS.txt'
-        if (Test-Path $cand) { $communityFile = $cand }
+# Resolve a bundled data file. Priority (first hit wins):
+#   1. an explicit -CommunityIOCHashes / -CommunityMalUrls / -SquatDomains path - used by the S1
+#      paste, which unpacks the lists to %TEMP% and passes their full paths (so it never depends
+#      on $PSScriptRoot resolving).
+#   2. the repo's  dependencies\  folder next to the script - the normal `git pull` / clone layout.
+#   3. FLAT beside the script - how the S1 paste unpacks the lists (into %TEMP%, alongside
+#      secgurd.ps1). Keeping this fallback is what makes pasting keep working after the move.
+# Returns the resolved path, or $null if the file isn't present in any location.
+function Resolve-DependencyFile {
+    param([string]$Explicit, [string]$Name)
+    if ($Explicit -and (Test-Path $Explicit)) { return $Explicit }
+    $dir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { $null }
+    if ($dir) {
+        $inFolder = Join-Path $dir (Join-Path 'dependencies' $Name)
+        if (Test-Path $inFolder) { return $inFolder }
+        $flat = Join-Path $dir $Name
+        if (Test-Path $flat) { return $flat }
     }
+    return $null
 }
+
+# Community IOC hash list (kept separate from the manual -IOCHashes set).
+$communityFile = Resolve-DependencyFile $CommunityIOCHashes 'communitysavedIOCS.txt'
 if ($communityFile) {
     $cset = Import-IOCHashes $communityFile
     if ($cset.Count -gt 0) {
@@ -1894,21 +1903,8 @@ if ($communityFile) {
     }
 }
 
-# Community malicious-URL list. Same discovery order as the community hash list: explicit
-# -CommunityMalUrls path (used by the bundled S1 paste), else communitysavedMALURLS.txt next to
-# the script (the normal git-pull case). Feeds module 10's browser-history URL triage.
-$malUrlFile = $null
-if ($CommunityMalUrls -and (Test-Path $CommunityMalUrls)) {
-    $malUrlFile = $CommunityMalUrls
-} else {
-    $scriptDir2 = $null
-    if ($PSScriptRoot) { $scriptDir2 = $PSScriptRoot }
-    elseif ($PSCommandPath) { $scriptDir2 = Split-Path -Parent $PSCommandPath }
-    if ($scriptDir2) {
-        $cand2 = Join-Path $scriptDir2 'communitysavedMALURLS.txt'
-        if (Test-Path $cand2) { $malUrlFile = $cand2 }
-    }
-}
+# Community malicious-URL list (URLhaus) - feeds module 10's browser-history + DNS triage.
+$malUrlFile = Resolve-DependencyFile $CommunityMalUrls 'communitysavedMALURLS.txt'
 if ($malUrlFile) {
     $mset = Import-MalUrls $malUrlFile
     if ($mset.Urls.Count -gt 0) {
@@ -1919,21 +1915,8 @@ if ($malUrlFile) {
     }
 }
 
-# Squat-domain watchlist. Same discovery order as the community lists: explicit -SquatDomains path
-# (used by the bundled S1 paste), else squat_domains.txt next to the script (the normal git-pull
-# case, refreshed by the openSquat GitHub Action). Feeds module 10's host cross-referencing.
-$squatFile = $null
-if ($SquatDomains -and (Test-Path $SquatDomains)) {
-    $squatFile = $SquatDomains
-} else {
-    $scriptDir3 = $null
-    if ($PSScriptRoot) { $scriptDir3 = $PSScriptRoot }
-    elseif ($PSCommandPath) { $scriptDir3 = Split-Path -Parent $PSCommandPath }
-    if ($scriptDir3) {
-        $cand3 = Join-Path $scriptDir3 'squat_domains.txt'
-        if (Test-Path $cand3) { $squatFile = $cand3 }
-    }
-}
+# Squat-domain watchlist (openSquat) - feeds module 10 + module 05 host cross-referencing.
+$squatFile = Resolve-DependencyFile $SquatDomains 'squat_domains.txt'
 if ($squatFile) {
     $sqset = Import-SquatDomains $squatFile
     if ($sqset.Count -gt 0) {
@@ -4632,7 +4615,7 @@ Save-Output "10_squat_watchlist.txt" {
     "are folded in here. Every match is a HIGH finding and also appears in 00_BROWSER_ALERTS.txt."
     ""
     if (-not $script:SquatDomainSet -or $script:SquatDomainCount -le 0) {
-        "Watchlist not loaded: squat_domains.txt was not found next to secgurd.ps1 (or was empty)."
+        "Watchlist not loaded: squat_domains.txt not found in dependencies\ or beside secgurd.ps1 (or empty)."
         "Generate it with the 'Refresh squat-domain watchlist' GitHub Action (it runs openSquat over"
         "keywords.txt), or pass -SquatDomains <file>. Nothing to cross-reference."
         return

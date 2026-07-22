@@ -154,9 +154,9 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 | `-WithSignatures` | Verify Authenticode signatures of service binaries / loaded DLLs (slower; can stall offline). |
 | `-WithTaskInfo` | Resolve run times (LastRun/NextRun/LastResult) for **all** scheduled tasks incl. the hundreds of built-in `\Microsoft\*` ones. Off by default — those per-task Task Scheduler calls can take many minutes; without it, run times are resolved only for non-Microsoft tasks (all tasks are still listed). |
 | `-IOCHashes <file>` | Match on-disk binaries against an MD5/SHA-1/SHA-256 IOC hash list (your own/manual list). |
-| `-CommunityIOCHashes <file>` | Explicit path to the community hash list (otherwise auto-found next to the script). |
-| `-CommunityMalUrls <file>` | Explicit path to the community malicious-URL list (otherwise auto-found next to the script). |
-| `-SquatDomains <file>` | Explicit path to the openSquat squat-domain watchlist (otherwise auto-found next to the script). |
+| `-CommunityIOCHashes <file>` | Explicit path to the community hash list (otherwise auto-found in `dependencies/` or beside the script). |
+| `-CommunityMalUrls <file>` | Explicit path to the community malicious-URL list (otherwise auto-found in `dependencies/` or beside the script). |
+| `-SquatDomains <file>` | Explicit path to the openSquat squat-domain watchlist (otherwise auto-found in `dependencies/` or beside the script). |
 | `-DaysBack <N>` | Lookback window in days for time-bounded collectors (default 30). |
 | `-Find <string>` | Scope **all** output to lines/items containing `<string>` (case-insensitive) — see [Targeted find](#targeted-find--scoping-a-run-to-one-artifact). |
 | `-Cleanup` | Remove **all** secgurd artifacts from `%TEMP%` — the script itself, output folders + zips, S1 paste files, and the IOC / malicious-URL / squat-domain / manual lists (requires typing `DELETE` to confirm). Also available as the `cleanup` menu command. |
@@ -210,8 +210,10 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 
 Secgurd matches real on-disk binaries (in high-signal locations like Temp, AppData, Public, ProgramData, Downloads, Desktop, plus every running process image) against known-bad hashes. There are **two separate sources**, and matches are labeled by which one they came from:
 
-**1. Community list (`communitysavedIOCS.txt`) — auto-loaded, shared, version-controlled.**
-This file lives in the repo next to `secgurd.ps1` and is **loaded automatically** on every run, no flags needed. Update it with `git pull` and your runs use the latest community hashes. It's meant as the curated, team-shared baseline.
+**1. Community list (`dependencies/communitysavedIOCS.txt`) — auto-loaded, shared, version-controlled.**
+This file lives in the repo's **`dependencies/`** folder (alongside the malicious-URL and squat lists) and is **loaded automatically** on every run, no flags needed. Update it with `git pull` and your runs use the latest community hashes. It's meant as the curated, team-shared baseline.
+
+> **Where secgurd looks:** for each list it checks (1) an explicit `-Community*/-SquatDomains` path, then (2) the `dependencies/` folder next to the script (the repo/clone layout), then (3) **flat beside the script** — which is where the compressed S1 paste unpacks them (into `%TEMP%`, next to `secgurd.ps1`). So the folder keeps the repo tidy while endpoint/paste runs, which stay flat, are unaffected.
 
 **2. Hashes you add — case-specific, kept separate.**
 Provide your own list via `-IOCHashes C:\path\list.txt` or the interactive `i` menu (file or paste). These never touch the community file, so you can always tell *what you added* from *what was already saved*.
@@ -240,7 +242,7 @@ The repo includes a GitHub Action (`.github/workflows/refresh-iocs.yml`) that, o
 
 ## Community malicious-URL matching
 
-Alongside the hash list, secgurd carries a community **malicious-URL** list (`communitysavedMALURLS.txt`) built from the free abuse.ch **[URLhaus](https://urlhaus.abuse.ch/)** feed — URLs currently serving malware. Like the hash list it is **auto-loaded** on every run from the file next to `secgurd.ps1` (no flags needed; use `-CommunityMalUrls <file>` to point at an explicit path). In the interactive menu the **`u`** command mirrors `i`: load from a file `[f]`, paste `[p]`, list `[l]`, or toggle matching on/off `[x]`.
+Alongside the hash list, secgurd carries a community **malicious-URL** list (`dependencies/communitysavedMALURLS.txt`) built from the free abuse.ch **[URLhaus](https://urlhaus.abuse.ch/)** feed — URLs currently serving malware. Like the hash list it is **auto-loaded** on every run from the `dependencies/` folder (no flags needed; use `-CommunityMalUrls <file>` to point at an explicit path). In the interactive menu the **`u`** command mirrors `i`: load from a file `[f]`, paste `[p]`, list `[l]`, or toggle matching on/off `[x]`.
 
 **Where it's used.** Module 10 (Browser & creds) extracts every URL from Chrome/Edge/Firefox history and triages it. Any visited URL that appears on the feed — by **exact URL** or by **host** (payload URLs rotate their paths, so the host is the durable signal) — is flagged **HIGH** with reason *"listed on the community malicious-URL feed (URLhaus)"*. That flag then feeds the end-of-run **browser-alert correlation**, so a hit that also matches a file on disk is escalated in `00_BROWSER_ALERTS.txt`. Module 05 also matches the machine's **DNS client cache** host set against this feed (see *DNS-cache intel matching* below) — catching **any** process's callouts, not just browser traffic.
 
@@ -268,7 +270,7 @@ The GitHub Action `.github/workflows/refresh-malurls.yml` runs daily (06:30 UTC,
 
 ## Squat-domain watchlist (openSquat)
 
-A third auto-loaded list, `squat_domains.txt`, holds **look-alike / typosquat domains impersonating your own brand**. It's built by [openSquat](https://github.com/atenreiro/opensquat), which scans newly-registered domains for typosquats (`exmaple-brand.com`), homoglyphs, and combosquats (`example-brand-login.com`) of the terms you list in **`keywords.txt`** at the repo root. Like the other lists it is **auto-loaded** from beside `secgurd.ps1` (or via `-SquatDomains <file>`), rides along in the compressed S1 paste, and is cleaned up by the cleanup command.
+A third auto-loaded list, `dependencies/squat_domains.txt`, holds **look-alike / typosquat domains impersonating your own brand**. It's built by [openSquat](https://github.com/atenreiro/opensquat), which scans newly-registered domains for typosquats (`exmaple-brand.com`), homoglyphs, and combosquats (`example-brand-login.com`) of the terms you list in **`dependencies/keywords.txt`**. Like the other lists it is **auto-loaded** from the `dependencies/` folder (or via `-SquatDomains <file>`), rides along in the compressed S1 paste, and is cleaned up by the cleanup command.
 
 **Where it's used.** Module 10 checks **every browser-history host and every download-origin host** (module 03 BITS jobs + module 07 `Zone.Identifier` streams) against the watchlist — an exact host match or any subdomain of a watchlisted entry. A hit raises a **HIGH** finding (*"matches openSquat squat-domain watchlist"*), is written to **`10_squat_watchlist.txt`** (listing user / browser / URL / matched domain), and flows into the end-of-run `00_BROWSER_ALERTS.txt` correlation. Matches are deduped per user+host so a heavily-visited squat host is reported once. Module 05 additionally matches the **DNS client cache** against the watchlist (see below), so a squat domain resolved by *any* process — not just a browser — is caught.
 
@@ -276,11 +278,11 @@ A third auto-loaded list, `squat_domains.txt`, holds **look-alike / typosquat do
 
 Beyond browser history, secgurd cross-references the machine's **DNS client cache** (`Get-DnsClientCache`) against both the URLhaus host set and the squat watchlist, writing `05_intel_host_matches.txt`. A cached resolution of a listed host means *something* on the box looked it up — regardless of which process or browser. If that host's resolved IP is **also present in an active TCP connection**, the match is annotated as a **live session** to known-bad infrastructure (the strongest signal short of a payload on disk). Each hit is a **HIGH** finding. This reuses data module 05 already collects, so it adds no meaningful scan time.
 
-**Setup:** edit `keywords.txt` with your organisation's real brand/product terms (one per line, just the word — not the TLD; `#` comments and blank lines ignored). The starter file ships with placeholders you must replace.
+**Setup:** edit `dependencies/keywords.txt` with your organisation's real brand/product terms (one per line, just the word — not the TLD; `#` comments and blank lines ignored). The starter file ships with placeholders you must replace.
 
 ### Keeping the squat watchlist fresh automatically
 
-The GitHub Action `.github/workflows/refresh-squat-domains.yml` runs daily (06:15 UTC) and manually from the **Actions** tab. It installs openSquat in GitHub's cloud, runs it over `keywords.txt` in **free mode** (confidence level 1 — no API key needed), and commits the refreshed `squat_domains.txt` back to the repo only if it changed. Your next `git pull` picks up the new domains — the endpoints never touch the internet.
+The GitHub Action `.github/workflows/refresh-squat-domains.yml` runs daily (06:15 UTC) and manually from the **Actions** tab. It installs openSquat in GitHub's cloud, runs it over `dependencies/keywords.txt` in **free mode** (confidence level 1 — no API key needed), and commits the refreshed `dependencies/squat_domains.txt` back to the repo only if it changed. Your next `git pull` picks up the new domains — the endpoints never touch the internet.
 
 **Kept lean for the paste.** `squat_domains.txt` rides inside the compressed SentinelOne paste, which has to stay small, so the Action prunes and caps it: it drops domains secgurd **already flags on its own heuristics** (punycode hosts, high-abuse TLDs) so the watchlist never duplicates a built-in detection, then de-dupes, sorts, and hard-caps the count (500 — a backstop; openSquat overwrites the file each run, so a large result means the keywords are too generic). At runtime the reverse guard also holds: if a visited host is on the squat list **and** trips a built-in heuristic, only the squat alert fires (it's the more specific "impersonates your brand" signal), and repeat visits to the same host collapse to one correlation entry — so no double-alerting in `00_BROWSER_ALERTS.txt`.
 

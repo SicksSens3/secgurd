@@ -22,7 +22,8 @@ jobs:
       - name: Download and build community IOC list
         run: |
           set -euo pipefail
-          OUT="communitysavedIOCS.txt"
+          mkdir -p dependencies
+          OUT="dependencies/communitysavedIOCS.txt"
           TMP="$(mktemp)"
 
           # --- Source: abuse.ch MalwareBazaar full SHA-256 hash export (free, no API key) ---
@@ -73,10 +74,10 @@ jobs:
           set -euo pipefail
           git config user.name  "secgurd-ioc-bot"
           git config user.email "secgurd-ioc-bot@users.noreply.github.com"
-          if git diff --quiet -- communitysavedIOCS.txt; then
+          if git diff --quiet -- dependencies/communitysavedIOCS.txt; then
             echo "No changes to commit."
           else
-            git add communitysavedIOCS.txt
+            git add dependencies/communitysavedIOCS.txt
             git commit -m "Auto-refresh community IOC list ($(date -u '+%Y-%m-%d'))"
             git push
             echo "Committed updated community IOC list."
