@@ -195,9 +195,9 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `a` / `n` | Select all / none |
 | `qa` / `net` / `ps` | Presets (quick-assess / network / PowerShell) |
 | `o` | Toggle: open output folder when done |
-| `deps` | Dependencies sub-menu — manage all three external data lists in one place: **IOC hashes**, **malicious URLs** (URLhaus), and **squat domains** (openSquat). Pick `[1]`/`[2]`/`[3]` to load from file `[f]`, paste `[p]`, list `[l]`, or toggle `[x]`. |
+| `d` | Dependencies sub-menu — manage all three external data lists in one place: **IOC hashes**, **malicious URLs** (URLhaus), and **squat domains** (openSquat). Pick `[1]`/`[2]`/`[3]` to load from file `[f]`, paste `[p]`, list `[l]`, or toggle `[x]`. |
 | `f` | Find — scope all output to a name/string (enter a term, or blank to clear) |
-| `d` | Set the lookback window (days) |
+| `t` | Set the time / lookback window (days) |
 | `p` | Pastable (compressed gzip+Base64) version for remote shells — `[1]` everything, `[2]` dependency lists only (IOC + URL + squat), `[3]` script only |
 | `r` | Run the selected modules |
 | `?` | Help |

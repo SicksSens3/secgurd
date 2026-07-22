@@ -398,8 +398,8 @@ function Show-Help {
     Write-Host "    a / n                 Select all / none" -ForegroundColor Gray
     Write-Host "    qa / net / ps         Apply a preset" -ForegroundColor Gray
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
-    Write-Host "    deps                  Dependencies sub-menu: IOC hashes / malicious URLs / squat domains (load/paste/list/toggle)" -ForegroundColor Gray
-    Write-Host "    d                     Set lookback window in days (time-bounded collectors)" -ForegroundColor Gray
+    Write-Host "    d                     Dependencies sub-menu: IOC hashes / malicious URLs / squat domains (load/paste/list/toggle)" -ForegroundColor Gray
+    Write-Host "    t                     Set time / lookback window in days (time-bounded collectors)" -ForegroundColor Gray
     Write-Host "    f                     Find/filter: scope all output to a name/string (blank clears)" -ForegroundColor Gray
     Write-Host "    p                     Pastable version for remote shells - single/chunked/compressed" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
@@ -1449,8 +1449,8 @@ function Show-ModuleMenu {
         Write-Host "   " -NoNewline
         Write-Host $depMark -ForegroundColor $depClr -NoNewline
         Write-Host "  " -NoNewline
-        Write-Host ("{0,-4}" -f 'deps') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-36}" -f 'Dependencies (IOC / URL / squat lists)') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-4}" -f 'd') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-36}" -f 'Dependencies (IOC/URL/squat lists)') -ForegroundColor White -NoNewline
         Write-Host $depNote -ForegroundColor DarkGray
 
         $fOn   = [bool]$script:FindFilter
@@ -1467,8 +1467,8 @@ function Show-ModuleMenu {
         Write-Host "   " -NoNewline
         Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
         Write-Host "  " -NoNewline
-        Write-Host ("{0,-4}" -f 'd') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-36}" -f 'Lookback window (days)') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-4}" -f 't') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-36}" -f 'Time / lookback window (days)') -ForegroundColor White -NoNewline
         Write-Host "(currently $($script:DaysBack)d)" -ForegroundColor DarkGray
 
         Write-Host "   " -NoNewline
@@ -1535,7 +1535,7 @@ function Show-ModuleMenu {
             continue
         }
 
-        if ($cmd -eq 'deps' -or $cmd -eq 'dep' -or $cmd -eq 'dependencies') {
+        if ($cmd -eq 'd' -or $cmd -eq 'deps' -or $cmd -eq 'dep' -or $cmd -eq 'dependencies') {
             $pendingMsg = Invoke-DependenciesMenu
             Clear-Host; Show-secgurdBannerCompact
             continue
@@ -1567,7 +1567,7 @@ function Show-ModuleMenu {
             continue
         }
 
-        if ($cmd -eq 'd') {
+        if ($cmd -eq 't') {
             Write-Host ""
             Write-Host "  Lookback window in days (how far back time-bounded collectors reach):" -ForegroundColor Cyan
             Write-Host "  Current: $($script:DaysBack)d    pick 1-3650, or Enter to keep" -ForegroundColor DarkGray
