@@ -47,7 +47,7 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 | 02 | Users & sessions | accounts, logons, **RDP / remote-access artifacts** |
 | 03 | Persistence | run keys, **RunMRU / ClickFix paste-and-run**, tasks, services, WMI, IFEO, Winlogon, AppInit, accessibility hijacks, **rogue RMM tools** |
 | 04 | PowerShell artifacts | history, transcripts, 4104 script-block logs |
-| 05 | Network | connections, DNS cache, ARP, shares, firewall rules |
+| 05 | Network | connections, DNS cache, ARP, shares, firewall rules, **threat-intel host matches (DNS cache vs feeds)** |
 | 06 | Processes | process tree, command lines, unsigned DLLs |
 | 07 | Filesystem | temp executables, ADS, recently-modified files |
 | 08 | Event logs | account changes, log clearing, log status |
@@ -242,7 +242,7 @@ The repo includes a GitHub Action (`.github/workflows/refresh-iocs.yml`) that, o
 
 Alongside the hash list, secgurd carries a community **malicious-URL** list (`communitysavedMALURLS.txt`) built from the free abuse.ch **[URLhaus](https://urlhaus.abuse.ch/)** feed — URLs currently serving malware. Like the hash list it is **auto-loaded** on every run from the file next to `secgurd.ps1` (no flags needed; use `-CommunityMalUrls <file>` to point at an explicit path). In the interactive menu the **`u`** command mirrors `i`: load from a file `[f]`, paste `[p]`, list `[l]`, or toggle matching on/off `[x]`.
 
-**Where it's used.** Module 10 (Browser & creds) extracts every URL from Chrome/Edge/Firefox history and triages it. Any visited URL that appears on the feed — by **exact URL** or by **host** (payload URLs rotate their paths, so the host is the durable signal) — is flagged **HIGH** with reason *"listed on the community malicious-URL feed (URLhaus)"*. That flag then feeds the end-of-run **browser-alert correlation**, so a hit that also matches a file on disk is escalated in `00_BROWSER_ALERTS.txt`.
+**Where it's used.** Module 10 (Browser & creds) extracts every URL from Chrome/Edge/Firefox history and triages it. Any visited URL that appears on the feed — by **exact URL** or by **host** (payload URLs rotate their paths, so the host is the durable signal) — is flagged **HIGH** with reason *"listed on the community malicious-URL feed (URLhaus)"*. That flag then feeds the end-of-run **browser-alert correlation**, so a hit that also matches a file on disk is escalated in `00_BROWSER_ALERTS.txt`. Module 05 also matches the machine's **DNS client cache** host set against this feed (see *DNS-cache intel matching* below) — catching **any** process's callouts, not just browser traffic.
 
 **Curated watchlist (hand-maintained).** Separate from the auto-refreshed feed, `secgurd.ps1` carries two small lists you edit directly (near `Test-SuspiciousUrl`) to pin things you keep seeing:
 
@@ -270,7 +270,11 @@ The GitHub Action `.github/workflows/refresh-malurls.yml` runs daily (06:30 UTC,
 
 A third auto-loaded list, `squat_domains.txt`, holds **look-alike / typosquat domains impersonating your own brand**. It's built by [openSquat](https://github.com/atenreiro/opensquat), which scans newly-registered domains for typosquats (`exmaple-brand.com`), homoglyphs, and combosquats (`example-brand-login.com`) of the terms you list in **`keywords.txt`** at the repo root. Like the other lists it is **auto-loaded** from beside `secgurd.ps1` (or via `-SquatDomains <file>`), rides along in the compressed S1 paste, and is cleaned up by the cleanup command.
 
-**Where it's used.** Module 10 checks **every browser-history host and every download-origin host** (module 03 BITS jobs + module 07 `Zone.Identifier` streams) against the watchlist — an exact host match or any subdomain of a watchlisted entry. A hit raises a **HIGH** finding (*"matches openSquat squat-domain watchlist"*), is written to **`10_squat_watchlist.txt`** (listing user / browser / URL / matched domain), and flows into the end-of-run `00_BROWSER_ALERTS.txt` correlation. Matches are deduped per user+host so a heavily-visited squat host is reported once.
+**Where it's used.** Module 10 checks **every browser-history host and every download-origin host** (module 03 BITS jobs + module 07 `Zone.Identifier` streams) against the watchlist — an exact host match or any subdomain of a watchlisted entry. A hit raises a **HIGH** finding (*"matches openSquat squat-domain watchlist"*), is written to **`10_squat_watchlist.txt`** (listing user / browser / URL / matched domain), and flows into the end-of-run `00_BROWSER_ALERTS.txt` correlation. Matches are deduped per user+host so a heavily-visited squat host is reported once. Module 05 additionally matches the **DNS client cache** against the watchlist (see below), so a squat domain resolved by *any* process — not just a browser — is caught.
+
+### DNS-cache intel matching (module 05)
+
+Beyond browser history, secgurd cross-references the machine's **DNS client cache** (`Get-DnsClientCache`) against both the URLhaus host set and the squat watchlist, writing `05_intel_host_matches.txt`. A cached resolution of a listed host means *something* on the box looked it up — regardless of which process or browser. If that host's resolved IP is **also present in an active TCP connection**, the match is annotated as a **live session** to known-bad infrastructure (the strongest signal short of a payload on disk). Each hit is a **HIGH** finding. This reuses data module 05 already collects, so it adds no meaningful scan time.
 
 **Setup:** edit `keywords.txt` with your organisation's real brand/product terms (one per line, just the word — not the TLD; `#` comments and blank lines ignored). The starter file ships with placeholders you must replace.
 

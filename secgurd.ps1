@@ -3434,6 +3434,84 @@ Save-Output "05_dns_cache.txt" {
         Format-Table -AutoSize
 }
 
+Save-Output "05_intel_host_matches.txt" {
+    Write-Section "THREAT-INTEL HOST MATCHES (DNS cache + active connections vs loaded lists)"
+    "Cross-references this machine's DNS client cache against the loaded threat-intel lists - the"
+    "community malicious-URL feed (URLhaus host set) and the openSquat squat-domain watchlist. A"
+    "cached resolution of a listed host means something on the box looked it up; if that host's"
+    "resolved IP is ALSO in an active TCP connection, it's a live session to known-bad infrastructure."
+    "Unlike module 10 (browser history), this catches ANY process's network activity, not just browsers."
+    ""
+    $haveMal   = ($script:MalUrlHostSet -and $script:MalUrlHostSet.Count -gt 0)
+    $haveSquat = ($script:SquatDomainSet -and $script:SquatDomainCount -gt 0)
+    if (-not $haveMal -and -not $haveSquat) {
+        "No intel lists loaded (communitysavedMALURLS.txt / squat_domains.txt not present or empty)."
+        "Nothing to match - load them via the Dependencies ('deps') menu or the -CommunityMalUrls /"
+        "-SquatDomains parameters."
+        return
+    }
+    $loadedDesc = @()
+    if ($haveMal)   { $loadedDesc += "$($script:MalUrlHostSet.Count) URLhaus host(s)" }
+    if ($haveSquat) { $loadedDesc += "$($script:SquatDomainCount) squat domain(s)" }
+    "Lists loaded: $($loadedDesc -join '  +  ')"
+    ""
+
+    # Active PUBLIC remote IPs - lets us mark a matched host as 'actively connected'.
+    $activeIPs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    try {
+        Get-NetTCPConnection -ErrorAction SilentlyContinue |
+            Where-Object { $_.RemoteAddress -and $_.RemoteAddress -notin @('0.0.0.0', '127.0.0.1', '::', '::1') } |
+            ForEach-Object { [void]$activeIPs.Add($_.RemoteAddress) }
+    } catch {}
+
+    $cache = @()
+    try { $cache = @(Get-DnsClientCache -ErrorAction SilentlyContinue) } catch {}
+
+    $intelMatches = New-Object System.Collections.Generic.List[object]
+    $seenHost = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($e in $cache) {
+        $recName = $e.RecordName
+        if (-not $recName) { continue }
+        $normHost = $recName.ToLower().Trim('.')
+        if (-not $normHost) { continue }
+
+        # Which list does this cached host hit? URLhaus exact host, else squat (exact/subdomain).
+        $list = $null
+        if ($haveMal -and $script:MalUrlHostSet.Contains($normHost)) {
+            $list = 'URLhaus malicious-URL feed'
+        } elseif ($haveSquat) {
+            $sq = Test-SquatHost $normHost
+            if ($sq) { $list = "openSquat squat watchlist ($sq)" }
+        }
+        if (-not $list) { continue }
+        if (-not $seenHost.Add($normHost)) { continue }   # one row per host
+
+        # Resolved IP(s) for this host from the cache, and whether any is an active connection.
+        $ips = @($cache |
+            Where-Object { $_.RecordName -and ($_.RecordName.ToLower().Trim('.') -eq $normHost) -and $_.Data -match '^(\d{1,3}\.){3}\d{1,3}$|:' } |
+            ForEach-Object { $_.Data } | Sort-Object -Unique)
+        $active = $false
+        foreach ($ip in $ips) { if ($activeIPs.Contains($ip)) { $active = $true; break } }
+
+        $intelMatches.Add([PSCustomObject]@{ Host = $normHost; List = $list; IPs = ($ips -join ', '); Active = $active })
+        $activeNote = if ($active) { ' - ACTIVE CONNECTION to a resolved IP' } else { '' }
+        Add-Finding 'HIGH' '05' (Ex "DNS cache resolved a listed host: $normHost ^09 $list$activeNote") '05_intel_host_matches.txt'
+    }
+
+    if ($intelMatches.Count -eq 0) {
+        "No DNS-cache host matched the loaded lists."
+        return
+    }
+    Write-Section "MATCHES ($($intelMatches.Count))"
+    foreach ($m in ($intelMatches | Sort-Object @{E={$_.Active};Descending=$true}, Host)) {
+        $m.Host
+        "    list        : $($m.List)"
+        if ($m.IPs) { "    resolved IP : $($m.IPs)" }
+        "    active conn : $(if ($m.Active) { 'YES - live TCP session to a resolved IP' } else { 'no' })"
+        ""
+    }
+}
+
 Save-Output "05_arp_hosts.txt" {
     Write-Section "ARP TABLE"
     Get-NetNeighbor | Format-Table -AutoSize
