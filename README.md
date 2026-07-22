@@ -48,12 +48,12 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 | 03 | Persistence | run keys, **RunMRU / ClickFix paste-and-run**, tasks, services, WMI, IFEO, Winlogon, AppInit, accessibility hijacks, **rogue RMM tools** |
 | 04 | PowerShell artifacts | history, transcripts, 4104 script-block logs |
 | 05 | Network | connections, DNS cache, ARP, shares, firewall rules, **threat-intel host matches (DNS cache vs feeds)** |
-| 06 | Processes | process tree, command lines, unsigned DLLs |
+| 06 | Processes | process tree, command lines, unsigned DLLs, **masquerade / drop-path / suspicious-command-line flags** |
 | 07 | Filesystem | temp executables, ADS, recently-modified files |
 | 08 | Event logs | account changes, log clearing, log status |
 | 09 | Software & Defender | installed apps, **per-user AppData / all-hive PUP & clone-browser detection**, patches, Defender status & exclusions |
 | 10 | Browser & creds | **per-user browser history + URL analysis (Chrome/Edge/Firefox)**, **squat-domain watchlist cross-ref**, history file paths, `.ssh`, `.aws`, credential files |
-| 11 | LOLBins | certutil, mshta, rundll32, regsvr32 usage |
+| 11 | LOLBins | certutil, mshta, rundll32, regsvr32 usage (4688), **+ cred-dump / hive-theft / obfuscation command-line flags** |
 | 12 | AmCache / ShimCache | execution-artifact locations |
 | 13 | Prefetch | `.pf` files, last-run times |
 | 14 | Named pipes | active pipes, C2 detection |
@@ -76,6 +76,27 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 
 - Timestamped output folder, auto-zipped.
 - Returns a PowerShell object (folder, zip path, file count, findings, duration) for scripting.
+
+---
+
+## Repository layout
+
+```
+secgurd.ps1                       the entire tool (single file, human-readable source of truth)
+README.md
+dependencies/                     external data the tool auto-loads (git-pulled; refreshed by Actions)
+  communitysavedIOCS.txt            community malware-hash feed (abuse.ch MalwareBazaar)
+  communitysavedMALURLS.txt         community malicious-URL feed (abuse.ch URLhaus)
+  squat_domains.txt                 brand look-alike / typosquat domains (openSquat output)
+  keywords.txt                      your brand terms - openSquat INPUT (edit this)
+  Dependencies.txt                  manifest of the data files (for external tooling)
+.github/workflows/                daily refresh Actions (run in GitHub's cloud, commit back)
+  refresh-iocs.yml
+  refresh-malurls.yml
+  refresh-squat-domains.yml
+```
+
+The `dependencies/` folder is a **repo-only** convenience for keeping the root tidy. On an endpoint the data files sit **flat next to `secgurd.ps1`** (the S1 paste unpacks them into `%TEMP%`), and secgurd resolves either layout automatically — see *[Where secgurd looks](#ioc-hash-matching)* under IOC hash matching.
 
 ---
 
@@ -127,7 +148,7 @@ Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/SicksSen
 Remove-Item "$env:TEMP\secgurd*", "$env:TEMP\communitysavedIOCS.txt", "$env:TEMP\communitysavedMALURLS.txt", "$env:TEMP\squat_domains.txt", "$env:TEMP\manualIOCS.txt", "$env:TEMP\secgurd_s1_*.txt" -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
-> This clears everything secgurd (or the compressed S1 paste) can leave in `%TEMP%`: the `secgurd_<host>_<timestamp>` output folder, the unpacked `secgurd.ps1`, the S1 paste files, and the IOC-hash / malicious-URL lists. `"$env:TEMP\secgurd*"` already covers `secgurd.ps1` and the `secgurd_s1_*.txt` files, so those entries are belt-and-suspenders.
+> This clears everything secgurd (or the compressed S1 paste) can leave in `%TEMP%`: the `secgurd_<host>_<timestamp>` output folder, the unpacked `secgurd.ps1`, the S1 paste files, and the IOC-hash / malicious-URL / squat-domain / manual lists. `"$env:TEMP\secgurd*"` already covers `secgurd.ps1` and the `secgurd_s1_*.txt` files, so those entries are belt-and-suspenders. (On an endpoint the lists sit flat in `%TEMP%`, so cleanup matches bare filenames — not the repo's `dependencies/` folder.)
 >
 > To check after cleanup run `Get-ChildItem "$env:TEMP" -Filter "secgurd*" -ErrorAction SilentlyContinue; Get-ChildItem "$env:TEMP" -Include "communitysavedIOCS.txt","communitysavedMALURLS.txt","squat_domains.txt","manualIOCS.txt" -ErrorAction SilentlyContinue`.
 
@@ -138,7 +159,8 @@ Remove-Item "$env:TEMP\secgurd*", "$env:TEMP\communitysavedIOCS.txt", "$env:TEMP
 ```
 secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
             [-OpenWhenDone] [-WithOwners] [-WithSignatures] [-WithTaskInfo]
-            [-IOCHashes <file>] [-DaysBack <N>] [-Find <string>]
+            [-IOCHashes <file>] [-CommunityIOCHashes <file>] [-CommunityMalUrls <file>]
+            [-SquatDomains <file>] [-DaysBack <N>] [-Find <string>]
             [-Cleanup] [-MakeS1Paste] [-Help]
 ```
 
@@ -217,7 +239,7 @@ This file lives in the repo's **`dependencies/`** folder (alongside the maliciou
 > **Where secgurd looks:** for each list it checks (1) an explicit `-Community*/-SquatDomains` path, then (2) the `dependencies/` folder next to the script (the repo/clone layout), then (3) **flat beside the script** — which is where the compressed S1 paste unpacks them (into `%TEMP%`, next to `secgurd.ps1`). So the folder keeps the repo tidy while endpoint/paste runs, which stay flat, are unaffected.
 
 **2. Hashes you add — case-specific, kept separate.**
-Provide your own list via `-IOCHashes C:\path\list.txt` or the interactive `i` menu (file or paste). These never touch the community file, so you can always tell *what you added* from *what was already saved*.
+Provide your own list via `-IOCHashes C:\path\list.txt` or the **Dependencies** menu (`d` → `[1] IOC hashes`, then load `[f]` / paste `[p]`). These never touch the community file, so you can always tell *what you added* from *what was already saved*.
 
 When both are present, secgurd matches against **community hashes + the ones you added**, and writes results to two separate files:
 
@@ -237,13 +259,13 @@ Everything is **fully offline** — no API key, no internet on the target. Hashe
 
 ### Keeping the community list fresh automatically
 
-The repo includes a GitHub Action (`.github/workflows/refresh-iocs.yml`) that, once a day, fetches a free public malware-hash feed (abuse.ch MalwareBazaar) **in GitHub's cloud** and commits the refreshed `communitysavedIOCS.txt` back to the repo. Your endpoints never touch the internet — only GitHub does the fetching. Then your next `git pull` picks up the new hashes. You can also trigger it manually from the repo's **Actions** tab ("Run workflow").
+The repo includes a GitHub Action (`.github/workflows/refresh-iocs.yml`) that, once a day, fetches a free public malware-hash feed (abuse.ch MalwareBazaar) **in GitHub's cloud** and commits the refreshed `dependencies/communitysavedIOCS.txt` back to the repo. Your endpoints never touch the internet — only GitHub does the fetching. Then your next `git pull` picks up the new hashes. You can also trigger it manually from the repo's **Actions** tab ("Run workflow").
 
 ---
 
 ## Community malicious-URL matching
 
-Alongside the hash list, secgurd carries a community **malicious-URL** list (`dependencies/communitysavedMALURLS.txt`) built from the free abuse.ch **[URLhaus](https://urlhaus.abuse.ch/)** feed — URLs currently serving malware. Like the hash list it is **auto-loaded** on every run from the `dependencies/` folder (no flags needed; use `-CommunityMalUrls <file>` to point at an explicit path). In the interactive menu the **`u`** command mirrors `i`: load from a file `[f]`, paste `[p]`, list `[l]`, or toggle matching on/off `[x]`.
+Alongside the hash list, secgurd carries a community **malicious-URL** list (`dependencies/communitysavedMALURLS.txt`) built from the free abuse.ch **[URLhaus](https://urlhaus.abuse.ch/)** feed — URLs currently serving malware. Like the hash list it is **auto-loaded** on every run from the `dependencies/` folder (no flags needed; use `-CommunityMalUrls <file>` to point at an explicit path). Manage it from the **Dependencies** menu (`d` → `[2] Malicious URLs`): load from a file `[f]`, paste `[p]`, list `[l]`, or toggle matching on/off `[x]`.
 
 **Where it's used.** Module 10 (Browser & creds) extracts every URL from Chrome/Edge/Firefox history and triages it. Any visited URL that appears on the feed — by **exact URL** or by **host** (payload URLs rotate their paths, so the host is the durable signal) — is flagged **HIGH** with reason *"listed on the community malicious-URL feed (URLhaus)"*. That flag then feeds the end-of-run **browser-alert correlation**, so a hit that also matches a file on disk is escalated in `00_BROWSER_ALERTS.txt`. Module 05 also matches the machine's **DNS client cache** host set against this feed (see *DNS-cache intel matching* below) — catching **any** process's callouts, not just browser traffic.
 
@@ -263,7 +285,7 @@ https://evil-cdn.example/a,b,c/payload,CobaltStrike
 
 ### Keeping the malicious-URL list fresh automatically
 
-The GitHub Action `.github/workflows/refresh-malurls.yml` runs daily (06:30 UTC, just after the hash refresh) and manually from the **Actions** tab. It fetches the URLhaus "online" export **in GitHub's cloud**, keeps the URL plus its threat/tags label, and commits the refreshed `communitysavedMALURLS.txt` back to the repo. Your next `git pull` picks up the new URLs — the endpoints never touch the internet. It also rides along inside the compressed SentinelOne paste, so an air-gapped box gets the current URL feed too.
+The GitHub Action `.github/workflows/refresh-malurls.yml` runs daily (06:30 UTC, just after the hash refresh) and manually from the **Actions** tab. It fetches the URLhaus "online" export **in GitHub's cloud**, keeps the URL plus its threat/tags label, and commits the refreshed `dependencies/communitysavedMALURLS.txt` back to the repo. Your next `git pull` picks up the new URLs — the endpoints never touch the internet. It also rides along inside the compressed SentinelOne paste, so an air-gapped box gets the current URL feed too.
 
 **The feed is aggressively filtered to stay small.** The raw URLhaus export is ~15k URLs, but ~87% of them are things secgurd **already flags on its own heuristics** — so listing them adds nothing. The Action drops every entry the tool would already catch (direct payload downloads like `.exe`/`.dll`/`.ps1`, raw-IP hosts, GitHub-hosted content, known C2/file-drop infrastructure, URL shorteners, high-abuse TLDs, punycode), keeps only URLs added in the last **90 days**, and emits **one representative URL per host** (module 10 matches on host too, so extra URLs on an already-listed host are redundant). What survives — a few hundred hosts — is the real value-add: confirmed-malicious sites on *otherwise normal-looking* domains that the heuristics would miss. Tune the window via `MAXAGE_DAYS` in the workflow.
 
