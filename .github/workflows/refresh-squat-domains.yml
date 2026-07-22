@@ -3,9 +3,10 @@ name: Refresh squat-domain watchlist
 # Auto-updates squat_domains.txt using openSquat (https://github.com/atenreiro/opensquat),
 # which finds newly-registered look-alike / typosquat / combosquat domains of your brand terms
 # (listed in keywords.txt). Runs in GitHub's cloud (NOT on any endpoint) and commits the refreshed
-# file to the repo. Your endpoints stay offline - they just get the new domains on the next
-# `git pull`. Free mode (confidence level -c 1) uses openSquat's built-in public feed and needs
-# NO API key.
+# file to the repo. The watchlist is CUMULATIVE - each run MERGES that day's new matches into the
+# existing list (deduped) rather than overwriting it, so coverage builds up over time. Your
+# endpoints stay offline - they just get the new domains on the next `git pull`. Free mode
+# (confidence level -c 1) uses openSquat's built-in public feed and needs NO API key.
 
 on:
   schedule:
@@ -36,35 +37,45 @@ jobs:
         #                   is stricter. 1 = HIGH confidence: fewer, higher-quality matches (good for
         #                   a watchlist that auto-flags HIGH). Raise toward 4 to catch more (noisier).
         #                   Free mode - no API key required.
-        # -o / -t txt     : write one matching domain per line to dependencies/squat_domains.txt
+        # -o / -t txt     : write THIS RUN's matches (one domain per line) to a scratch file - the
+        #                   next step MERGES them into the committed watchlist (cumulative), so we
+        #                   never overwrite the standing list here.
         run: |
           mkdir -p dependencies
-          opensquat -k dependencies/keywords.txt -c 1 -o dependencies/squat_domains.txt -t txt
+          opensquat -k dependencies/keywords.txt -c 1 -o "$RUNNER_TEMP/squat_new.txt" -t txt
 
-      - name: Prune, dedupe and cap the list
-        # Keeps squat_domains.txt lean - it rides inside the compressed SentinelOne paste, which must
-        # stay small. Two reductions:
+      - name: Merge into the watchlist, prune, dedupe and cap
+        # CUMULATIVE merge: fold this run's new matches ($RUNNER_TEMP/squat_new.txt) INTO the standing
+        # watchlist (dependencies/squat_domains.txt) instead of replacing it, so the list grows over
+        # time as new look-alikes get registered. Keeps squat_domains.txt lean - it rides inside the
+        # compressed SentinelOne paste, which must stay small - via three reductions:
         #   1) Drop domains secgurd ALREADY flags on its own heuristics, so the watchlist never
         #      duplicates a built-in detection: punycode (xn--) hosts and high-abuse TLDs (same list
         #      as Test-SuspiciousUrl in secgurd.ps1 - keep the two in sync).
-        #   2) Keep only valid-looking domains, sort -u, and hard-cap the count (CAP). openSquat
-        #      overwrites this file each run (it is one day's matches, not cumulative), so a large
-        #      file means the keywords are too generic - the cap is a safety backstop and logs drops.
+        #   2) Keep only valid-looking domains and sort -u (this is what dedupes old vs new entries).
+        #   3) Hard-cap the total (CAP) as a safety backstop. Since the list is now cumulative, hitting
+        #      the cap means the keywords are too generic OR it has simply grown a long time - tighten
+        #      keywords.txt if it fills up. Over-cap drops are logged.
         run: |
           set -euo pipefail
           F="dependencies/squat_domains.txt"
+          NEW="$RUNNER_TEMP/squat_new.txt"
           CAP=500
-          [ -f "$F" ] || { echo "openSquat produced no output; nothing to prune."; exit 0; }
           ABUSE_TLDS='\.(tk|top|xyz|gq|ml|cf|work|click|country|kim|men|loan|download|zip|mov|rest|cfd|sbs|lol|quest)$'
+          touch "$F" "$NEW"   # either may be absent (first run / zero matches) - so cat never errors
+          BEFORE=$(grep -c . "$F" || true)
           TMP="$(mktemp)"
-          grep -viE '(^|\.)xn--' "$F" \
+          # Union of existing + new, then clean. '|| true' because grep exits 1 when nothing survives,
+          # which is a valid (empty) result, not a failure.
+          cat "$F" "$NEW" \
+            | grep -viE '(^|\.)xn--' \
             | grep -viE "$ABUSE_TLDS" \
             | grep -iE '^[a-z0-9-]+(\.[a-z0-9-]+)+$' \
-            | sort -u > "$TMP"
+            | sort -u > "$TMP" || true
           TOTAL=$(wc -l < "$TMP" | tr -d ' ')
-          echo "Kept $TOTAL domain(s) after prune+dedupe."
+          echo "Watchlist: $BEFORE -> $TOTAL domain(s) after merge+prune+dedupe."
           if [ "$TOTAL" -gt "$CAP" ]; then
-            echo "Over cap ($CAP) - dropping $((TOTAL-CAP)). Consider tightening keywords.txt."
+            echo "Over cap ($CAP) - keeping the first $CAP alphabetically, dropping $((TOTAL-CAP)). Consider tightening keywords.txt."
             head -n "$CAP" "$TMP" > "$F"
           else
             cp "$TMP" "$F"
