@@ -48,9 +48,5 @@
 # ==========================================================================================
 #  ADD YOUR TERMS BELOW  (replace these placeholders with your real brand/product words)
 # ==========================================================================================
-example-brand
-exampleproduct
-example-portal
-myco-login
 # test term (openSquat hunts look-alikes of it, e.g. 0utlook-office.com - NOT the domain itself):
 outlook.office.com
