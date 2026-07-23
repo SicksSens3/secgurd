@@ -133,7 +133,7 @@ function Ex {
     return $s
 }
 
-$script:secgurdVersion = 'v1.4'
+$script:secgurdVersion = 'v2.0'
 
 # ---------------------------------------------
 
@@ -1813,53 +1813,78 @@ function Show-secgurdBannerCompact {
 }
 
 function Wait-BannerSplash {
-    # SPLASH SCREEN shown once on entry to the interactive menu. Draws the compact banner on its own
-    # and animates blood dripping off the sword tip until the operator presses a key, then returns so
-    # the caller can clear and draw the static menu. Because nothing is printed below the banner, the
-    # tip is always at the top of the viewport and fully visible - so the drip stays aligned with the
-    # blade and can never scroll off (the two problems it had when it ran under the full menu).
-    # Falls back to a static banner whenever the console can't be animated - input redirected,
-    # non-interactive, ISE / remote-paste host, the banner isn't on screen, or the window is too short
-    # or narrower than the 78-col banner (which would soft-wrap and throw off the drip coordinates) -
-    # so it can never hang or paint garbage. Coordinates come from Show-secgurdBannerCompact.
+    # SPLASH SCREEN shown once on entry to the interactive menu. Draws the compact banner, the Sigurd
+    # inscription, and a one-line operator stamp (endpoint / user / privilege / version), then animates
+    # blood dripping off the sword tip until the operator presses a key - at which point it returns so
+    # the caller can clear and draw the menu. Drips are painted at absolute (col,row) cells relative to
+    # the recorded sword tip, so animation runs ONLY when the whole splash fits on screen unscrolled
+    # (tip stays put) on a real, wide-enough, interactive console. Otherwise the same screen is drawn
+    # statically and it just waits for ENTER - it can never hang or paint drips off the blade, and it
+    # falls through instantly on a redirected / non-interactive / remote-paste host. Tip coordinates
+    # come from Show-secgurdBannerCompact; the context colors mirror the full banner's system card and
+    # HUNT uses the alert brick-red (Write-Alert), true-color when the terminal supports it.
     Clear-Host
     Show-secgurdBannerCompact
     $tipCol = $script:BannerTipCol
     $tipRow = $script:BannerTipRow
 
+    # Operator context - same values and colors as the full startup banner's system card.
+    $sgHost  = $env:COMPUTERNAME
+    $sgUser  = "$env:USERDOMAIN\$env:USERNAME"
+    $sgAdmin = $false
+    try { $sgAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch {}
+    $privText = if ($sgAdmin) { 'ADMINISTRATOR' }    else { 'STANDARD USER' }
+    $privAnsi = if ($sgAdmin) { '38;2;84;201;90' }   else { '38;2;217;180;92' }
+    $privCon  = if ($sgAdmin) { 'Green' }            else { 'Yellow' }
+    $sepAnsi  = '38;2;110;110;100'
+
+    # Inscription (Sigurd's description, Volsunga Saga) + operator stamp.
+    Write-Host ""
+    Write-Flair (Ex "              ^13 A shield to his friends, a terror to his foes. ^13") '1;91' 'Red'
+    Write-Host ""
+    Wc "   $sgHost"                          '38;2;86;199;214'  'Cyan'
+    Wc (Ex '  ^10  ')                        $sepAnsi           'DarkGray'
+    Wc $sgUser                               '38;2;217;180;92'  'Yellow'
+    Wc (Ex '  ^10  ')                        $sepAnsi           'DarkGray'
+    Wc $privText                             $privAnsi          $privCon
+    Wc (Ex '  ^10  ')                        $sepAnsi           'DarkGray'
+    Wc "secgurd $($script:secgurdVersion)"   '38;2;194;198;189' 'DarkGray'
+    Write-Host ""
+    Write-Host ""
+
+    # Prompt: dim lead-in + HUNT in the alert brick-red.
+    Write-Host "   Press ENTER to " -ForegroundColor DarkGray -NoNewline
+    Write-Alert 'HUNT' -NoNewline
+    Write-Host ""
+    $promptL = 0; $promptT = -1
+    try { $promptL = [Console]::CursorLeft; $promptT = [Console]::CursorTop } catch { $promptT = -1 }
+
+    # Can we animate? Needs a real, interactive, wide-enough console where the whole splash fit
+    # unscrolled (so the sword tip is still at the row we recorded).
     $canAnimate = $true
     try { if ([Console]::IsInputRedirected) { $canAnimate = $false } } catch { $canAnimate = $false }
     if (-not [Environment]::UserInteractive) { $canAnimate = $false }
     if ($Host.Name -eq 'ServerRemoteHost' -or $Host.Name -eq 'Windows PowerShell ISE Host') { $canAnimate = $false }
-    if ($null -eq $tipRow -or $tipRow -lt 0 -or $null -eq $tipCol) { $canAnimate = $false }
+    if ($null -eq $tipRow -or $tipRow -lt 0 -or $null -eq $tipCol -or $promptT -lt 0) { $canAnimate = $false }
     if ($canAnimate) {
         try {
             $winTop = [Console]::WindowTop; $winH = [Console]::WindowHeight; $winW = [Console]::WindowWidth
-            # Tip (plus a few drip rows) must be on screen, and the window must be wide enough that the
-            # 78-col banner didn't soft-wrap - a wrapped banner shifts the real tip away from the
-            # absolute (col,row) the drip paints at, so we skip the animation rather than misplace it.
+            # 78-col banner must not soft-wrap, and the full splash (~16 rows) must fit unscrolled so the
+            # tip stays put - otherwise skip the animation rather than paint drips off the blade.
+            if ($winW -lt 78 -or $tipCol -ge $winW) { $canAnimate = $false }
+            if ($winH -lt 18) { $canAnimate = $false }
             if ($tipRow -lt $winTop -or ($tipRow + 3) -ge ($winTop + $winH)) { $canAnimate = $false }
-            if ($tipCol -ge $winW -or $winW -lt 78) { $canAnimate = $false }
         } catch { $canAnimate = $false }
     }
 
-    Write-Host ""
-    Write-Host ""
     if (-not $canAnimate) {
-        # No animation possible - show the static banner and wait for Enter, but only if there's a real
-        # interactive console; otherwise return at once so a redirected / remote paste can't hang here.
+        # Static fallback: the screen is already drawn; just wait for ENTER on a real interactive
+        # console, or return at once so a redirected / remote paste can't block here.
         $interactive = $true
         try { if ([Console]::IsInputRedirected -or -not [Environment]::UserInteractive) { $interactive = $false } } catch { $interactive = $false }
-        if ($interactive) {
-            Write-Host "   Press ENTER to continue..." -ForegroundColor DarkGray
-            try { [void](Read-Host) } catch {}
-        }
+        if ($interactive) { try { [void](Read-Host) } catch {} }
         return
     }
-
-    Write-Host "   Press ENTER to enter the menu..." -ForegroundColor DarkGray
-    $promptL = 0; $promptT = 0
-    try { $promptL = [Console]::CursorLeft; $promptT = [Console]::CursorTop } catch { return }
 
     $dripChars   = @("'", '"', '`')
     $redLeft     = $tipCol - 7; if ($redLeft -lt 0) { $redLeft = 0 }

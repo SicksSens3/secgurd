@@ -227,7 +227,7 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `q` | Quit |
 | `cleanup` | Remove **all** secgurd artifacts from `%TEMP%` (script, output folders + zips, S1 paste files, IOC / malicious-URL / squat-domain / manual lists) — type-to-confirm, then exit. Same as `-Cleanup`. |
 
-> On entry the logo appears on its own splash screen with blood dripping off the sword tip (a small ASCII animation); press ENTER to clear it and drop into the menu, which shows the same banner statically. Because the splash draws nothing beneath the logo, the drip always stays aligned with the blade and can't scroll off. It only runs on a local interactive console wide and tall enough to show the banner — it silently falls back to a static logo on remote/redirected/ISE hosts or windows too small to fit it, so it never affects input.
+> On entry the logo appears on its own splash screen — the Sigurd inscription, a one-line operator stamp (endpoint · user · privilege · version), blood dripping off the sword tip, and a `Press ENTER to HUNT` prompt. A keypress clears it and drops into the menu, which shows the same banner statically. The drip animates only on a local interactive console wide and tall enough to hold the whole splash unscrolled (so the sword tip stays put under it) — on remote/redirected/ISE hosts or a small window it silently falls back to the static splash, so it never affects input.
 
 ---
 
