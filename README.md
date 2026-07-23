@@ -11,7 +11,7 @@
       ╚═╝ ███████║███████╗╚██████╗╚██████╔╝╚██████╔╝██║  ██║██████╔╝
           ╚══════╝╚══════╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝
 
-                ≋ Slayer of threats. Keeper of truth. ≋
+            ≋ A shield to his friends, a terror to his foes. ≋
                     ᛊ  F O R E N S I C   T R I A G E  ᛊ
  ᚦ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ᚱ
 ```
@@ -408,4 +408,5 @@ Provided as-is, for authorized security and incident-response use only. The auth
 
 ---
 
-*Slayer of threats. Keeper of truth.*
+*A shield to his friends, a terror to his foes.*
+— Völsunga Saga, ch. 22

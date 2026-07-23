@@ -4,9 +4,13 @@
 .SYNOPSIS
     secgurd - Windows DFIR Triage Tool
 .DESCRIPTION
-    Slayer of threats. Keeper of truth.
+    "A shield to his friends, a terror to his foes."
+        - Volsunga Saga, ch. 22 ("Of the Semblance and Parts of Sigurd Fafnirsbane")
+
     Collects key forensic artifacts from a live Windows system over a remote session.
-    Named for Sigurd, slayer of Fafnir. No external dependencies.
+    Named for Sigurd Fafnirsbane, the dragon-slayer of Norse legend - a shield to the
+    host it guards, a terror to whatever is hiding on it. Pure PowerShell, no external
+    dependencies, so it runs from a locked-down remote shell (e.g. SentinelOne) as-is.
 .PARAMETER OutputPath
     Where artifacts are written. Defaults to a timestamped folder under %TEMP%.
 .PARAMETER Auto
@@ -387,7 +391,7 @@ function Show-secgurdBanner {
     Write-Host (Ex "          ^08^03^03^03^03^03^03^05^08^03^03^03^03^03^03^05 ^08^03^03^03^03^03^05 ^08^03^03^03^03^03^05  ^08^03^03^03^03^03^05 ^08^03^05  ^08^03^05^08^03^03^03^03^03^05") -ForegroundColor $gold
 
     Write-Host ""
-    Write-Flair (Ex "                ^13 Slayer of threats. Keeper of truth. ^13") '1;91' 'Red'
+    Write-Flair (Ex "              ^13 A shield to his friends, a terror to his foes. ^13") '1;91' 'Red'
     Write-Host (Ex "                    ^22  F O R E N S I C   T R I A G E  ^22") -ForegroundColor $dim
     Write-Host ""
     Write-Host (Ex " ^12^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^11") -ForegroundColor $dim
