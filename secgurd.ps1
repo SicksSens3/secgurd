@@ -1455,8 +1455,12 @@ function Show-ModuleMenu {
         return
     }
 
-    # Draw the compact banner on entry (subsequent redraws happen in the handlers before `continue`).
-    # This also records the sword-tip coordinates that Read-MenuInput's idle blood-drip animation uses.
+    # Splash first: the animated logo on its own screen. Because nothing is printed below it, the
+    # sword tip is always at the top of the viewport and fully visible - so the blood-drip stays
+    # aligned with the blade and can never scroll off (both problems it had running under the menu).
+    # A keypress clears the splash and drops into the menu, which shows the SAME banner statically
+    # above the options - no drip there, so the long menu scrolling on a short window is harmless.
+    Wait-BannerSplash
     Clear-Host
     Show-secgurdBannerCompact
     $pendingMsg = $null
@@ -1584,7 +1588,7 @@ function Show-ModuleMenu {
 
         Write-Host ""
         Write-Host "   > " -ForegroundColor DarkGray -NoNewline
-        $userInput = Read-MenuInput   # animates the sword-tip blood-drip while idle; stops on keypress
+        $userInput = Read-Host        # plain read; the blood-drip animation lives on the splash screen now
 
         if ([string]::IsNullOrWhiteSpace($userInput)) { continue }
         $cmd = $userInput.Trim().ToLower()
@@ -1772,7 +1776,7 @@ function Show-ModuleMenu {
 }
 
 function Show-secgurdBannerCompact {
-    # Records the sword-tip screen coordinates ($script:BannerTip*) so the menu's idle blood-drip
+    # Records the sword-tip screen coordinates ($script:BannerTip*) so the splash-screen blood-drip
     # animation knows where the blade tip is. Purely informational - drawing is unchanged.
     $script:BannerTop = -1
     try { $script:BannerTop = [Console]::CursorTop } catch { $script:BannerTop = -1 }
@@ -1804,13 +1808,18 @@ function Show-secgurdBannerCompact {
     $script:BannerTipRow = if ($script:BannerTop -ge 0) { $script:BannerTop + 4 } else { -1 }
 }
 
-function Read-MenuInput {
-    # Drip-aware line reader for the MAIN MENU prompt ONLY. While the operator is idle it animates
-    # blood dripping off the sword tip; the instant a key is pressed it wipes the drips and hands off
-    # to the native Read-Host (which still receives that keystroke), so choosing an option stops the
-    # animation at once. Falls back to a plain Read-Host whenever the console can't be animated -
-    # input redirected, non-interactive, ISE / remote-paste host, or the banner isn't on screen -
-    # so the menu can never hang or break. Coordinates come from Show-secgurdBannerCompact.
+function Wait-BannerSplash {
+    # SPLASH SCREEN shown once on entry to the interactive menu. Draws the compact banner on its own
+    # and animates blood dripping off the sword tip until the operator presses a key, then returns so
+    # the caller can clear and draw the static menu. Because nothing is printed below the banner, the
+    # tip is always at the top of the viewport and fully visible - so the drip stays aligned with the
+    # blade and can never scroll off (the two problems it had when it ran under the full menu).
+    # Falls back to a static banner whenever the console can't be animated - input redirected,
+    # non-interactive, ISE / remote-paste host, the banner isn't on screen, or the window is too short
+    # or narrower than the 78-col banner (which would soft-wrap and throw off the drip coordinates) -
+    # so it can never hang or paint garbage. Coordinates come from Show-secgurdBannerCompact.
+    Clear-Host
+    Show-secgurdBannerCompact
     $tipCol = $script:BannerTipCol
     $tipRow = $script:BannerTipRow
 
@@ -1821,16 +1830,32 @@ function Read-MenuInput {
     if ($null -eq $tipRow -or $tipRow -lt 0 -or $null -eq $tipCol) { $canAnimate = $false }
     if ($canAnimate) {
         try {
-            # Only animate when the sword tip is actually visible - on a short window the long menu
-            # scrolls the banner off the top, so animating there would be invisible (and pointless).
-            $winTop = [Console]::WindowTop; $winH = [Console]::WindowHeight
+            $winTop = [Console]::WindowTop; $winH = [Console]::WindowHeight; $winW = [Console]::WindowWidth
+            # Tip (plus a few drip rows) must be on screen, and the window must be wide enough that the
+            # 78-col banner didn't soft-wrap - a wrapped banner shifts the real tip away from the
+            # absolute (col,row) the drip paints at, so we skip the animation rather than misplace it.
             if ($tipRow -lt $winTop -or ($tipRow + 3) -ge ($winTop + $winH)) { $canAnimate = $false }
+            if ($tipCol -ge $winW -or $winW -lt 78) { $canAnimate = $false }
         } catch { $canAnimate = $false }
     }
-    if (-not $canAnimate) { return (Read-Host) }
 
+    Write-Host ""
+    Write-Host ""
+    if (-not $canAnimate) {
+        # No animation possible - show the static banner and wait for Enter, but only if there's a real
+        # interactive console; otherwise return at once so a redirected / remote paste can't hang here.
+        $interactive = $true
+        try { if ([Console]::IsInputRedirected -or -not [Environment]::UserInteractive) { $interactive = $false } } catch { $interactive = $false }
+        if ($interactive) {
+            Write-Host "   Press ENTER to continue..." -ForegroundColor DarkGray
+            try { [void](Read-Host) } catch {}
+        }
+        return
+    }
+
+    Write-Host "   Press ENTER to enter the menu..." -ForegroundColor DarkGray
     $promptL = 0; $promptT = 0
-    try { $promptL = [Console]::CursorLeft; $promptT = [Console]::CursorTop } catch { return (Read-Host) }
+    try { $promptL = [Console]::CursorLeft; $promptT = [Console]::CursorTop } catch { return }
 
     $dripChars   = @("'", '"', '`')
     $redLeft     = $tipCol - 7; if ($redLeft -lt 0) { $redLeft = 0 }
@@ -1869,14 +1894,15 @@ function Read-MenuInput {
             [Console]::SetCursorPosition($promptL, $promptT)
             Start-Sleep -Milliseconds 200
         }
-        # a key is waiting: wipe the drips, restore cursor + visibility, then read the line natively.
+        # a key is waiting: wipe the drips, flush the queued keystroke(s) so nothing leaks into the
+        # menu's first Read-Host, then restore the cursor.
         foreach ($cell in $prev) { $c = $cell -split ','; [Console]::SetCursorPosition([int]$c[0], [int]$c[1]); [Console]::Write(' ') }
+        while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }
         [Console]::SetCursorPosition($promptL, $promptT)
         try { [Console]::CursorVisible = $cursorWasVisible } catch {}
     } catch {
         try { [Console]::CursorVisible = $true } catch {}
     }
-    return (Read-Host)
 }
 
 function Show-DeadDragon {
@@ -2288,6 +2314,19 @@ function Add-BrowserFlag {
     }
 }
 
+function Resolve-Sid {
+    # SID string -> account name. Returns 'DOMAIN\user' (AD) or 'MACHINE\user' (local) when the SID
+    # can be translated - AD lookups need a reachable DC, so this can fail offline / off-domain.
+    # On failure: the supplied profile path's leaf if given (e.g. 'jdoe'), else the raw SID. Never throws.
+    param([string]$Sid, [string]$ProfilePath)
+    try {
+        return (New-Object System.Security.Principal.SecurityIdentifier($Sid)).Translate([System.Security.Principal.NTAccount]).Value
+    } catch {
+        if ($ProfilePath) { return (Split-Path $ProfilePath -Leaf) }
+        return $Sid
+    }
+}
+
 function Get-AllUserHives {
     # Enumerate every real user profile and expose its registry hive for inspection.
     # Loaded hives (the user is logged on) are used in place under HKEY_USERS\<SID>; a logged-off
@@ -2309,7 +2348,7 @@ function Get-AllUserHives {
     $idx = 0
     foreach ($sid in $profiles.Keys) {
         if ($sid -match '^S-1-5-(18|19|20)$') { continue }   # SYSTEM / LocalService / NetworkService
-        $acct = try { (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount]).Value } catch { $profiles[$sid] }
+        $acct = Resolve-Sid $sid $profiles[$sid]
         if ($loaded.ContainsKey($sid)) {
             $hives.Add([PSCustomObject]@{ Sid=$sid; Acct=$acct; Base="Registry::HKEY_USERS\$sid"; Mounted=$false })
         } else {
@@ -2561,8 +2600,8 @@ Save-Output "01_env_variables.txt" {
 Save-Output "02_local_users.txt" {
     Write-Section "LOCAL USERS"
     $localUsers = Get-LocalUser
-    $localUsers | Select-Object Name, Enabled, LastLogon, PasswordLastSet,
-        PasswordNeverExpires, Description | Format-Table -AutoSize
+    $localUsers | Select-Object Name, @{N='SID';E={$_.SID.Value}}, Enabled, LastLogon,
+        PasswordLastSet, PasswordNeverExpires, Description | Format-Table -AutoSize
 
     # Flag users whose password was set within the lookback window (a decent proxy for creation)
 
@@ -2573,6 +2612,41 @@ Save-Output "02_local_users.txt" {
         Add-Finding 'MED' '02' (Ex "Local user '$($u.Name)' password set <$($script:DaysBack)d ago ($($u.PasswordLastSet.ToString('yyyy-MM-dd'))) ^09 possible new account") '02_local_users.txt'
     }
 
+    Write-Section "ALL USER PROFILES ON THIS MACHINE (SID -> account)"
+    "Every profile on the box - local AND domain/AD accounts that have logged on. 'Get-LocalUser'"
+    "above lists LOCAL accounts only; a domain user has no local-account object but does have a"
+    "profile + SID here (and hive / history in modules 09 & 10). Domain SID->name needs a reachable"
+    "DC - if it can't resolve, the profile folder is shown and Type is inferred from the SID."
+    ""
+    # Local machine SID prefix (everything up to the final RID) - lets us tell local from domain
+    # SIDs offline, without an LSA/DC lookup. A local account's SID starts with this prefix.
+    $machineSidPrefix = $null
+    try {
+        $la = Get-CimInstance Win32_UserAccount -Filter "LocalAccount=true" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($la -and $la.SID -match '^(S-1-5-21-\d+-\d+-\d+)-\d+$') { $machineSidPrefix = $Matches[1] }
+    } catch {}
+    $profRows = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+        Where-Object { -not $_.Special } |
+        ForEach-Object {
+            $psid = $_.SID
+            $type = if ($psid -match '^S-1-5-(18|19|20)$' -or $psid -like 'S-1-5-80*') { 'System' }
+                    elseif ($machineSidPrefix -and $psid.StartsWith("$machineSidPrefix-")) { 'Local' }
+                    elseif ($psid -like 'S-1-5-21-*') { 'Domain' }
+                    else { 'Other' }
+            [PSCustomObject]@{
+                SID     = $psid
+                Account = (Resolve-Sid $psid $_.LocalPath)
+                Type    = $type
+                Profile = $_.LocalPath
+                Loaded  = $_.Loaded
+            }
+        }
+    if ($profRows) {
+        $profRows | Sort-Object Type, Account | Format-Table SID, Account, Type, Profile, Loaded -AutoSize -Wrap
+    } else {
+        "(no user profiles enumerated - Win32_UserProfile returned nothing)"
+    }
+    ""
     Write-Section "LOCAL GROUPS & MEMBERS"
     Get-LocalGroup | ForEach-Object {
         $g = $_.Name
@@ -4080,8 +4154,7 @@ Save-Output "07_recycle_bin.txt" {
         $iFiles = Get-ChildItem $sidDir.FullName -Force -ErrorAction SilentlyContinue -Filter '$I*'
         if (-not $iFiles) { continue }
         $any = $true
-        $acct = $sid
-        try { $acct = (New-Object System.Security.Principal.SecurityIdentifier($sid)).Translate([System.Security.Principal.NTAccount]).Value } catch {}
+        $acct = Resolve-Sid $sid
         "`n--- SID $sid  ($acct) ---"
         $rows = foreach ($i in $iFiles) {
             $meta = Read-RecycleI $i.FullName
@@ -4314,18 +4387,19 @@ Save-Output "09_user_hive_software.txt" {
                         Account = $h.Acct
                         Sev     = $sev
                         Updater = if ($hasUpdater) { 'yes' } else { '' }
-                        Key     = "Software\$name"
+                        Key     = "HKU\$($h.Sid)\Software\$name"
                         Detail  = $uninst
                     })
                     if ($sev -ne 'INFO') {
                         $tags = @(); if ($hasUpdater) { $tags += '+updater' }; if ($inAppData) { $tags += 'AppData' }
-                        Add-Finding $sev '09' (Ex "Self-registered app key: HKU\...\Software\$name ($($h.Acct))$(if($tags){' ['+($tags -join ',')+']'})") '09_user_hive_software.txt'
+                        Add-Finding $sev '09' (Ex "Self-registered app key: HKU\$($h.Sid)\Software\$name ($($h.Acct))$(if($tags){' ['+($tags -join ',')+']'})") '09_user_hive_software.txt'
                     }
                 }
             }
             # (2) Per-user Add/Remove entries (Uninstall) - not covered by the HKLM/HKCU scan.
-            foreach ($un in "$($h.Base)\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-                            "$($h.Base)\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall") {
+            foreach ($unRel in 'Software\Microsoft\Windows\CurrentVersion\Uninstall',
+                               'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
+                $un = "$($h.Base)\$unRel"
                 if (-not (Test-Path $un)) { continue }
                 Get-ChildItem $un -ErrorAction SilentlyContinue | ForEach-Object {
                     $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
@@ -4336,17 +4410,18 @@ Save-Output "09_user_hive_software.txt" {
                         Account = $h.Acct
                         Sev     = if ($inAppData) { 'MED' } else { 'INFO' }
                         Updater = ''
-                        Key     = "Uninstall\$($_.PSChildName)"
+                        Key     = "HKU\$($h.Sid)\$unRel\$($_.PSChildName)"
                         Detail  = "$($p.DisplayName) | $($p.UninstallString)"
                     })
                     if ($inAppData) {
-                        Add-Finding 'MED' '09' (Ex "Per-user app installed under AppData: '$($p.DisplayName)' ($($h.Acct))") '09_user_hive_software.txt'
+                        Add-Finding 'MED' '09' (Ex "Per-user app installed under AppData: '$($p.DisplayName)' (HKU\$($h.Sid), $($h.Acct))") '09_user_hive_software.txt'
                     }
                 }
             }
             # (3) Per-user Run / RunOnce entries pointing into writable paths (missed by the current-user run scan).
-            foreach ($rk in "$($h.Base)\Software\Microsoft\Windows\CurrentVersion\Run",
-                            "$($h.Base)\Software\Microsoft\Windows\CurrentVersion\RunOnce") {
+            foreach ($rkRel in 'Software\Microsoft\Windows\CurrentVersion\Run',
+                               'Software\Microsoft\Windows\CurrentVersion\RunOnce') {
+                $rk = "$($h.Base)\$rkRel"
                 if (-not (Test-Path $rk)) { continue }
                 $rp = Get-ItemProperty $rk -ErrorAction SilentlyContinue
                 if (-not $rp) { continue }
@@ -4354,8 +4429,8 @@ Save-Output "09_user_hive_software.txt" {
                     $val = [string]$_.Value
                     $badLoc = ($val -match '(?i)\\(AppData|Temp|Users\\Public|ProgramData)\\') -and ($val -notmatch $script:TrustedPathRx)
                     if ($badLoc) {
-                        $rows.Add([PSCustomObject]@{ Account=$h.Acct; Sev='HIGH'; Updater=''; Key="Run\$($_.Name)"; Detail=$val })
-                        Add-Finding 'HIGH' '09' (Ex "Per-user Run entry from a writable path: '$($_.Name)' ($($h.Acct)) ^17 $val") '09_user_hive_software.txt'
+                        $rows.Add([PSCustomObject]@{ Account=$h.Acct; Sev='HIGH'; Updater=''; Key="HKU\$($h.Sid)\$rkRel\$($_.Name)"; Detail=$val })
+                        Add-Finding 'HIGH' '09' (Ex "Per-user Run entry from a writable path: HKU\$($h.Sid)\$rkRel\$($_.Name) ($($h.Acct)) ^17 $val") '09_user_hive_software.txt'
                     }
                 }
             }
