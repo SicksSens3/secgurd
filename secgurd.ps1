@@ -2924,6 +2924,9 @@ Save-Output "03_runmru_clickfix.txt" {
         foreach ($h in $hv.Hives) {
             $rk = "$($h.Base)\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
             if (-not (Test-Path $rk)) { continue }
+            # Display the full key path with the REAL SID ($h.Base is a temp mount name like
+            # 'secgurd_hive_0' for offline-loaded hives, so it can't be shown to the analyst).
+            $keyDisp = "HKU\$($h.Sid)\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
             $props = Get-ItemProperty $rk -ErrorAction SilentlyContinue
             if (-not $props) { continue }
             # MRUList gives most-recent-first order; each value is a single letter (a, b, c, ...).
@@ -2943,7 +2946,7 @@ Save-Output "03_runmru_clickfix.txt" {
                 $longish = $cmd.Length -ge 200          # pasted ClickFix one-liners are typically very long
                 $sev = if ($suspicious) { 'HIGH' } elseif ($longish) { 'MED' } else { 'INFO' }
                 $rows.Add([PSCustomObject]@{
-                    Account = $h.Acct
+                    Key     = $keyDisp
                     Order   = $rank
                     Slot    = $slot
                     Sev     = $sev
@@ -2964,8 +2967,8 @@ Save-Output "03_runmru_clickfix.txt" {
     "Hives examined: $($hv.Hives.Count)  (offline mounted: $($hv.Mounted.Count); offline skipped: $($hv.OfflineSkipped))"
     ""
     if ($rows.Count) {
-        $rows | Sort-Object @{E={ switch ($_.Sev) { 'HIGH' {0} 'MED' {1} default {2} } }}, Account, Order |
-            Format-Table Account, Order, Slot, Sev, Command -AutoSize -Wrap
+        $rows | Sort-Object @{E={ switch ($_.Sev) { 'HIGH' {0} 'MED' {1} default {2} } }}, Key, Order |
+            Format-Table Key, Order, Slot, Sev, Command -AutoSize -Wrap
     } else {
         "(no RunMRU / Run-dialog history found in any user hive)"
     }
