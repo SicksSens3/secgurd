@@ -221,7 +221,7 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 | `d` | Dependencies sub-menu — manage all three external data lists in one place: **IOC hashes**, **malicious URLs** (URLhaus), and **squat domains** (openSquat). Pick `[1]`/`[2]`/`[3]` to load from file `[f]`, paste `[p]`, list `[l]`, or toggle `[x]`. |
 | `f` | Find — scope all output to a name/string (enter a term, or blank to clear) |
 | `t` | Set the time / lookback window (days) |
-| `p` | Pastable (compressed gzip+Base64) version for remote shells — `[1]` everything, `[2]` dependency lists only (IOC + URL + squat), `[3]` script only |
+| `p` | Pastable for remote shells. Compressed gzip+Base64, fully offline: `[1]` everything, `[2]` dependency lists only (IOC + URL + squat), `[3]` script only. Or `[4]` **web launcher** — a one-line `iex (irm …)` that pulls the latest script **and** dependency lists from GitHub (needs internet on the target). |
 | `r` | Run the selected modules |
 | `?` | Help |
 | `q` | Quit |
@@ -238,7 +238,7 @@ Secgurd matches real on-disk binaries (in high-signal locations like Temp, AppDa
 **1. Community list (`dependencies/communitysavedIOCS.txt`) — auto-loaded, shared, version-controlled.**
 This file lives in the repo's **`dependencies/`** folder (alongside the malicious-URL and squat lists) and is **loaded automatically** on every run, no flags needed. Update it with `git pull` and your runs use the latest community hashes. It's meant as the curated, team-shared baseline.
 
-> **Where secgurd looks:** for each list it checks (1) an explicit `-Community*/-SquatDomains` path, then (2) the `dependencies/` folder next to the script (the repo/clone layout), then (3) **flat beside the script** — which is where the compressed S1 paste unpacks them (into `%TEMP%`, next to `secgurd.ps1`). So the folder keeps the repo tidy while endpoint/paste runs, which stay flat, are unaffected.
+> **Where secgurd looks:** for each list it checks (1) an explicit `-Community*/-SquatDomains` path, then (2) the `dependencies/` folder next to the script (the repo/clone layout), then (3) **flat beside the script** — which is where the compressed S1 paste unpacks them (into `%TEMP%`, next to `secgurd.ps1`) — and finally (4) **`%TEMP%` itself**, where the `[4]` web launcher stages the pulled lists for an in-memory `iex (irm …)` run that has no script folder to resolve against. So the folder keeps the repo tidy while paste and web-launcher endpoint runs are unaffected.
 
 **2. Hashes you add — case-specific, kept separate.**
 Provide your own list via `-IOCHashes C:\path\list.txt` or the **Dependencies** menu (`d` → `[1] IOC hashes`, then load `[f]` / paste `[p]`). These never touch the community file, so you can always tell *what you added* from *what was already saved*.
@@ -380,10 +380,11 @@ If you're authorized on the environment:
 
 The S1 remote shell often can't paste, runs non-interactively, and chokes on download-and-run. Secgurd handles this:
 
-- Run secgurd on your own box and press **`p`**. Every option is a single compressed (gzip+Base64) block that auto-**compacts** a copy of the source before packing (see below), so the paste is as small as possible:
+- Run secgurd on your own box and press **`p`**. Options **[1]–[3]** are a single compressed (gzip+Base64) block that auto-**compacts** a copy of the source before packing (see below), so the paste is as small as possible:
   - **[1] Everything** — script + all dependency lists (IOC hashes + malicious URLs + squat domains), in one block.
   - **[2] Dependency lists only** — just `communitysavedIOCS.txt` / `communitysavedMALURLS.txt` / `squat_domains.txt`.
   - **[3] Script only** — just `secgurd.ps1` (smallest block).
+  - **[4] Web launcher** — a one-line `iex (irm …)` that sets TLS 1.2, pulls the latest `secgurd.ps1` **and** all three dependency lists straight from GitHub (every URL cache-busted with `?v=<random>` to skip the CDN cache), and runs in-memory. Always the newest version — but, unlike [1]–[3], it needs outbound HTTPS on the target.
 - **If [1] is too big** for your shell's paste limit (the community IOC list is the bulk), paste **[2]** first, then **[3]**: [2] drops the lists into `%TEMP%`, and [3] unpacks `secgurd.ps1` and runs it — the wrapper picks up whatever lists are already in `%TEMP%`, so IOC / URL / squat matching works. (You can also just paste **[3]** on its own to run the script with no dependency lists.)
 - Copy the block, paste it into the S1 Remote Shell, press Enter, and the interactive menu appears there.
 

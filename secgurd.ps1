@@ -466,7 +466,7 @@ function Show-Help {
     Write-Host "    d                     Dependencies sub-menu: IOC hashes / malicious URLs / squat domains (load/paste/list/toggle)" -ForegroundColor Gray
     Write-Host "    t                     Set time / lookback window in days (time-bounded collectors)" -ForegroundColor Gray
     Write-Host "    f                     Find/filter: scope all output to a name/string (blank clears)" -ForegroundColor Gray
-    Write-Host "    p                     Pastable version for remote shells - single/chunked/compressed" -ForegroundColor Gray
+    Write-Host "    p                     Pastable for remote shells - compressed paste [1-3] or web launcher [4]" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
     Write-Host "    cleanup               Remove ALL secgurd artifacts from TEMP (type-to-confirm)" -ForegroundColor Gray
@@ -1123,6 +1123,63 @@ function Show-S1Compressed {
     }
 }
 
+function Show-WebLauncher {
+    # [p] -> [4]: copy a one-line WEB LAUNCHER to the clipboard. Pasted into a shell it (1) sets TLS 1.2
+    # so the HTTPS fetch works even on older/hardened hosts, (2) pulls the three dependency lists (IOC
+    # hashes, malicious URLs, squat domains) from the repo's raw dependencies\ folder into %TEMP%, then
+    # (3) runs the LATEST secgurd straight from GitHub via iex(irm). Every URL is cache-busted with
+    # ?v=<random> so raw.githubusercontent.com's ~5-min CDN cache is bypassed and you always get HEAD.
+    # The in-memory run has no script dir, so Resolve-DependencyFile's %TEMP% fallback is what lets the
+    # freshly-pulled lists load. Nothing is written to disk except the lists, and the script runs as an
+    # in-memory scriptblock (iex), so a Restricted execution policy can't block it. Needs internet on
+    # the target - unlike the compressed [1]-[3] pastes, which are fully offline.
+    # NOTE: single-quoted literal (doubled '' for internal quotes) so NONE of the $-tokens expand here -
+    # they must reach the clipboard verbatim and evaluate on the target. Deliberately no here-string
+    # (keeps the source wrap-safe for the compressed paste).
+    $oneliner = '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $b=''https://raw.githubusercontent.com/SicksSens3/secgurd/main''; ''communitysavedIOCS.txt'',''communitysavedMALURLS.txt'',''squat_domains.txt'' | ForEach-Object { try { Invoke-RestMethod "$b/dependencies/$($_)?v=$(Get-Random)" -OutFile "$env:TEMP\$_" } catch {} }; Invoke-Expression (Invoke-RestMethod "$b/secgurd.ps1?v=$(Get-Random)")'
+
+    # File fallback (name matches the secgurd_s1_* cleanup glob).
+    $outFile = Join-Path $env:TEMP 'secgurd_s1_weblauncher.txt'
+    $wrote = $false
+    try { $oneliner | Out-File -FilePath $outFile -Encoding UTF8 -Force; $wrote = $true } catch {}
+
+    # Copy to clipboard.
+    $copied = $false
+    if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
+        try { Set-Clipboard -Value $oneliner -ErrorAction Stop; $copied = $true } catch {}
+    }
+    if (-not $copied) { try { $oneliner | clip.exe; $copied = $true } catch {} }
+
+    Clear-Host
+    Write-Host ""
+    Write-Host "  ============================================================" -ForegroundColor DarkGray
+    Write-Host "   Web launcher  (iex/irm - latest secgurd + dependency lists)" -ForegroundColor Cyan
+    Write-Host "  ============================================================" -ForegroundColor DarkGray
+    if ($copied) {
+        Write-Host (Ex "  [^14] Copied to clipboard") -ForegroundColor Green -NoNewline
+        Write-Host "  (one line)" -ForegroundColor DarkGray
+    } else {
+        Write-Host (Ex "  ^16 Clipboard not available - use the saved file below.") -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host "  Paste into a PowerShell / S1 shell and press Enter. It will:" -ForegroundColor Gray
+    Write-Host "    - set TLS 1.2 (so the fetch works on older hosts too)" -ForegroundColor DarkGray
+    Write-Host "    - pull the community IOC / malicious-URL / squat lists into %TEMP%" -ForegroundColor DarkGray
+    Write-Host "    - run the LATEST secgurd from GitHub in-memory (no .ps1 on disk)" -ForegroundColor DarkGray
+    Write-Host (Ex "    - cache-bust every URL (?v=random) so you never get a stale copy") -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host (Ex "  ^16 Needs outbound HTTPS to raw.githubusercontent.com. For an air-gapped") -ForegroundColor DarkGray
+    Write-Host "     host use [1] (compressed, fully offline) instead." -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  The launcher (also copied):" -ForegroundColor Gray
+    Write-Host "    $oneliner" -ForegroundColor DarkGray
+    Write-Host ""
+    if ($wrote) {
+        Write-Host "  Also saved to: $outFile" -ForegroundColor DarkGray
+        Write-Host ""
+    }
+}
+
 function Show-SquatList {
     # Print the currently-loaded squat-domain watchlist (capped at 50 for readability).
     if (-not $script:SquatDomainSet -or $script:SquatDomainCount -le 0) {
@@ -1690,23 +1747,30 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'p') {
             Write-Host ""
-            Write-Host "  Remote-shell paste (compressed - gzip+Base64, one block):" -ForegroundColor Cyan
+            Write-Host "  Remote-shell paste options:" -ForegroundColor Cyan
             Write-Host "    [1] " -ForegroundColor Yellow -NoNewline
-            Write-Host "EVERYTHING (script + IOC/URL/squat dependency lists)" -ForegroundColor White
+            Write-Host "EVERYTHING (script + IOC/URL/squat lists) - compressed, fully offline" -ForegroundColor White
             Write-Host ""
             Write-Host "    [2] " -ForegroundColor Yellow -NoNewline
-            Write-Host "DEPENDENCY LISTS ONLY (IOC + malicious-URLs + squat)" -ForegroundColor White
+            Write-Host "DEPENDENCY LISTS ONLY (IOC + malicious-URLs + squat) - compressed" -ForegroundColor White
             Write-Host "        " -NoNewline
             Write-Host "^ run this BEFORE [3] if you want the dependency lists" -ForegroundColor DarkGray
             Write-Host ""
             Write-Host "    [3] " -ForegroundColor Yellow -NoNewline
-            Write-Host "SCRIPT ONLY" -ForegroundColor White
+            Write-Host "SCRIPT ONLY - compressed" -ForegroundColor White
+            Write-Host ""
+            Write-Host "    [4] " -ForegroundColor Yellow -NoNewline
+            Write-Host "WEB LAUNCHER - iex/irm, pulls the LATEST script + lists from GitHub" -ForegroundColor White
+            Write-Host "        " -NoNewline
+            Write-Host "^ needs internet on the target; always runs the newest version" -ForegroundColor DarkGray
             Write-Host "  > " -ForegroundColor DarkGray -NoNewline
             $sMode = (Read-Host).Trim()
             if ($sMode -eq '2') {
                 Show-S1Compressed -Mode lists
             } elseif ($sMode -eq '3') {
                 Show-S1Compressed -Mode script
+            } elseif ($sMode -eq '4') {
+                Show-WebLauncher
             } else {
                 Show-S1Compressed -Mode all
             }
@@ -2121,6 +2185,13 @@ function Resolve-DependencyFile {
         $flat = Join-Path $dir $Name
         if (Test-Path $flat) { return $flat }
     }
+    # 4. %TEMP% - the [p] -> [4] web launcher runs secgurd in-memory via iex(irm), so it has no script
+    #    dir ($PSScriptRoot / $PSCommandPath are both null) and the launcher stages the pulled lists
+    #    here instead. Checked LAST, so a clone's dependencies\ copy always wins over a stale %TEMP% file.
+    $tmpFolder = Join-Path $env:TEMP (Join-Path 'dependencies' $Name)
+    if (Test-Path $tmpFolder) { return $tmpFolder }
+    $tmpFlat = Join-Path $env:TEMP $Name
+    if (Test-Path $tmpFlat) { return $tmpFlat }
     return $null
 }
 
@@ -2328,6 +2399,54 @@ function Add-Finding {
         $color = if ($Severity -eq 'MED') { 'Yellow' } else { 'DarkGray' }
         Write-Host $Message -ForegroundColor $color
     }
+}
+
+function Write-FindingRecap {
+    # Render one stored finding for the end-of-run recap. Baseline is the SEVERITY colour (brick-red
+    # HIGH / yellow MED / gray INFO) for BOTH the [SEV] tag and the alert title/description - the alert
+    # stays loud. Only the concrete things it is flagging are lifted into mauve (the same #aa82e6 the
+    # live URL echo uses): URLs, quoted paths, registry keys (HKLM/HKCU/HKU/...), and drive-letter
+    # paths - the location / program / URL an analyst actually chases. Everything is one of those two
+    # colours (consistent across every finding); a finding with no artifact is simply all-severity.
+    # The trailing {file:...} output pointer dims as secondary metadata.
+    param([string]$Line)
+    $mauve = '38;2;170;130;230'   # #aa82e6 - matches the live URL highlight in Add-Finding
+    $dim   = '38;2;125;125;125'
+
+    $sev = 'INFO'; $rest = $Line
+    if     ($Line.StartsWith('[HIGH]')) { $sev = 'HIGH'; $rest = $Line.Substring(6).TrimStart() }
+    elseif ($Line.StartsWith('[MED]'))  { $sev = 'MED';  $rest = $Line.Substring(5).TrimStart() }
+    elseif ($Line.StartsWith('[INFO]')) { $sev = 'INFO'; $rest = $Line.Substring(6).TrimStart() }
+
+    # Peel a trailing {file:...} pointer so it can dim on its own.
+    $fileTag = ''
+    $fi = $rest.LastIndexOf('{file:')
+    if ($fi -ge 0 -and $rest.EndsWith('}')) { $fileTag = $rest.Substring($fi); $rest = $rest.Substring(0, $fi).TrimEnd() }
+
+    # Severity-coloured text segment (brick-red HIGH / yellow MED / gray INFO).
+    $sevSeg = {
+        param($t)
+        if ([string]::IsNullOrEmpty($t)) { return }
+        if ($sev -eq 'HIGH') { Write-Alert $t -NoNewline }
+        else { Write-Host $t -ForegroundColor $(if ($sev -eq 'MED') { 'Yellow' } else { 'DarkGray' }) -NoNewline }
+    }
+
+    Write-Host "    " -NoNewline
+    & $sevSeg "[$sev] "
+
+    # Mauve the concrete artifacts (URLs / quoted paths / registry keys / drive-letter paths). Matches
+    # are non-overlapping, left-to-right; the alert title between them stays in the severity colour.
+    $rx = [regex]'(https?://\S+|"[^"]*"|HK(?:LM|CU|CR|CC|U|EY_[A-Za-z_]+)\\\S+|[A-Za-z]:\\\S+)'
+    $pos = 0
+    foreach ($m in $rx.Matches($rest)) {
+        if ($m.Index -gt $pos) { & $sevSeg $rest.Substring($pos, $m.Index - $pos) }
+        Wc $m.Value $mauve 'Magenta'
+        $pos = $m.Index + $m.Length
+    }
+    if ($pos -lt $rest.Length) { & $sevSeg $rest.Substring($pos) }
+
+    if ($fileTag) { Wc " $fileTag" $dim 'DarkGray' }
+    Write-Host ""
 }
 
 function Add-BrowserFlag {
@@ -5679,12 +5798,7 @@ Write-Host ""
 if ($script:Findings.Count -gt 0) {
     Write-Alert (Ex "  ^24 FINDINGS ($($script:Findings.Count))")
     foreach ($f in ($script:Findings | Sort-Object)) {
-        if ($f -like '`[HIGH`]*') {
-            Write-Alert "    $f"
-        } else {
-            $c = if ($f -like '`[MED`]*') { 'Yellow' } else { 'DarkGray' }
-            Write-Host "    $f" -ForegroundColor $c
-        }
+        Write-FindingRecap $f
     }
     Write-Host ""
 } else {
