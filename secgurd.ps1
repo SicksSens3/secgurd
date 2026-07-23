@@ -1124,19 +1124,20 @@ function Show-S1Compressed {
 }
 
 function Show-WebLauncher {
-    # [p] -> [4]: copy a one-line WEB LAUNCHER to the clipboard. Pasted into a shell it (1) sets TLS 1.2
-    # so the HTTPS fetch works even on older/hardened hosts, (2) pulls the three dependency lists (IOC
+    # [p] -> [4]: copy a one-line WEB LAUNCHER to the clipboard. It is the plain iex/irm one-liner with
+    # the dependency pull prepended: pasted into a shell it (1) pulls the three dependency lists (IOC
     # hashes, malicious URLs, squat domains) from the repo's raw dependencies\ folder into %TEMP%, then
-    # (3) runs the LATEST secgurd straight from GitHub via iex(irm). Every URL is cache-busted with
-    # ?v=<random> so raw.githubusercontent.com's ~5-min CDN cache is bypassed and you always get HEAD.
-    # The in-memory run has no script dir, so Resolve-DependencyFile's %TEMP% fallback is what lets the
-    # freshly-pulled lists load. Nothing is written to disk except the lists, and the script runs as an
-    # in-memory scriptblock (iex), so a Restricted execution policy can't block it. Needs internet on
-    # the target - unlike the compressed [1]-[3] pastes, which are fully offline.
+    # (2) runs the LATEST secgurd straight from GitHub via iex(irm). The in-memory run has no script
+    # dir, so Resolve-DependencyFile's %TEMP% fallback is what lets the freshly-pulled lists load. Runs
+    # as an in-memory scriptblock (iex), so a Restricted execution policy can't block it. Needs internet
+    # on the target - unlike the compressed [1]-[3] pastes, which are fully offline. The ?v=<random>
+    # defeats a client/proxy cache; raw serves a branch push within ~5 min on its own (the query string
+    # does NOT bust raw's own CDN cache). No TLS line to stay minimal - if an old/hardened host fails the
+    # fetch, the on-screen note shows the one-time Tls12 prefix to prepend.
     # NOTE: single-quoted literal (doubled '' for internal quotes) so NONE of the $-tokens expand here -
     # they must reach the clipboard verbatim and evaluate on the target. Deliberately no here-string
     # (keeps the source wrap-safe for the compressed paste).
-    $oneliner = '[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $b=''https://raw.githubusercontent.com/SicksSens3/secgurd/main''; ''communitysavedIOCS.txt'',''communitysavedMALURLS.txt'',''squat_domains.txt'' | ForEach-Object { try { Invoke-RestMethod "$b/dependencies/$($_)?v=$(Get-Random)" -OutFile "$env:TEMP\$_" } catch {} }; Invoke-Expression (Invoke-RestMethod "$b/secgurd.ps1?v=$(Get-Random)")'
+    $oneliner = '''communitysavedIOCS.txt'',''communitysavedMALURLS.txt'',''squat_domains.txt'' | ForEach-Object { try { Invoke-RestMethod "https://raw.githubusercontent.com/SicksSens3/secgurd/main/dependencies/$($_)?v=$(Get-Random)" -OutFile "$env:TEMP\$_" } catch {} }; Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/SicksSens3/secgurd/main/secgurd.ps1?v=$(Get-Random)")'
 
     # File fallback (name matches the secgurd_s1_* cleanup glob).
     $outFile = Join-Path $env:TEMP 'secgurd_s1_weblauncher.txt'
@@ -1163,13 +1164,13 @@ function Show-WebLauncher {
     }
     Write-Host ""
     Write-Host "  Paste into a PowerShell / S1 shell and press Enter. It will:" -ForegroundColor Gray
-    Write-Host "    - set TLS 1.2 (so the fetch works on older hosts too)" -ForegroundColor DarkGray
     Write-Host "    - pull the community IOC / malicious-URL / squat lists into %TEMP%" -ForegroundColor DarkGray
     Write-Host "    - run the LATEST secgurd from GitHub in-memory (no .ps1 on disk)" -ForegroundColor DarkGray
-    Write-Host (Ex "    - cache-bust every URL (?v=random) so you never get a stale copy") -ForegroundColor DarkGray
     Write-Host ""
     Write-Host (Ex "  ^16 Needs outbound HTTPS to raw.githubusercontent.com. For an air-gapped") -ForegroundColor DarkGray
     Write-Host "     host use [1] (compressed, fully offline) instead." -ForegroundColor DarkGray
+    Write-Host (Ex "  ^16 Old/hardened host failing with a TLS error? Prefix once with:") -ForegroundColor DarkGray
+    Write-Host "     [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  The launcher (also copied):" -ForegroundColor Gray
     Write-Host "    $oneliner" -ForegroundColor DarkGray
