@@ -1,4 +1,5 @@
 djsharepoint.com
+djsharepoint.net
 dreamoutlooks.com
 epoch-test-outlook.com
 inkchaindocusign.icu
@@ -14,5 +15,8 @@ onedrivenote.online
 onesrive.live
 setup-outlook3.web.id
 shmicapalmermontanash001outlook.org
+staging-outlook.online
 teams-meeting-microsoft.com
+theinvestoroutlook.net
+themodernoutlook.net
 wps-microsoft.com.cn
