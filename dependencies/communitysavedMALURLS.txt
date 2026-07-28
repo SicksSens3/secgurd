@@ -3,33 +3,38 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-07-27 10:26:21 UTC
+# Updated: 2026-07-28 09:17:21 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://69cnc.duckdns.org/bins/callaputa.sh,malware_download
 http://archivoscrosoft.com/MSI.png,malware_download
 http://christophercheung.com/m68k,malware_download
+http://dsgagfsahkfsahfjs.shop/zero.armv4l,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
 http://fairgroovetr.blog/cometome,malware_download
 http://genddos.st/bachekuni/ohshit.arm5,malware_download
 http://igmc.duckdns.org/ar-15/ar15.ppc,malware_download
 http://js.byxly.eu.cc/mipsel,malware_download
+http://lifeisabouthavingfun448.duckdns.org//arm5,malware_download
 http://mail.fairgroovetr.blog/z0l1mxjm4mdl4jjfjf7sb2vdmv/MMaaRRiiOisecTanee.spc,malware_download
 http://mail.rarewingvm.blog/hiddenbin/boatnet.x86,malware_download
-http://mail.sandystudiogh.blog/hiddenbin/zombie.m68k,malware_download
+http://mail.sandystudiogh.blog/hiddenbin/zombie.arm5,malware_download
 http://peachcity.si/n2/mips64,malware_download
 http://purmed.ro/upwork/Odours.prx,malware_download
 http://rarewingvm.blog/bin.sh,malware_download
 http://reservphotoinstay.one/,malware_download
+http://s3o65awrf56.net/nz/nz.arm6,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
-http://sandystudiogh.blog/hiddenbin/zombie.ppc,malware_download
-http://tractor.trees4sale.net/mpsl,malware_download
-http://www.69cnc.duckdns.org/bins/wget.sh,malware_download
-http://yunvasilsky.mooo.com/tarm,malware_download
+http://sandystudiogh.blog/hiddenbin/zombie.arm,malware_download
+http://tractor.trees4sale.net/tvt/x86,malware_download
+http://wqok85qtq.net/nz/nz.arm7,malware_download
+http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
 https://airtickts.com/,malware_download
 https://americanmanchester.org/americanserve/MSI_PRO.png,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
+https://breakneckridgefarm.com/p.dat,malware_download
+https://cuttingedgefencing.ca/odot/download.php,malware_download
 https://deliverymailreport.co.za/img_053354.png,malware_download
 https://drive.google.com/uc?export=download&id=1EznN9ZSMbkarOKxIJQJNw-P_JNXqHJQz,malware_download
 https://dynga.pl/common.dat,malware_download
@@ -41,16 +46,13 @@ https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,malware_download
 https://lb.nigsv.com/maiv/stego_payloads.png,malware_download
-https://media-aviation.run.place/qqFYNkCe/stego_g4dez65hk6.png,malware_download
-https://postelnini.mk/optimized_MSI.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
-https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
-https://solar-sanat.net/imagetest0071154z7.png,malware_download
-https://spgint.com/rum/optimized_MSI.png,malware_download
+https://solar-sanat.net/imagetest00711z5.png,malware_download
 https://sunix-technology.com/admin/MSI_PRO.png,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
 https://tuasesoriadigital.es/default.dat,malware_download
 https://vjy888.com/zwev1nb/hamscid/yqagovc/MSI_PRODJ5TH.png,malware_download
+https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.kenwillzltd.com/kenwillzltd.zip,malware_download
 https://www.nccommunication.be/images/y11.png,malware_download
