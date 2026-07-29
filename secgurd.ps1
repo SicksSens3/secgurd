@@ -47,12 +47,14 @@
     files, the timeline, and new-account / modified-binary findings). Default 30. Use a
     larger value (e.g. 90) for suspected long-dwell compromises, smaller for fresh incidents.
 .PARAMETER Find
-    A name or string to filter ALL collected output by (case-insensitive). When set, every
-    artifact file keeps only the lines that contain the string - and the section header above
-    them - so you see just the items named after, pointing at, or signed by that string. Use it
-    to scope a run to a single known-bad artifact, e.g. -Find SmartPDF surfaces only the
-    scheduled tasks, run keys, services, processes and files that reference SmartPDF. Findings
-    are filtered the same way. Leave unset to collect everything (default).
+    One or more names/strings to filter ALL collected output by (case-insensitive). Separate
+    multiple terms with commas; a line matches if it contains ANY term (OR). When set, every
+    artifact file keeps only the lines that contain a term - and the section header above them -
+    so you see just the items named after, pointing at, or signed by those strings. Use it to
+    scope a run to known-bad artifacts, e.g. -Find "SmartPDF, evil.exe" surfaces only the
+    scheduled tasks, run keys, services, processes and files that reference either. Matched
+    terms are wrapped in >>> <<< markers in the saved files and colour-highlighted live on the
+    scan screen. Findings are filtered the same way. Leave unset to collect everything (default).
 .PARAMETER Help
     Show usage and exit.
 .EXAMPLE
@@ -133,7 +135,7 @@ function Ex {
     return $s
 }
 
-$script:secgurdVersion = 'v2.0'
+$script:secgurdVersion = 'v2.1'
 
 # ---------------------------------------------
 
@@ -271,11 +273,45 @@ if ($DaysBack -gt 3650) { $DaysBack = 3650 }
 $script:DaysBack = $DaysBack
 
 # Optional output filter: when set, every artifact (and finding) is reduced to only the
-# lines/items that contain this string. Seeded from -Find; also settable in the menu via 'f'.
-$script:FindFilter = $null
+# lines/items that contain one of these strings. Seeded from -Find; also settable in the menu
+# via 'f'. Multiple terms are comma-separated and OR'd - a line matches if it contains ANY term
+# (e.g. -Find "SmartPDF, evil.exe" keeps lines mentioning either).
+$script:FindFilter = $null          # human-readable form of the active terms, for display
+$script:FindTerms  = @()            # parsed match terms (trimmed, de-duped); OR semantics
 $script:LastFilterMatchCount = 0
 $script:FindFileCounts = @{}   # filename -> matched-item count, for the find summary section
-if ($Find -and $Find.Trim()) { $script:FindFilter = $Find.Trim() }
+
+function Set-FindFilter {
+    # Parse a raw find string into the active filter. Commas separate terms; each is trimmed and
+    # blanks/dupes are dropped. A line/finding matches if it contains ANY term (OR semantics).
+    # $script:FindFilter holds the display form; $script:FindTerms holds the terms we match on.
+    # A blank/null/all-empty input clears the filter.
+    param([string]$Raw)
+    $terms = @()
+    if ($Raw) {
+        $terms = @($Raw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -Unique)
+    }
+    if ($terms.Count -eq 0) {
+        $script:FindFilter = $null
+        $script:FindTerms  = @()
+    } else {
+        $script:FindTerms  = $terms
+        $script:FindFilter = ($terms -join ', ')
+    }
+}
+
+function Test-FindMatch {
+    # Case-insensitive: does $Text contain ANY active find term? Returns $true when no filter is
+    # active, so callers can gate exclusion with:  if (-not (Test-FindMatch $x)) { skip }.
+    param([string]$Text)
+    if ($script:FindTerms.Count -eq 0) { return $true }
+    foreach ($t in $script:FindTerms) {
+        if ($Text -and $Text.IndexOf($t, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    }
+    return $false
+}
+
+if ($Find -and $Find.Trim()) { Set-FindFilter $Find }
 
 # Force UTF-8 output so box-drawing chars render correctly
 
@@ -454,7 +490,7 @@ function Show-Help {
     Write-Host "    -CommunityMalUrls <file>    Explicit path to the community malicious-URL list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -SquatDomains <file>        Explicit path to the openSquat squat-domain watchlist (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
-    Write-Host "    -Find <string>        Filter ALL output to lines/items containing <string> (e.g. SmartPDF)" -ForegroundColor Gray
+    Write-Host "    -Find <terms>         Filter ALL output to lines/items containing any term (comma-separated, e.g. SmartPDF,evil.exe)" -ForegroundColor Gray
     Write-Host "    -MakeS1Paste          Copy a compressed (gzip+Base64) paste-ready version for the S1 shell" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
     Write-Host ""
@@ -465,7 +501,7 @@ function Show-Help {
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
     Write-Host "    d                     Dependencies sub-menu: IOC hashes / malicious URLs / squat domains (load/paste/list/toggle)" -ForegroundColor Gray
     Write-Host "    t                     Set time / lookback window in days (time-bounded collectors)" -ForegroundColor Gray
-    Write-Host "    f                     Find/filter: scope all output to a name/string (blank clears)" -ForegroundColor Gray
+    Write-Host "    f                     Find/filter: scope all output to name(s)/string(s), comma-separated (blank clears)" -ForegroundColor Gray
     Write-Host "    p                     Pastable for remote shells - compressed paste [1-3] or web launcher [4]" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
     Write-Host "    q                     Quit" -ForegroundColor Gray
@@ -1619,7 +1655,7 @@ function Show-ModuleMenu {
         Write-Host $fMark -ForegroundColor $fClr -NoNewline
         Write-Host "  " -NoNewline
         Write-Host ("{0,-4}" -f 'f') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-36}" -f 'Find: filter all output by name') -ForegroundColor White -NoNewline
+        Write-Host ("{0,-36}" -f 'Find: filter output by name(s)') -ForegroundColor White -NoNewline
         Write-Host $fNote -ForegroundColor DarkGray
 
         Write-Host "   " -NoNewline
@@ -1701,25 +1737,24 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 'f') {
             Write-Host ""
-            Write-Host "  Find / filter all output by a name or string." -ForegroundColor Cyan
-            Write-Host "  Every artifact keeps only the lines that contain it (plus the section" -ForegroundColor DarkGray
+            Write-Host "  Find / filter all output by name(s) or string(s)." -ForegroundColor Cyan
+            Write-Host "  Every artifact keeps only the lines that contain a term (plus the section" -ForegroundColor DarkGray
             Write-Host "  header above them), and findings are filtered the same way. Case-insensitive." -ForegroundColor DarkGray
+            Write-Host "  Separate multiple terms with commas - a line matches if it contains ANY." -ForegroundColor DarkGray
+            Write-Host "  Matches are marked with >>> <<< in the saved files and highlighted on screen." -ForegroundColor DarkGray
             if ($script:FindFilter) {
                 Write-Host "  Currently filtering to: '$($script:FindFilter)'" -ForegroundColor Green
             }
-            Write-Host "  Enter a string (e.g. SmartPDF), or blank to clear and show everything:" -ForegroundColor Cyan
+            Write-Host "  Enter term(s) (e.g. SmartPDF, evil.exe), or blank to clear and show everything:" -ForegroundColor Cyan
             Write-Host "  > " -ForegroundColor DarkGray -NoNewline
             $fIn = (Read-Host).Trim()
-            if ($fIn -eq '') {
-                if ($script:FindFilter) {
-                    $script:FindFilter = $null
-                    $pendingMsg = "Find filter cleared - all output will be collected."
-                } else {
-                    $pendingMsg = "Find filter still off - all output will be collected."
-                }
+            $wasOn = [bool]$script:FindFilter
+            Set-FindFilter $fIn
+            if (-not $script:FindFilter) {
+                $pendingMsg = if ($wasOn) { "Find filter cleared - all output will be collected." } else { "Find filter still off - all output will be collected." }
             } else {
-                $script:FindFilter = $fIn
-                $pendingMsg = "Find filter set: all output scoped to '$fIn'."
+                $n = $script:FindTerms.Count
+                $pendingMsg = if ($n -eq 1) { "Find filter set: all output scoped to '$($script:FindFilter)'." } else { "Find filter set: all output scoped to $n terms ('$($script:FindFilter)')." }
             }
             Clear-Host; Show-secgurdBannerCompact
             continue
@@ -2358,9 +2393,9 @@ function Add-Finding {
     #             HTML - used for high-volume, low-persistence items (e.g. browser URLs) that would
     #             clutter the post-run findings list but are still worth seeing scroll by.
 
-    # When a find filter is active, suppress findings whose message doesn't mention the term,
-    # so the summary stays scoped to the hunted artifact (e.g. only SmartPDF-related flags).
-    if ($script:FindFilter -and $Message.IndexOf($script:FindFilter, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    # When a find filter is active, suppress findings whose message doesn't mention any term,
+    # so the summary stays scoped to the hunted artifact(s) (e.g. only SmartPDF-related flags).
+    if (-not (Test-FindMatch $Message)) {
         return
     }
 
@@ -2527,13 +2562,73 @@ function Dismount-UserHives {
 }
 
 
+function Add-FindMarkers {
+    # Wrap every case-insensitive occurrence of any term in >>> <<< markers, preserving the
+    # matched text's original casing. Overlapping/adjacent hits (e.g. terms "power" and "shell"
+    # in "powershell") are merged into one marker so markers never nest. Used to make term hits
+    # stand out in the saved .txt artifacts (and, via Write-FilteredHit, on the scan screen).
+    param([string]$Line, [string[]]$Terms)
+    if ([string]::IsNullOrEmpty($Line) -or -not $Terms -or $Terms.Count -eq 0) { return $Line }
+    $spans = New-Object System.Collections.Generic.List[object]
+    foreach ($t in $Terms) {
+        if ([string]::IsNullOrEmpty($t)) { continue }
+        $from = 0
+        while ($true) {
+            # OrdinalIgnoreCase to match Select-FilteredOutput exactly, so the marked span is the
+            # same region that qualified the line (and match length == term length, no drift).
+            $idx = $Line.IndexOf($t, $from, [System.StringComparison]::OrdinalIgnoreCase)
+            if ($idx -lt 0) { break }
+            $spans.Add(@($idx, $idx + $t.Length))
+            $from = $idx + $t.Length
+        }
+    }
+    if ($spans.Count -eq 0) { return $Line }
+    $sorted = @($spans | Sort-Object { $_[0] })
+    $merged = New-Object System.Collections.Generic.List[object]
+    foreach ($sp in $sorted) {
+        if ($merged.Count -gt 0 -and $sp[0] -le $merged[$merged.Count - 1][1]) {
+            if ($sp[1] -gt $merged[$merged.Count - 1][1]) { $merged[$merged.Count - 1][1] = $sp[1] }
+        } else {
+            $merged.Add(@($sp[0], $sp[1]))
+        }
+    }
+    $sb = New-Object System.Text.StringBuilder
+    $pos = 0
+    foreach ($m in $merged) {
+        [void]$sb.Append($Line.Substring($pos, $m[0] - $pos))
+        [void]$sb.Append('>>>'); [void]$sb.Append($Line.Substring($m[0], $m[1] - $m[0])); [void]$sb.Append('<<<')
+        $pos = $m[1]
+    }
+    [void]$sb.Append($Line.Substring($pos))
+    return $sb.ToString()
+}
+
+function Write-FilteredHit {
+    # Print one already-marked artifact line to the scan screen, rendering each >>>term<<< hit in
+    # the alert colour and the rest dim. Markers are consumed here (the screen shows colour, not
+    # the literal >>> <<< - those remain only in the saved .txt file).
+    param([string]$Line)
+    Write-Host "        " -NoNewline
+    $rest = $Line
+    while ($true) {
+        $s = $rest.IndexOf('>>>')
+        if ($s -lt 0) { Write-Host $rest -ForegroundColor DarkGray; break }
+        $e = $rest.IndexOf('<<<', $s + 3)
+        if ($e -lt 0) { Write-Host $rest -ForegroundColor DarkGray; break }
+        if ($s -gt 0) { Write-Host $rest.Substring(0, $s) -ForegroundColor DarkGray -NoNewline }
+        Write-Host $rest.Substring($s + 3, $e - ($s + 3)) -ForegroundColor Yellow -NoNewline
+        $rest = $rest.Substring($e + 3)
+    }
+}
+
 function Select-FilteredOutput {
-    # Reduce already-rendered artifact text to just the lines containing $Term, keeping the
-    # Write-Section header (the "===" / title / "===" triple) above any section that has a hit.
-    # Sections with no matching line are dropped entirely. Matching is case-insensitive and
-    # treats $Term literally (no wildcard/regex interpretation). Returns an array of lines;
-    # if nothing matched anywhere, a single "(no matches...)" line so the file isn't blank.
-    param([string[]]$Lines, [string]$Term)
+    # Reduce already-rendered artifact text to just the lines containing any of $Terms, keeping
+    # the Write-Section header (the "===" / title / "===" triple) above any section that has a
+    # hit. Sections with no matching line are dropped entirely. Matching is case-insensitive and
+    # treats each term literally (no wildcard/regex interpretation); a line is kept if it
+    # contains ANY term. Returns an array of lines; if nothing matched anywhere, a single
+    # "(no matches...)" line so the file isn't blank.
+    param([string[]]$Lines, [string[]]$Terms)
 
     $out = New-Object System.Collections.Generic.List[string]
     $pendingHeader = $null      # the 3-line Write-Section header awaiting a match below it
@@ -2550,7 +2645,11 @@ function Select-FilteredOutput {
             $i += 2
             continue
         }
-        if ($ln.IndexOf($Term, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $hit = $false
+        foreach ($t in $Terms) {
+            if ($ln.IndexOf($t, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $hit = $true; break }
+        }
+        if ($hit) {
             if ($pendingHeader -and -not $sectionEmitted) {
                 if ($out.Count -gt 0) { $out.Add('') }   # blank line between emitted sections
                 foreach ($h in $pendingHeader) { $out.Add($h) }
@@ -2559,7 +2658,7 @@ function Select-FilteredOutput {
             } elseif ($lastWasItem) {
                 $out.Add('')                             # blank line between consecutive items
             }
-            $out.Add($ln)
+            $out.Add((Add-FindMarkers $ln $Terms))
             $lastWasItem = $true
             $matchCount++
         }
@@ -2567,7 +2666,7 @@ function Select-FilteredOutput {
 
     # Expose the count so the caller (Save-Output) can show "N instance(s) found" on the run line.
     $script:LastFilterMatchCount = $matchCount
-    if ($matchCount -eq 0) { return ,@("(no matches for '$Term')") }
+    if ($matchCount -eq 0) { return ,@("(no matches for '$($Terms -join "', '")')") }
     return $out.ToArray()
 }
 
@@ -2628,7 +2727,7 @@ function Save-Output {
             # un-split); wide width so table rows aren't truncated and a far-column match still
             # counts.
             $rendered = @(($result | Out-String -Width 4096) -split "`r`n|`r|`n")
-            $result = Select-FilteredOutput -Lines $rendered -Term $script:FindFilter
+            $result = Select-FilteredOutput -Lines $rendered -Terms $script:FindTerms
             $findCount = $script:LastFilterMatchCount   # matched items in THIS artifact
             $script:FindFileCounts[$FileName] = $findCount
             $checkLines = $result
@@ -2673,6 +2772,14 @@ function Save-Output {
             Write-Host "$secs        " -ForegroundColor DarkGray
         }
         $script:RunLineActive = $false
+        if ($script:FindFilter -and $findCount -gt 0) {
+            # Echo the matched lines beneath the run line, colouring each >>>marked<<< term hit
+            # (the same markers written into the artifact file) so the on-screen hunt view stays
+            # in sync with what landed on disk.
+            foreach ($hl in $result) {
+                if (($hl -is [string]) -and $hl.IndexOf('>>>') -ge 0) { Write-FilteredHit $hl }
+            }
+        }
         $script:CollectedCount++
     } catch {
         $sw.Stop()
@@ -5036,7 +5143,7 @@ Save-Output "10_browser_history.txt" {
             $outArr = $lines.ToArray()
             $writeDetail = $true
             if ($script:FindFilter) {
-                $outArr = Select-FilteredOutput -Lines $outArr -Term $script:FindFilter
+                $outArr = Select-FilteredOutput -Lines $outArr -Terms $script:FindTerms
                 if ($script:LastFilterMatchCount -le 0) { $writeDetail = $false }
             } elseif ($urlList.Count -eq 0) {
                 $writeDetail = $false
@@ -5359,7 +5466,10 @@ $indexLines += "Finished    : $($runEnd.ToString('yyyy-MM-dd HH:mm:ss'))"
 $indexLines += "Duration    : $elapsedStr"
 $indexLines += "Modules run : $selectedIds"
 $indexLines += "Lookback    : $($script:DaysBack) days"
-if ($script:FindFilter) { $indexLines += "Find filter : '$($script:FindFilter)' (output scoped to lines containing this)" }
+if ($script:FindFilter) {
+    $scopeWord = if ($script:FindTerms.Count -gt 1) { 'any of these terms' } else { 'this' }
+    $indexLines += "Find filter : '$($script:FindFilter)' (output scoped to lines containing $scopeWord)"
+}
 $indexLines += "Collected   : $($script:CollectedCount) files"
 $indexLines += "Empty (skip): $($script:EmptySkipped) collector(s) had no data - no file written"
 $indexLines += "Errors      : $($script:ErrorCount)"
@@ -5389,7 +5499,10 @@ $summaryLines += "Host     : $env:COMPUTERNAME    User: $env:USERDOMAIN\$env:USE
 $summaryLines += "When     : $($script:RunStart.ToString('yyyy-MM-dd HH:mm:ss'))   Duration: $elapsedStr"
 $summaryLines += "Admin    : $isAdminNow"
 $summaryLines += "Collected: $($script:CollectedCount) files   Errors: $($script:ErrorCount)"
-if ($script:FindFilter) { $summaryLines += "Filter   : output scoped to '$($script:FindFilter)' (findings below limited to it)" }
+if ($script:FindFilter) {
+    $limitWord = if ($script:FindTerms.Count -gt 1) { 'any of them' } else { 'it' }
+    $summaryLines += "Filter   : output scoped to '$($script:FindFilter)' (findings below limited to $limitWord)"
+}
 $summaryLines += ""
 $summaryLines += (Ex "FINDINGS (auto-flagged ^09 verify before acting)")
 $summaryLines += ("-" * 60)
@@ -5416,7 +5529,8 @@ if ($script:FindFilter) {
         $summaryLines += ""
         $summaryLines += ("  {0} file(s) matched; {1} collected file(s) had no matches." -f @($hitFiles).Count, $emptyCount)
     } else {
-        $summaryLines += "  No artifact contained '$($script:FindFilter)'."
+        $none = if ($script:FindTerms.Count -gt 1) { "No artifact contained any of: '$($script:FindTerms -join "', '")'." } else { "No artifact contained '$($script:FindFilter)'." }
+        $summaryLines += "  $none"
     }
     $summaryLines += ""
 }
@@ -5432,7 +5546,7 @@ Write-Host (Ex "  *  Building timeline...") -ForegroundColor Cyan
 $timeline = New-Object System.Collections.Generic.List[object]
 function Add-TL { param($Time, $Source, $Detail)
     # Honour the find filter so a scoped run's timeline only shows matching events.
-    if ($script:FindFilter -and "$Source $Detail".IndexOf($script:FindFilter, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return }
+    if (-not (Test-FindMatch "$Source $Detail")) { return }
     if ($Time -is [string]) { $t = $null; [void][datetime]::TryParse($Time, [ref]$t) } else { $t = $Time }
     if ($t) { $timeline.Add([PSCustomObject]@{ Time=$t; Source=$Source; Detail=$Detail }) }
 }
@@ -5655,7 +5769,10 @@ if (($script:BrowserFlagged -and $script:BrowserFlagged.Count -gt 0) -or ($scrip
     $addLeaf = {
         param($name)
         if (-not $name) { return }
-        $n = ([string]$name).Trim()
+        # Strip any find-filter highlight markers first: when a -Find is active these 07_* files
+        # are written with >>>term<<< around hits, and the leaf regex below would otherwise fold
+        # the markers into the filename (e.g. ">>>pdfast<<<.exe") and miss the host correlation.
+        $n = ((([string]$name).Trim()) -replace '>>>|<<<', '')
         if ($n -match '([^\\/]+\.(exe|dll|scr|ps1|bat|cmd|vbs|js|hta|msi|com|lnk|iso|img|7z|zip))\b') {
             [void]$hostFiles.Add($matches[1].ToLower())
         }
@@ -5773,7 +5890,7 @@ if (($script:BrowserFlagged -and $script:BrowserFlagged.Count -gt 0) -or ($scrip
     }
 
     $abArr = $abLines.ToArray()
-    if ($script:FindFilter) { $abArr = Select-FilteredOutput -Lines $abArr -Term $script:FindFilter }
+    if ($script:FindFilter) { $abArr = Select-FilteredOutput -Lines $abArr -Terms $script:FindTerms }
     $abArr | Out-File (Join-Path $OutputPath '00_BROWSER_ALERTS.txt') -Encoding UTF8 -Force
 
     if ($highCount -gt 0) {

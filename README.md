@@ -68,7 +68,7 @@ Sigurd is a legendary hero of Norse and Germanic myth — the dragon-slayer who 
 - **Browser history URL analysis** — extracts URLs from every user's Chrome, Edge, and Firefox history (read directly from the history DBs plus their `-wal` sidecars, lock-safe, no SQLite engine needed) and flags suspicious ones live as it runs, color-coded by threat level: direct executable/script downloads, **raw *public*-IP hosts** (private/LAN IPs like `10.x` / `192.168.x` are ignored), known file-drop/C2/exfil infrastructure (Discord CDN, pastebin/raw, transfer.sh, anonfiles, mega, ngrok, `*.workers.dev`, telegram, …), URL shorteners, high-abuse TLDs, punycode hosts, and remote-access-tool references. One output folder per user. To keep the post-run **FINDINGS list uncluttered, individual browser URLs are not added to it** (a few HIGH/MED are echoed live during the scan for awareness, and a single aggregate finding points you to the files) — but **every** flagged URL of every severity is written in full to the per-user files. (URLs only — per-visit timestamps aren't decoded, to stay dependency-free; each profile's DB last-write time is shown in UTC as coarse timing context.)
 - **Per-user PUP / clone-browser detection** — walks every user's AppData (Local/Roaming/LocalLow) and every user registry hive — including **logged-off users' `NTUSER.DAT`**, which it mounts then unloads — to catch adware / potentially-unwanted apps that install per-user and skip Add/Remove Programs. Flags the Chromium-"clone" layout (`<App>\Application\<ver>\...\Installer\setup.exe`) and updater/dock families (`<App>` + `<App>Updater`/`AutoUpdate`/`Dock`), plus self-registered `Software\<Name>` keys carrying an `UninstallString`/`InstallerProgress` value. Catches infections sitting in **other** users' profiles that a current-user-only scan misses (mounting logged-off hives needs admin). Findings and the `09_user_hive_software.txt` rows now cite the **full `HKU\<SID>\…` registry path** — built from the profile's *real* SID, even for a mounted logged-off hive (whose live key is a temporary mount point) — so a flagged key is directly navigable. Module 02 carries a **SID→account map** (`Get-CimInstance Win32_UserProfile`, covering **domain/AD** profiles that `Get-LocalUser` never lists) so any SID seen here — local or domain — can be decoded back to a user.
 - **Local IOC hash matching** — match on-disk binaries against your own list of known-bad MD5 / SHA-1 / SHA-256 hashes. Fully offline; no API key, no third-party disclosure.
-- **Targeted find / scoping** — point a run at a single known artifact (`-Find SmartPDF` or the `f` menu option) and every output is reduced to just the items that name, point at, or are signed by that string — across tasks, run keys, services, processes, files and findings. Case-insensitive.
+- **Targeted find / scoping** — point a run at one or more known artifacts (`-Find "SmartPDF, evil.exe"` or the `f` menu option) and every output is reduced to just the items that name, point at, or are signed by any of those terms — across tasks, run keys, services, processes, files and findings. Comma-separated terms are OR'd; matches are wrapped in `>>> <<<` in the saved files and colour-highlighted live on screen. Case-insensitive.
 - **Event timeline** — chronological merge of logons, log clears, new services, scheduled tasks, and recent file modifications.
 - **SHA-256 evidence manifest** — hashes every output file for chain-of-custody / tamper evidence.
 
@@ -160,7 +160,7 @@ Remove-Item "$env:TEMP\secgurd*", "$env:TEMP\communitysavedIOCS.txt", "$env:TEMP
 secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
             [-OpenWhenDone] [-WithOwners] [-WithSignatures] [-WithTaskInfo]
             [-IOCHashes <file>] [-CommunityIOCHashes <file>] [-CommunityMalUrls <file>]
-            [-SquatDomains <file>] [-DaysBack <N>] [-Find <string>]
+            [-SquatDomains <file>] [-DaysBack <N>] [-Find <terms>]
             [-Cleanup] [-MakeS1Paste] [-Help]
 ```
 
@@ -181,7 +181,7 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 | `-CommunityMalUrls <file>` | Explicit path to the community malicious-URL list (otherwise auto-found in `dependencies/` or beside the script). |
 | `-SquatDomains <file>` | Explicit path to the openSquat squat-domain watchlist (otherwise auto-found in `dependencies/` or beside the script). |
 | `-DaysBack <N>` | Lookback window in days for time-bounded collectors (default 30). |
-| `-Find <string>` | Scope **all** output to lines/items containing `<string>` (case-insensitive) — see [Targeted find](#targeted-find--scoping-a-run-to-one-artifact). |
+| `-Find <terms>` | Scope **all** output to lines/items containing **any** of the comma-separated `<terms>` (case-insensitive); matches are highlighted — see [Targeted find](#targeted-find--scoping-a-run-to-one-artifact). |
 | `-Cleanup` | Remove **all** secgurd artifacts from `%TEMP%` — the script itself, output folders + zips, S1 paste files, and the IOC / malicious-URL / squat-domain / manual lists (requires typing `DELETE` to confirm). Also available as the `cleanup` menu command. |
 | `-MakeS1Paste` | Copy the compressed (gzip+Base64) "everything" paste (script + IOC / malicious-URL / squat-domain lists) for the remote shell. For the script-only / lists-only variants, use the interactive `p` menu. |
 | `-Help` | Show usage and exit. |
@@ -198,9 +198,9 @@ secgurd.ps1 [-Auto] [-Modules 01,03,06] [-OutputPath <dir>] [-NoBanner]
 # 90-day lookback for a suspected long-dwell compromise, with IOC matching
 .\secgurd.ps1 -Auto -DaysBack 90 -IOCHashes C:\ioc\badhashes.txt
 
-# Scope an entire run to one known-bad artifact (e.g. the "SmartPDF" bundler):
-# every file keeps only the tasks, run keys, services, processes and paths that mention it
-.\secgurd.ps1 -Auto -Find SmartPDF
+# Scope an entire run to one or more known-bad artifacts (comma-separated, OR-matched):
+# every file keeps only the tasks, run keys, services, processes and paths that mention any of them
+.\secgurd.ps1 -Auto -Find "SmartPDF, evil.exe"
 
 # Clean up old collections
 .\secgurd.ps1 -Cleanup
@@ -315,18 +315,20 @@ The GitHub Action `.github/workflows/refresh-squat-domains.yml` runs daily (06:1
 
 ## Targeted find — scoping a run to one artifact
 
-Sometimes you already know *what* you're hunting — a named bundler, a dropper filename, a rogue signer — and you don't want to wade through every benign task and registry value to find it. `-Find` (or the `f` menu option) scopes the **entire run** to a single string.
+Sometimes you already know *what* you're hunting — a named bundler, a dropper filename, a rogue signer — and you don't want to wade through every benign task and registry value to find it. `-Find` (or the `f` menu option) scopes the **entire run** to one or more strings; separate multiple terms with commas and a line is kept if it contains **any** of them.
 
 ```powershell
-# A known trojan/bundler "SmartPDF" is on the box — show only what touches it
-.\secgurd.ps1 -Auto -Find SmartPDF
+# A known bundler "SmartPDF" and a dropper "evil.exe" are on the box — show only what touches either
+.\secgurd.ps1 -Auto -Find "SmartPDF, evil.exe"
 ```
 
-With a find filter active, every artifact file keeps only the lines that contain the string — **plus the section header above them** — and drops sections with no hits entirely. So instead of *all* scheduled tasks, you see only the task named after / running `SmartPDF`; instead of *all* run keys, only the value pointing at it; and the same for services, processes, loaded DLLs, file paths, and so on. The auto-flagged **findings** and the **event timeline** are filtered the same way, so `00_SUMMARY.txt` shows only the related leads.
+With a find filter active, every artifact file keeps only the lines that contain one of the terms — **plus the section header above them** — and drops sections with no hits entirely. So instead of *all* scheduled tasks, you see only the task named after / running `SmartPDF`; instead of *all* run keys, only the value pointing at it; and the same for services, processes, loaded DLLs, file paths, and so on. The auto-flagged **findings** and the **event timeline** are filtered the same way, so `00_SUMMARY.txt` shows only the related leads.
 
 - **Case-insensitive.** `-Find smartpdf`, `SmartPDF`, and `SMARTPDF` all match the same items — capitalization never causes a miss.
 - **Matches anywhere on the line** — filename, full path, signer, service name, command line, registry value name or data.
-- **Set it any way:** the `-Find <string>` flag (works with `-Auto`, `-Modules`, and the paste versions), or interactively with the `f` menu command (enter a term to scope, or leave it blank to clear and collect everything again).
+- **Multiple terms, OR-matched.** Comma-separate them (`-Find "SmartPDF, evil.exe, .top"`); a line is kept if it contains **any** term. Terms are trimmed and de-duplicated.
+- **Matches stand out.** Each hit is wrapped in `>>> <<<` in the saved `.txt` files (greppable, survives copy-paste) and colour-highlighted on the live scan screen.
+- **Set it any way:** the `-Find <terms>` flag (works with `-Auto`, `-Modules`, and the paste versions), or interactively with the `f` menu command (enter one or more comma-separated terms to scope, or leave it blank to clear and collect everything again).
 - The active filter is recorded in `00_INDEX.txt` and `00_SUMMARY.txt` so the scope of the collection is always documented. `00_SUMMARY.txt` also lists, under a **FILES WITH MATCHES** section, exactly which artifacts contained the term and how many instances each had — so you go straight to the files that matter instead of opening dozens of "(no matches…)" files.
 - As it runs, each collector's line shows how many matching items it found (e.g. `03_scheduled_tasks.txt … 3 instances found`).
 
