@@ -36,22 +36,29 @@ jobs:
           }
 
           # MalwareBazaar CSV columns (quoted, comma-separated):
-          #   first_seen, sha256_hash, md5_hash, sha1_hash, reporter, file_name,
-          #   file_type, mime_type, signature, ...
-          # We want column 2 (sha256) and column 9 (signature) as the label.
+          #   1 first_seen, 2 sha256, 3 md5, 4 sha1, 5 reporter, 6 file_name,
+          #   7 file_type_guess, 8 mime_type, 9 signature, 10 clamav, 11 vtpercent, 12 imphash, ...
+          # We keep column 2 (sha256) + column 9 (signature label), but ONLY for samples secgurd can
+          # actually match on a Windows host: a Windows PE (mime application/x-dosexec) or one of the
+          # script types it hashes. This drops the large share of the "recent" feed that is Linux/IoT
+          # ELF, Android APK, macOS Mach-O, documents, archives, etc. - none of which secgurd scans.
           {
             echo "# secgurd community IOC list"
-            echo "# Auto-generated from abuse.ch MalwareBazaar recent export"
+            echo "# Auto-generated from abuse.ch MalwareBazaar recent export (Windows PE + scripts only)"
             echo "# Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "# Format: <sha256>,<malware family/signature>"
             echo "#"
-            # strip comment lines, strip quotes, print "sha256,signature" when sha256 looks valid
+            # strip comment lines & quotes; keep only Windows-relevant samples (PE mime or a script type)
             grep -v '^#' recent.csv \
               | sed 's/"//g' \
               | awk -F',' '{
                   gsub(/^[ \t]+|[ \t]+$/, "", $2);
+                  gsub(/^[ \t]+|[ \t]+$/, "", $7);
+                  gsub(/^[ \t]+|[ \t]+$/, "", $8);
                   gsub(/^[ \t]+|[ \t]+$/, "", $9);
-                  if ($2 ~ /^[0-9A-Fa-f]{64}$/) {
+                  isPE = ($8 ~ /x-dosexec/);
+                  isWinScript = ($7 ~ /^(exe|dll|scr|ps1|bat|cmd|vbs|js|hta|com|sys)$/);
+                  if ($2 ~ /^[0-9A-Fa-f]{64}$/ && (isPE || isWinScript)) {
                     sig = ($9 == "" || $9 == "n/a") ? "MalwareBazaar" : $9;
                     print $2 "," sig
                   }
