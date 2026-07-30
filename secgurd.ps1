@@ -135,7 +135,7 @@ function Ex {
     return $s
 }
 
-$script:secgurdVersion = 'v2.1'
+$script:secgurdVersion = 'v2.2'
 
 # ---------------------------------------------
 
@@ -146,6 +146,7 @@ $script:secgurdVersion = 'v2.1'
 $ErrorActionPreference = 'SilentlyContinue'
 $script:RunStart = Get-Date
 $script:Findings = [System.Collections.Generic.List[string]]::new()
+$script:FindingFileCounts = @{}   # artifact filename -> number of findings pointing at it (00_SUMMARY index)
 $script:CollectedCount = 0
 $script:ErrorCount = 0
 $script:SkippedCount = 0
@@ -211,6 +212,56 @@ $script:TrustedPathRx = '(?i)\\(Windows Defender|Windows Defender Advanced Threa
     '(?i)\\Microsoft\\EdgeWebView\\'
 
 # ---------------------------------------------------------------------------------------------
+#  Rey (Reynolds & Reynolds) approved-tool allowlist.
+# ---------------------------------------------------------------------------------------------
+# Managed security / IT tooling that would otherwise trip the process, command-line or RMM
+# heuristics (e.g. the SentinelOne remote shell secgurd is often run THROUGH, whose cmd/powershell
+# children carry -EncodedCommand; and a known-good ScreenConnect instance). Each
+# rule is a hashtable of keys that are AND'd together - a rule matches only when EVERY key it
+# lists matches - so entries stay tight. A match exempts ONLY the low-signal heuristics (masquerade,
+# drop-path, and the obfuscated / download-and-exec command-line flag); the high-signal command-line
+# categories (LSASS/credential dumping, SAM|SYSTEM|NTDS hive theft, LOLBin proxy-exec) are ALWAYS
+# flagged, even for an allowlisted tool - an approved tool dumping LSASS must never be hidden.
+# Allowlisted processes are still listed in the artifact under "Rey-allowlisted" for transparency.
+#   Keys (all case-insensitive):
+#     Name     - exact image leaf, e.g. 'cylanceui.exe'
+#     NameRx   - regex on the image leaf
+#     PathRx   - regex on the full image path
+#     CmdRx    - regex on the command line
+#     ParentRx - regex tested against the process's ANCESTRY chain (parent, grandparent, ...),
+#                so it matches children and grandchildren of the named host
+#     ScId     - ScreenConnect instance id (exact)
+#     Label    - shown in the "Suppressed" line
+# NOTE: these match on name/path/ancestry, not signature - an attacker who names malware after an
+# allowlisted tool (or operates through the S1 shell) would also be exempted. Add a PathRx to tighten.
+$script:ReyAllowlist = @(
+    @{ Label='SentinelOne remote-shell host';     NameRx='(?i)^SentinelRemoteShellHost\.exe$' }
+    @{ Label='SentinelOne remote-shell command';  NameRx='(?i)^(cmd|powershell|pwsh)\.exe$'; ParentRx='(?i)SentinelRemoteShellHost' }
+    @{ Label='Managed ScreenConnect instance';    ScId='d733041793212483' }
+    # --- add Rey-approved tools below, one rule per line ---
+    # @{ Label='Example tool'; Name='example.exe'; PathRx='(?i)\\Vendor\\' }
+)
+
+function Test-ReyAllowed {
+    # Return the matching allowlist rule's Label (truthy) when this process/command is Rey-approved,
+    # else $null. A rule matches only when every key it specifies matches the supplied value; a key
+    # whose argument is empty can never satisfy that rule (so e.g. ScId rules only match the
+    # ScreenConnect path). -Parent may be the full ancestry chain so ParentRx matches any ancestor.
+    param([string]$Name, [string]$Path, [string]$CommandLine, [string]$Parent, [string]$ScId)
+    foreach ($r in $script:ReyAllowlist) {
+        $ok = $true
+        if ($r.ContainsKey('Name')     -and ($Name -ne $r.Name))                { $ok = $false }
+        if ($ok -and $r.ContainsKey('NameRx')   -and ($Name        -notmatch $r.NameRx))   { $ok = $false }
+        if ($ok -and $r.ContainsKey('PathRx')   -and ($Path        -notmatch $r.PathRx))   { $ok = $false }
+        if ($ok -and $r.ContainsKey('CmdRx')    -and ($CommandLine -notmatch $r.CmdRx))    { $ok = $false }
+        if ($ok -and $r.ContainsKey('ParentRx') -and ($Parent      -notmatch $r.ParentRx)) { $ok = $false }
+        if ($ok -and $r.ContainsKey('ScId')     -and ($ScId -ne $r.ScId))                  { $ok = $false }
+        if ($ok) { return $r.Label }
+    }
+    return $null
+}
+
+# ---------------------------------------------------------------------------------------------
 #  Shared detection patterns for the process / command-line / autorun heuristics (modules 03/06/11).
 #  Grouped here so the same tuned regexes are reused (and easy to adjust) across collectors.
 # ---------------------------------------------------------------------------------------------
@@ -252,15 +303,21 @@ $script:CoreSystemImages = @{
 
 function Get-CmdLineFindings {
     # High-signal command-line heuristics shared by module 06 (live processes) and 11 (4688 logs).
-    # Returns @( @{Severity;Reason}, ... ). $Name is the image leaf (e.g. powershell.exe).
-    param([string]$Name, [string]$CommandLine)
+    # Returns @( @{Severity;Reason}, ... ). $Name is the image leaf (e.g. powershell.exe). $ImagePath
+    # and $ParentName are optional context (the latter may be a full ancestry chain) used only to
+    # consult the Rey allowlist below.
+    param([string]$Name, [string]$CommandLine, [string]$ImagePath, [string]$ParentName)
     $c = ("{0} {1}" -f $Name, $CommandLine).Trim()
     if (-not $c) { return @() }
     $f = New-Object System.Collections.Generic.List[object]
+    # High-signal categories fire for EVERY process, including Rey-approved ones - an allowlisted
+    # tool dumping LSASS or stealing a registry hive must never be hidden.
     if ($c -match $script:CredDumpRx)  { [void]$f.Add(@{ Severity='HIGH'; Reason='possible LSASS / credential dumping' }) }
     if ($c -match $script:HiveTheftRx) { [void]$f.Add(@{ Severity='HIGH'; Reason='shadow-copy / SAM|SYSTEM|NTDS hive theft' }) }
     if ($c -match $script:LolbinCmdRx) { [void]$f.Add(@{ Severity='HIGH'; Reason='LOLBin download / proxy-execution pattern' }) }
-    if ($c -match $script:ObfCmdRx) {
+    # The obfuscated / download-and-exec flag is the noisy one Rey tooling trips (e.g. the SentinelOne
+    # remote shell's -EncodedCommand powershell) - suppress it ONLY for allowlisted processes.
+    if (($c -match $script:ObfCmdRx) -and -not (Test-ReyAllowed -Name $Name -Path $ImagePath -CommandLine $CommandLine -Parent $ParentName)) {
         $sev = if ($Name -match '(?i)^(powershell|pwsh|cmd|mshta|wscript|cscript|rundll32|regsvr32)(\.exe)?$') { 'HIGH' } else { 'MED' }
         [void]$f.Add(@{ Severity=$sev; Reason='obfuscated / download-and-exec command line' })
     }
@@ -2402,6 +2459,10 @@ function Add-Finding {
     if (-not $NoRecord) {
         $tag = if ($Artifact) { " {file:$Artifact}" } else { '' }
         $script:Findings.Add("[$Severity] ($Module) $Message$tag")
+        if ($Artifact) {
+            if ($script:FindingFileCounts.ContainsKey($Artifact)) { $script:FindingFileCounts[$Artifact]++ }
+            else { $script:FindingFileCounts[$Artifact] = 1 }
+        }
     }
     if ($Quiet) { return }   # recorded to summary/HTML, but not echoed to the scan screen
     # If a transient "running..." line is on screen, move to a fresh line first
@@ -2419,6 +2480,9 @@ function Add-Finding {
         else { Write-Host $t -ForegroundColor $(if ($Severity -eq 'MED') { 'Yellow' } else { 'DarkGray' }) -NoNewline }
     }
 
+    # Dim " -> <file>" pointer so the analyst can jump straight to the artifact this finding lives in
+    # (skipped when the message already names the file). Shown live, in the recap, and in 00_SUMMARY.
+    $ptr = if ($Artifact -and -not $Message.Contains($Artifact)) { " -> $Artifact" } else { '' }
     if ($HighlightUrl -and $Message.Contains($HighlightUrl)) {
         # Colour the URL mauve (#d7afff) so it stands out; the rest stays severity-coloured, making
         # it easy to pick out exactly which URL - and where in the line - the finding is about.
@@ -2426,15 +2490,16 @@ function Add-Finding {
         & $writeSev $Message.Substring(0, $idx)
         Wc $HighlightUrl '38;2;170;130;230' 'Magenta'   # #aa82e6 purple / mauve (NoNewline)
         & $writeSev $Message.Substring($idx + $HighlightUrl.Length)
-        Write-Host ""   # end the line
     }
     elseif ($Severity -eq 'HIGH') {
         # brick-red alert (true-color when supported, DarkRed fallback)
-        Write-Alert $Message
+        Write-Alert $Message -NoNewline
     } else {
         $color = if ($Severity -eq 'MED') { 'Yellow' } else { 'DarkGray' }
-        Write-Host $Message -ForegroundColor $color
+        Write-Host $Message -ForegroundColor $color -NoNewline
     }
+    if ($ptr) { Write-Host $ptr -ForegroundColor DarkGray -NoNewline }
+    Write-Host ""   # end the line
 }
 
 function Write-FindingRecap {
@@ -2481,7 +2546,11 @@ function Write-FindingRecap {
     }
     if ($pos -lt $rest.Length) { & $sevSeg $rest.Substring($pos) }
 
-    if ($fileTag) { Wc " $fileTag" $dim 'DarkGray' }
+    if ($fileTag -and $fileTag -match '^\{file:(.+)\}$') {
+        $fn = $matches[1]
+        if (-not $rest.Contains($fn)) { Wc " -> $fn" $dim 'DarkGray' }   # skip when the message already names the file
+    }
+    elseif ($fileTag) { Wc " $fileTag" $dim 'DarkGray' }
     Write-Host ""
 }
 
@@ -3729,7 +3798,12 @@ Save-Output "03_remote_access_tools.txt" {
                     Select-String -Path $cfg -Pattern 'https?://|\b\d{1,3}(\.\d{1,3}){3}\b|\.controlhub\.|\.screenconnect\.' -ErrorAction SilentlyContinue |
                         Select-Object -First 10 | ForEach-Object { "    $($_.Line.Trim())" }
                 } catch {}
-                Add-Finding 'HIGH' '03' (Ex "ScreenConnect client instance found: $($_.Name) ^09 verify relay host in user.config is authorized") '03_remote_access_tools.txt'
+                $scId = if ($_.Name -match '\(([0-9A-Fa-f]{6,})\)') { $matches[1] } else { '' }
+                if (Test-ReyAllowed -ScId $scId) {
+                    "  - $($_.Name)  [suppressed: Rey-allowlisted managed instance]"
+                } else {
+                    Add-Finding 'HIGH' '03' (Ex "ScreenConnect client instance found: $($_.Name) ^09 verify relay host in user.config is authorized") '03_remote_access_tools.txt'
+                }
             }
         }
     }
@@ -4174,16 +4248,40 @@ Save-Output "06_process_tree.txt" {
     # flood the findings list; each is a recorded finding pointing back to this file.
     Write-Section "PROCESS HEURISTICS (masquerade / drop-path / command line)"
     $procSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $reySeen  = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $reySuppressed = New-Object System.Collections.Generic.List[string]
     $heurHits = 0
     foreach ($p in $procs) {
         $pname = "$($p.Name)"
         $pimg  = "$($p.ExecutablePath)"
         $pcmd  = "$($p.CommandLine)"
 
+        # Ancestry chain (names, walking up via $byPid) so a Rey parent anchor matches children AND
+        # grandchildren - e.g. SentinelRemoteShellHost -> cmd -> powershell, which is secgurd's own
+        # execution context when run through the SentinelOne remote shell.
+        $ancestry = @(); $cur = $byPid[[int]$p.ParentProcessId]; $guard = 0
+        while ($cur -and $guard -lt 32) {
+            $ancestry += "$($cur.Name)"
+            $nxt = $byPid[[int]$cur.ParentProcessId]
+            if ($nxt -and $nxt.ProcessId -eq $cur.ProcessId) { break }   # self-parent guard
+            $cur = $nxt; $guard++
+        }
+        $pancestry = ($ancestry -join ' ')
+
+        # Rey allowlist: approved managed tooling (the SentinelOne remote shell, the managed
+        # ScreenConnect instance, ...) is exempt from the LOW-signal heuristics (masquerade / drop-path
+        # below, and obfuscation inside Get-CmdLineFindings) - but cred-dump / hive-theft / LOLBin
+        # still fire for it. Recorded under "Rey-allowlisted" at the end for transparency (never
+        # silently dropped, and we do NOT skip the process outright).
+        $reyLabel = Test-ReyAllowed -Name $pname -Path $pimg -CommandLine $pcmd -Parent $pancestry
+        if ($reyLabel -and $reySeen.Add("$pname|$pimg")) {
+            $reySuppressed.Add(("  - {0}  (PID {1}){2}  [{3}]" -f $pname, $p.ProcessId, $(if ($pimg) { " $pimg" } else { '' }), $reyLabel))
+        }
+
         # Masquerade: a core system process running from a non-canonical directory. (Image path is
         # often blank for protected processes without admin - we simply skip those, never guess.)
         $expected = $script:CoreSystemImages[$pname.ToLower()]
-        if ($expected -and $pimg) {
+        if ($expected -and $pimg -and -not $reyLabel) {
             $okDir = switch ($expected) {
                 'System32' { $pimg -match '(?i)\\Windows\\(System32|SysWOW64|WinSxS)\\' }
                 'Windows'  { $pimg -match '(?i)\\Windows\\explorer\.exe$' }
@@ -4191,28 +4289,36 @@ Save-Output "06_process_tree.txt" {
             }
             if (-not $okDir -and $procSeen.Add("masq|$pname|$pimg")) {
                 $heurHits++
+                "  ! Masqueraded system process: $pname running from $pimg (not its expected location)"
                 Add-Finding 'HIGH' '06' (Ex "Masqueraded system process: $pname running from $pimg ^09 not its expected location") '06_process_tree.txt'
             }
         }
 
         # Drop-path: process image in a high-signal drop location (Temp/Public/Downloads/Desktop/...).
-        if ($pimg -and ($pimg -match $script:ProcDropRx) -and ($pimg -notmatch $script:TrustedPathRx)) {
+        if ($pimg -and (-not $reyLabel) -and ($pimg -match $script:ProcDropRx) -and ($pimg -notmatch $script:TrustedPathRx)) {
             if ($procSeen.Add("drop|$pimg")) {
                 $heurHits++
+                "  ! Process running from a drop location: $pname > $pimg"
                 Add-Finding 'MED' '06' (Ex "Process running from a drop location: $pname ^17 $pimg") '06_process_tree.txt'
             }
         }
 
         # Command-line heuristics: cred-dump / hive-theft / LOLBin / obfuscation.
-        foreach ($cf in (Get-CmdLineFindings $pname $pcmd)) {
+        foreach ($cf in (Get-CmdLineFindings $pname $pcmd $pimg $pancestry)) {
             $short = if ($pcmd.Length -gt 160) { $pcmd.Substring(0,160) + '...' } else { $pcmd }
             if ($procSeen.Add("$($cf.Reason)|$pname|$short")) {
                 $heurHits++
+                "  ! $pname (PID $($p.ProcessId)) [$($cf.Severity)] $($cf.Reason): $short"
                 Add-Finding $cf.Severity '06' (Ex "$pname (PID $($p.ProcessId)) ^09 $($cf.Reason): $short") '06_process_tree.txt'
             }
         }
     }
     if ($heurHits -eq 0) { "(no masquerade / drop-path / suspicious-command-line processes detected)" }
+    if ($reySuppressed.Count -gt 0) {
+        ""
+        'Rey-allowlisted (masquerade / drop-path / obfuscation checks skipped; cred-dump / hive-theft / LOLBin still flagged):'
+        $reySuppressed | Sort-Object -Unique
+    }
 }
 
 Save-Output "06_loaded_dlls.txt" {
@@ -5343,12 +5449,40 @@ Save-Output "11_lolbin_usage.txt" {
     $evts4688 = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688 } -MaxEvents 500 -ErrorAction SilentlyContinue)
     $lolHits = New-Object System.Collections.Generic.List[object]
     $cmdSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    # Pre-index the 4688 window by New Process ID so we can reconstruct a best-effort ancestry chain
+    # (one event only names the immediate creator). PIDs get reused over time, so this is approximate;
+    # newest event wins per PID, and the Rey ParentRx match is name-specific enough that a stale hop at
+    # worst misses a suppression - it never hides an unrelated finding.
+    $byNewPid4688 = @{}
+    foreach ($e in $evts4688) {
+        $mm = $e.Message
+        $np = if ($mm -match 'New Process ID:\s+(\S+)') { $matches[1] } else { '' }
+        if ($np -and -not $byNewPid4688.ContainsKey($np)) {
+            $byNewPid4688[$np] = @{
+                CreatorPid  = if ($mm -match 'Creator Process ID:\s+(\S+)') { $matches[1] } else { '' }
+                CreatorName = if ($mm -match 'Creator Process Name:\s+(.+)') { Split-Path -Leaf ($matches[1].Trim()) } else { '' }
+            }
+        }
+    }
     foreach ($e in $evts4688) {
         $msg = $e.Message
         $exe = if ($msg -match 'New Process Name:\s+(.+)') { $matches[1].Trim() } else { '' }
         $cmd = if ($msg -match 'Process Command Line:\s+(.+)') { $matches[1].Trim() } else { '' }
         # Match leaf filename only: '\wmic.exe' won't match 'wmic_helper.exe' or a path containing 'wmic'.
         $leaf = if ($exe) { Split-Path -Leaf $exe.ToLower() } else { '' }
+        $parentLeaf = if ($msg -match 'Creator Process Name:\s+(.+)') { Split-Path -Leaf ($matches[1].Trim()) } else { '' }
+        # Walk the best-effort ancestry (parent, grandparent, ...) so a Rey ParentRx rule can match a
+        # grandchild - e.g. SentinelRemoteShellHost -> cmd -> powershell in the S1 remote shell.
+        $anc4688 = @(); $cn = $parentLeaf
+        $cp = if ($msg -match 'Creator Process ID:\s+(\S+)') { $matches[1] } else { '' }
+        $g4 = 0
+        while ($cn -and $g4 -lt 32) {
+            $anc4688 += $cn
+            $rec = if ($cp -and $byNewPid4688.ContainsKey($cp)) { $byNewPid4688[$cp] } else { $null }
+            if (-not $rec) { break }
+            $cn = $rec.CreatorName; $cp = $rec.CreatorPid; $g4++
+        }
+        $parentChain = ($anc4688 -join ' ')
         foreach ($bin in $lolbins) {
             if ($leaf -eq "$bin.exe" -or $leaf -eq $bin) {
                 [void]$lolHits.Add([PSCustomObject]@{ Time = $e.TimeCreated; Binary = $bin; Process = $exe; CmdLine = $cmd })
@@ -5356,7 +5490,7 @@ Save-Output "11_lolbin_usage.txt" {
             }
         }
         # HIGH-severity command-line patterns from historical execution (deduped by reason+image+cmd).
-        foreach ($cf in (Get-CmdLineFindings $leaf $cmd)) {
+        foreach ($cf in (Get-CmdLineFindings $leaf $cmd $exe $parentChain)) {
             if ($cf.Severity -ne 'HIGH') { continue }
             $short = if ($cmd.Length -gt 160) { $cmd.Substring(0,160) + '...' } else { $cmd }
             if ($cmdSeen.Add("$($cf.Reason)|$leaf|$short")) {
@@ -5510,9 +5644,29 @@ if ($script:Findings.Count -eq 0) {
     $summaryLines += "  No high-signal indicators auto-flagged."
     $summaryLines += (Ex "  (Absence of flags is NOT proof of a clean host ^09 review the raw files.)")
 } else {
-    $script:Findings | Sort-Object | ForEach-Object { $summaryLines += "  $_" }
+    # Render the stored {file:NAME} pointer as a clean " -> NAME" (unless the message already names the
+    # file) so each finding says which file to open.
+    $script:Findings | Sort-Object | ForEach-Object {
+        $line = $_
+        if ($line -match '\s*\{file:([^}]+)\}\s*$') {
+            $fn = $matches[1]
+            $base = $line -replace '\s*\{file:[^}]+\}\s*$', ''
+            $line = if ($base.Contains($fn)) { $base } else { "$base -> $fn" }
+        }
+        $summaryLines += "  $line"
+    }
 }
 $summaryLines += ""
+if ($script:FindingFileCounts.Count -gt 0) {
+    # Index the findings by the artifact each points at, so you know exactly which files to open first.
+    $summaryLines += (Ex "FILES WITH FINDINGS (open these first)")
+    $summaryLines += ("-" * 60)
+    $script:FindingFileCounts.GetEnumerator() | Sort-Object { $_.Value } -Descending | ForEach-Object {
+        $word = if ($_.Value -eq 1) { 'finding' } else { 'findings' }
+        $summaryLines += ("  {0,-42} {1,4} {2}" -f $_.Name, $_.Value, $word)
+    }
+    $summaryLines += ""
+}
 
 # When a find filter is active, show at a glance which artifacts actually contained matches
 # (so the analyst isn't hunting through dozens of "(no matches...)" files).
