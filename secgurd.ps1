@@ -135,7 +135,7 @@ function Ex {
     return $s
 }
 
-$script:secgurdVersion = 'v2.2'
+$script:secgurdVersion = 'v2.2.1'
 
 # ---------------------------------------------
 
@@ -2509,10 +2509,10 @@ function Write-FindingRecap {
     # live URL echo uses): URLs, quoted paths, registry keys (HKLM/HKCU/HKU/...), and drive-letter
     # paths - the location / program / URL an analyst actually chases. Everything is one of those two
     # colours (consistent across every finding); a finding with no artifact is simply all-severity.
-    # The trailing {file:...} output pointer dims as secondary metadata.
+    # Each finding LEADS with its source {file:...} artifact (cyan) so it's obvious which file to open.
     param([string]$Line)
     $mauve = '38;2;170;130;230'   # #aa82e6 - matches the live URL highlight in Add-Finding
-    $dim   = '38;2;125;125;125'
+    $fileC = '38;2;90;180;210'    # cyan - the source-artifact filename the finding leads with
 
     $sev = 'INFO'; $rest = $Line
     if     ($Line.StartsWith('[HIGH]')) { $sev = 'HIGH'; $rest = $Line.Substring(6).TrimStart() }
@@ -2535,6 +2535,14 @@ function Write-FindingRecap {
     Write-Host "    " -NoNewline
     & $sevSeg "[$sev] "
 
+    # Lead with the source artifact (cyan) so the recap says exactly which file to open, dropping the
+    # bare (module) tag - the filename already carries the module number and is unambiguous. Artifact-
+    # less findings keep their (module) locator.
+    if ($fileTag -and $fileTag -match '^\{file:(.+)\}$') {
+        $rest = $rest -replace '^\(\w+\)\s+', ''
+        Wc ("{0}  " -f $matches[1]) $fileC 'Cyan'
+    }
+
     # Mauve the concrete artifacts (URLs / quoted paths / registry keys / drive-letter paths). Matches
     # are non-overlapping, left-to-right; the alert title between them stays in the severity colour.
     $rx = [regex]'(https?://\S+|"[^"]*"|HK(?:LM|CU|CR|CC|U|EY_[A-Za-z_]+)\\\S+|[A-Za-z]:\\\S+)'
@@ -2545,12 +2553,6 @@ function Write-FindingRecap {
         $pos = $m.Index + $m.Length
     }
     if ($pos -lt $rest.Length) { & $sevSeg $rest.Substring($pos) }
-
-    if ($fileTag -and $fileTag -match '^\{file:(.+)\}$') {
-        $fn = $matches[1]
-        if (-not $rest.Contains($fn)) { Wc " -> $fn" $dim 'DarkGray' }   # skip when the message already names the file
-    }
-    elseif ($fileTag) { Wc " $fileTag" $dim 'DarkGray' }
     Write-Host ""
 }
 
@@ -5644,14 +5646,13 @@ if ($script:Findings.Count -eq 0) {
     $summaryLines += "  No high-signal indicators auto-flagged."
     $summaryLines += (Ex "  (Absence of flags is NOT proof of a clean host ^09 review the raw files.)")
 } else {
-    # Render the stored {file:NAME} pointer as a clean " -> NAME" (unless the message already names the
-    # file) so each finding says which file to open.
+    # Lead each finding with its source artifact so the summary says exactly which file to open for
+    # detail. The bare (module) tag is dropped - the filename already carries the module number.
+    # Artifact-less findings keep their (module) locator unchanged.
     $script:Findings | Sort-Object | ForEach-Object {
         $line = $_
-        if ($line -match '\s*\{file:([^}]+)\}\s*$') {
-            $fn = $matches[1]
-            $base = $line -replace '\s*\{file:[^}]+\}\s*$', ''
-            $line = if ($base.Contains($fn)) { $base } else { "$base -> $fn" }
+        if ($line -match '^\[(HIGH|MED|INFO)\]\s+\(\w+\)\s+(.*?)\s*\{file:([^}]+)\}\s*$') {
+            $line = "[{0}] {1}  {2}" -f $matches[1], $matches[3], $matches[2]
         }
         $summaryLines += "  $line"
     }
