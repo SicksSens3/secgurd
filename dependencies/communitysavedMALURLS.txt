@@ -3,24 +3,24 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-02 08:54:41 UTC
+# Updated: 2026-08-03 10:12:54 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
-http://31-56-209-153.cprapid.com/nz/nz.i686,malware_download
+http://31-56-209-153.cprapid.com/nz/nz.arm6,malware_download
 http://69cnc.duckdns.org/bins/putita.m68k,malware_download
 http://archivoscrosoft.com/MSI.png,malware_download
+http://eclipsebible.com/loader.sh,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
-http://genddos.st/bachekuni/ohshit.mpsl,malware_download
-http://js.byxly.eu.cc/mipsel,malware_download
+http://genddos.st/bachekuni/ohshit.arm5,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://peachcity.si/n2/mips64,malware_download
 http://purmed.ro/upwork/Odours.prx,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
-http://s3o65awrf56.net/nz/nz.arc,malware_download
+http://s3o65awrf56.net/nz/nz.arm,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
-http://wqok85qtq.net/nz/nz.arc,malware_download
+http://wqok85qtq.net/nz.sh,malware_download
 http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
 https://88.212.109.208.host.secureserver.net/?get=1,malware_download
 https://airtickts.com/,malware_download
@@ -28,6 +28,7 @@ https://americanmanchester.org/americanserve/MSI_PRO.png,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
 https://deliverymailreport.co.za/img_053354.png,malware_download
+https://dn-pdflite.lat/files/dn-pdflite.lat/de6ae97040d70645/DOC-C48TTX.zip,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
 https://drive.google.com/uc?export=download&id=1EznN9ZSMbkarOKxIJQJNw-P_JNXqHJQz,malware_download
 https://dynga.pl/common.dat,malware_download
@@ -50,3 +51,4 @@ https://v-k.com.ua/notepad.b64,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.dra.com.ve/wp-content/languages/plugins/ds5.txt,malware_download
 https://www.kenwillzltd.com/kenwillzltd.zip,malware_download
+https://www.nccommunication.be/images/y11.png,malware_download
