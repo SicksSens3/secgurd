@@ -7,6 +7,7 @@ bleakoutlook.com
 capvisag-onmicrosoft.com
 castoutlook.com
 contacts-microsoft.com
+corp-microsoft.com
 djsharepoint.com
 djsharepoint.net
 docusign.fit
@@ -48,9 +49,11 @@ microsolt.info
 msonedrive-cdn.info
 offic365.net
 office365-13.de
+office365-view-message.online
 office365uae.com
 ofice365.org
 onedrive.biz.id
+onedrive.com.de
 onedrivefilesecurecent.online
 onedrivenote.online
 onesportsoffice365.com
@@ -60,6 +63,7 @@ outlook-streetangels.com
 outlook.com.mw
 outlookcommunicate.com
 outlookhotmail.online
+outlookk.space
 outlookmail.my.id
 outlookmailhub.com
 outlookorange.co
