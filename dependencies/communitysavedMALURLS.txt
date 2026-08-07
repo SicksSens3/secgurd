@@ -3,30 +3,26 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-06 09:21:41 UTC
+# Updated: 2026-08-07 07:52:15 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
-http://69cnc.duckdns.org/bins/putita.m68k,malware_download
 http://archivoscrosoft.com/MSI.png,malware_download
-http://eclipsebible.com/eclipse.x86_64,malware_download
-http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
-http://genddos.st/bachekuni/ohshit.arm5,malware_download
+http://czd.ru.com/MSI_PRO.png,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
 http://mrsweaterltd.com/o85pdfv8yi.png,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://purmed.ro/upwork/Odours.prx,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
+http://s3o65awrf56.net/nz/nz.arm6,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
-http://skript.club/nz/debug,malware_download
-http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
+http://wqok85qtq.net/nz/nz.arm7,malware_download
 https://88.212.109.208.host.secureserver.net/?get=1,malware_download
 https://airtickts.com/,malware_download
 https://americanmanchester.org/americanserve/MSI_PRO.png,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
 https://cqylt.net/?e=v,malware_download
-https://deliverymailreport.co.za/MSI_033332.png,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
 https://drive.google.com/uc?export=download&id=1EznN9ZSMbkarOKxIJQJNw-P_JNXqHJQz,malware_download
 https://dynga.pl/common.dat,malware_download
@@ -34,7 +30,6 @@ https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/
 https://gboutros.howto.rocks/img_142806.png,malware_download
 https://grantexx.com/Pred.inf,malware_download
 https://grupohenry1.com/astillerohenry.com/imgnic_165817.png,malware_download
-https://heajost.online/img_054840.png,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://ipfs.io/ipfs/QmbPifgvVgU4RSccJkUnzWTmDxZEoS2scDEQquqzg6GUat,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
@@ -42,14 +37,13 @@ https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,malware_download
 https://lenotecadiarqua.it/Lbskesl.u32,malware_download
 https://plain-wnam-prod-public.komododecks.com/202608/05/JJEEAVpl6Blk3mkgEj7i/image.png,malware_download
-https://pocopaco.co.za/img_144534.png,malware_download
-https://res.cloudinary.com/t3swaz48/image/upload/v1785980358/img_213859_yxgjcm.jpg,malware_download
+https://pocopaco.co.za/img_110418.png,malware_download
+https://res.cloudinary.com/t3swaz48/image/upload/v1785980074/img_213402_mk57ex.jpg,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
 https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
 https://solar-sanat.net/imagetest0071154z7.png,malware_download
 https://sunix-technology.com/admin/niceimg_122852.png,malware_download
-https://svo-poiskrat.vercel.app/?download=1,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
@@ -58,5 +52,3 @@ https://tuasesoriadigital.es/default.dat,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.dra.com.ve/wp-content/languages/plugins/ds5.txt,malware_download
 https://www.kenwillzltd.com/kenwillzltd.zip,malware_download
-https://www.nccommunication.be/images/y11.png,malware_download
-https://zoredaye.com/stego_haamlp2ndi.png,malware_download
