@@ -3,21 +3,29 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-07 07:52:15 UTC
+# Updated: 2026-08-08 07:28:59 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
+http://31-56-209-153.cprapid.com/nz/nz.arm6,malware_download
+http://69cnc.duckdns.org/bins/putita.m68k,malware_download
 http://archivoscrosoft.com/MSI.png,malware_download
 http://czd.ru.com/MSI_PRO.png,malware_download
+http://eclipsebible.com/eclipse.x86_64,malware_download
+http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
 http://mrsweaterltd.com/o85pdfv8yi.png,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://purmed.ro/upwork/Odours.prx,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
-http://s3o65awrf56.net/nz/nz.arm6,malware_download
+http://s3o65awrf56.net/nz/nz.arm,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
-http://wqok85qtq.net/nz/nz.arm7,malware_download
+http://skript.club/nz/debug,malware_download
+http://wqok85qtq.net/nz/nz.arc,malware_download
+http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
+http://yakult-hk.com/DDOS.zip,malware_download
 https://88.212.109.208.host.secureserver.net/?get=1,malware_download
+https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
 https://airtickts.com/,malware_download
 https://americanmanchester.org/americanserve/MSI_PRO.png,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
@@ -28,7 +36,6 @@ https://drive.google.com/uc?export=download&id=1EznN9ZSMbkarOKxIJQJNw-P_JNXqHJQz
 https://dynga.pl/common.dat,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/img_140608.png?alt=media&token=b5bd8e8c-f453-466e-8754-dcbea04e24cc,malware_download
 https://gboutros.howto.rocks/img_142806.png,malware_download
-https://grantexx.com/Pred.inf,malware_download
 https://grupohenry1.com/astillerohenry.com/imgnic_165817.png,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://ipfs.io/ipfs/QmbPifgvVgU4RSccJkUnzWTmDxZEoS2scDEQquqzg6GUat,malware_download
@@ -36,9 +43,9 @@ https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,malware_download
 https://lenotecadiarqua.it/Lbskesl.u32,malware_download
+https://mailglobalsbg.com/Supply%20order/SO_08072026.rar,malware_download
 https://plain-wnam-prod-public.komododecks.com/202608/05/JJEEAVpl6Blk3mkgEj7i/image.png,malware_download
-https://pocopaco.co.za/img_110418.png,malware_download
-https://res.cloudinary.com/t3swaz48/image/upload/v1785980074/img_213402_mk57ex.jpg,malware_download
+https://quick-load.vercel.app/api/settings/bootstraplinux,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
 https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
@@ -52,3 +59,4 @@ https://tuasesoriadigital.es/default.dat,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.dra.com.ve/wp-content/languages/plugins/ds5.txt,malware_download
 https://www.kenwillzltd.com/kenwillzltd.zip,malware_download
+https://www.nccommunication.be/images/y11.png,malware_download
