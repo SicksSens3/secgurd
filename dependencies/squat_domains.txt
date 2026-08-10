@@ -36,8 +36,10 @@ micro-soft.store
 microsoft-agnew.online
 microsoft-m365.online
 microsoft-milan.com
+microsoft-platform.ru
 microsoft-splashmaps.online
 microsoft-team.live
+microsoft-teams-co.in
 microsoft.rent
 microsoft123.net
 microsoft365australia.net
@@ -49,15 +51,18 @@ microsoftfrontierfirm.com
 microsofthttps.icu
 microsoftloyalty.com
 microsoftonline-sharepoint.online
+microsofts.su
 microsoftservicescontroller.com
 microsoftsevent.com
 microsoftsupcloud.com
 microsoftteamss.team
 microsolt.info
+microsuft.one
 msonedrive-cdn.info
 neweraoutlook.com
 offic365.net
 office365-13.de
+office365-sync.net
 office365-view-message.online
 office365helps.de
 office365onlline.com
@@ -73,6 +78,7 @@ onesrive.live
 otakuoutlook.org
 outllook.mx
 outlooak.site
+outlook-curriculum.cc
 outlook-streetangels.com
 outlook.com.mw
 outlookahmedabad830.help
@@ -92,6 +98,7 @@ primeoutlook.online
 primesportsoffice365.com
 protectionmicrosoft.com
 provider-microsoft.com
+recsa20sharepoint.blog
 rtsoutlook.com
 setup-outlook3.web.id
 sharepoint-by-hassan.com
