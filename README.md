@@ -28,6 +28,7 @@ It's built for the first hour of an investigation: *"something looks off on this
 - **Read-only by default.** Collects and reports; it doesn't change the system (the only write action, `-Cleanup`, requires explicit confirmation).
 - **Offline-friendly.** No internet required. No data leaves the host except the evidence zip you collect.
 - **Self-contained output.** Timestamped folder + auto-zipped archive.
+- **EDR-safe artifacts.** Live indicators pulled from a compromised host (encoded commands, malicious URLs, ClickFix/RunMRU one-liners, WMI script payloads) are *defanged* when written — `hxxp://` for URLs, a middle-dot inside high-signal tokens — so an on-host EDR (SentinelOne/Sophos) won't quarantine the evidence and kill the scan mid-run. Detection always runs on the raw value first; only the copy on disk is defanged, and it stays fully readable.
 
 ---
 

@@ -135,7 +135,50 @@ function Ex {
     return $s
 }
 
-$script:secgurdVersion = 'v2.2.1'
+# -- IOC defanger: neutralize live command / URL indicators BEFORE they are written to an artifact,
+#    so an on-host EDR (SentinelOne / Sophos) does not quarantine our OWN output and kill the scan
+#    session mid-run (observed: a real ClickFix one-liner in RunMRU tripped S1 as the file was
+#    written). Detection ALWAYS runs on the RAW value first; only the copy that lands on disk (or
+#    is echoed into a finding) is passed through Defang. A visible middle-dot (U+00B7) is inserted
+#    inside high-signal tokens and long base64 blobs, and URL schemes become hxxp:// - so the text
+#    stays fully readable for an analyst but no longer matches an EDR's static string / URL
+#    signatures.
+function Defang {
+    param([string]$s)
+    if ([string]::IsNullOrEmpty($s)) { return $s }
+    $dot = [char]0x00B7
+    $ic  = [Text.RegularExpressions.RegexOptions]::IgnoreCase
+    # Naturally idempotent: a token already broken by the middle-dot no longer matches, hxxp:// no
+    # longer matches http://, and base64 runs shortened below the 120-char threshold are left alone.
+    # So we deliberately do NOT short-circuit when the RAW input merely contains a middle-dot - a
+    # stray dot in collected data (localized text, attacker-set metadata) must never disable the
+    # defanging of the rest of that value.
+    # 1) URL schemes
+    $s = $s -replace '(?i)\bhttps://', 'hxxps://'
+    $s = $s -replace '(?i)\bhttp://',  'hxxp://'
+    $s = $s -replace '(?i)\bftp://',   'fxp://'
+    # 2) high-signal interpreter / download-cradle tokens - split with the middle-dot
+    $tokens = @('powershell','pwsh','mshta','wscript','cscript','rundll32','regsvr32','certutil',
+                'bitsadmin','msiexec','forfiles','installutil','FromBase64String','EncodedCommand',
+                'Invoke-Expression','Invoke-WebRequest','Invoke-RestMethod','DownloadString',
+                'DownloadFile','WebClient','Reflection.Assembly','Start-BitsTransfer')
+    foreach ($t in $tokens) {
+        $s = [regex]::Replace($s, [regex]::Escape($t),
+            { param($m) $m.Value.Substring(0,1) + $dot + $m.Value.Substring(1) }, $ic)
+    }
+    # 2b) IEX alias, word-bounded so 'iexplore' is left alone (preserve original case)
+    $s = [regex]::Replace($s, '(?i)\biex\b', { param($m) $m.Value.Substring(0,1) + $dot + $m.Value.Substring(1) }, $ic)
+    # 3) -enc / -encodedcommand flag, not bare -e (preserve original case)
+    $s = [regex]::Replace($s, '(?i)-e(nc(odedcommand)?)\b',
+        { param($m) $m.Value.Substring(0,2) + $dot + $m.Value.Substring(2) }, $ic)
+    # 4) long base64 blobs (the encoded payload itself) - break every 48 chars so the blob cannot be
+    #    matched or base64-decoded as one unit. Threshold 120 stays clear of 64-char hashes / GUIDs.
+    $s = [regex]::Replace($s, '[A-Za-z0-9+/]{120,}={0,2}',
+        { param($m) ($m.Value -replace '(.{48})', ('$1' + $dot)) })
+    return $s
+}
+
+$script:secgurdVersion = 'v2.2.2'
 
 # ---------------------------------------------
 
@@ -3120,7 +3163,15 @@ Save-Output "03_persistence_registry.txt" {
     foreach ($key in $runKeys) {
         Write-Section $key
         if (Test-Path $key) {
-            Get-ItemProperty -Path $key | Format-List
+            $kp = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+            if ($kp) {
+                foreach ($p in $kp.PSObject.Properties) {
+                    if ($p.Name -like 'PS*') { continue }   # PowerShell metadata, not a real value
+                    "{0} : {1}" -f $p.Name, (Defang ([string]$p.Value))
+                }
+            } else {
+                "  (no values)"
+            }
         } else {
             "  (key not found)"
         }
@@ -3141,6 +3192,7 @@ Save-Output "03_persistence_registry.txt" {
             if ($val -match $script:ObfCmdRx -or $val -match $script:LolbinCmdRx -or
                 $val -match $script:CredDumpRx -or $val -match $script:HiveTheftRx) {
                 $short = if ($val.Length -gt 160) { $val.Substring(0,160) + '...' } else { $val }
+                $short = Defang $short
                 Add-Finding 'HIGH' '03' (Ex "Autorun value looks like download-exec / paste-and-run: '$($prop.Name)' ^17 $short") '03_persistence_registry.txt'
             }
         }
@@ -3193,10 +3245,11 @@ Save-Output "03_runmru_clickfix.txt" {
                     Order   = $rank
                     Slot    = $slot
                     Sev     = $sev
-                    Command = $cmd
+                    Command = (Defang $cmd)
                 })
                 if ($sev -eq 'HIGH') {
                     $short = if ($cmd.Length -gt 160) { $cmd.Substring(0,160) + '...' } else { $cmd }
+                    $short = Defang $short
                     Add-Finding 'HIGH' '03' (Ex "RunMRU (Win+R) command looks like ClickFix/paste-and-run ($($h.Acct)) ^17 $short") '03_runmru_clickfix.txt'
                 } elseif ($sev -eq 'MED') {
                     Add-Finding 'MED' '03' (Ex "Unusually long RunMRU (Win+R) command ($($h.Acct)) - review for paste-and-run") '03_runmru_clickfix.txt'
@@ -3226,7 +3279,7 @@ Save-Output "03_scheduled_tasks.txt" {
     $allTasks |
         Where-Object { $_.TaskPath -notlike '\Microsoft\*' } |
         Select-Object TaskName, TaskPath, State,
-            @{N='Actions';E={($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '}},
+            @{N='Actions';E={ Defang (($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; ') }},
             @{N='Triggers';E={($_.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join '; '}} |
         Format-Table -AutoSize
 
@@ -3246,7 +3299,7 @@ Save-Output "03_scheduled_tasks.txt" {
             LastRun    = if ($info) { $info.LastRunTime } elseif ($isMs) { '(skipped)' } else { $null }
             NextRun    = if ($info) { $info.NextRunTime } else { $null }
             LastResult = if ($info) { $info.LastTaskResult } else { $null }
-            Actions    = ($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' | '
+            Actions    = Defang (($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' | ')
             Author     = $_.Principal.UserId
         }
     } | Format-Table -AutoSize
@@ -3269,7 +3322,7 @@ Save-Output "03_scheduled_tasks.txt" {
                     Task   = $t.TaskName
                     Path   = $t.TaskPath
                     Reason = ($reason -join ', ')
-                    Action = $cmd
+                    Action = (Defang $cmd)
                 }
             }
         }
@@ -3285,7 +3338,7 @@ Save-Output "03_services.txt" {
     Write-Section "RUNNING SERVICES WITH BINARY PATH"
     Get-CimInstance Win32_Service |
         Where-Object { $_.State -eq 'Running' } |
-        Select-Object Name, DisplayName, StartMode, State, PathName, StartName |
+        Select-Object Name, DisplayName, StartMode, State, @{N='PathName';E={Defang ([string]$_.PathName)}}, StartName |
         Format-Table -AutoSize
 
     Write-Section "RECENTLY MODIFIED SERVICE BINARIES (within $($script:DaysBack) days)"
@@ -3378,12 +3431,12 @@ Save-Output "03_services.txt" {
                 Add-Finding 'HIGH' '03' (Ex "Service '$($svc.Name)' runs from a writable path ^17 $p") '03_services.txt'
             }
             if ($unquoted) {
-                Add-Finding 'MED' '03' (Ex "Service '$($svc.Name)' has an unquoted path with spaces (hijackable): $raw") '03_services.txt'
+                Add-Finding 'MED' '03' (Ex "Service '$($svc.Name)' has an unquoted path with spaces (hijackable): $(Defang $raw)") '03_services.txt'
             }
             [PSCustomObject]@{
                 Service  = $svc.Name
                 Reason   = ($reason -join ', ')
-                ImagePath= $raw
+                ImagePath= (Defang $raw)
                 StartName= $svc.StartName
             }
         }
@@ -3427,12 +3480,15 @@ Save-Output "03_wmi_persistence.txt" {
     Write-Section "WMI EVENT SUBSCRIPTIONS"
 
     Write-Section "  EventFilters"
+    # Query (WQL) is a lower-signal carrier but defanged for consistency.
     Get-CimInstance -Namespace root\subscription -ClassName __EventFilter -ErrorAction SilentlyContinue |
-        Select-Object Name, Query, QueryLanguage | Format-List
+        Select-Object Name, Query, QueryLanguage | Format-List | Out-String -Width 4096 | ForEach-Object { Defang $_ }
 
     Write-Section "  EventConsumers"
+    # CommandLineEventConsumer.CommandLineTemplate and ActiveScriptEventConsumer.ScriptText are the
+    # raw fileless-persistence payloads - defang the whole dump so writing it can't trip the EDR.
     $consumers = Get-CimInstance -Namespace root\subscription -ClassName __EventConsumer -ErrorAction SilentlyContinue
-    $consumers | Select-Object * | Format-List
+    $consumers | Select-Object * | Format-List | Out-String -Width 4096 | ForEach-Object { Defang $_ }
 
     Write-Section "  FilterToConsumerBindings"
     $bindings = Get-CimInstance -Namespace root\subscription -ClassName __FilterToConsumerBinding -ErrorAction SilentlyContinue
@@ -3505,8 +3561,8 @@ Save-Output "03_com_hijacking_check.txt" {
                 if ($hkcuInproc -or $hkcuLocal) {
                     [PSCustomObject]@{
                         CLSID         = $clsid
-                        HKCU_InprocDll = $hkcuInproc.'(default)'
-                        HKCU_LocalExe  = $hkcuLocal.'(default)'
+                        HKCU_InprocDll = (Defang ([string]$hkcuInproc.'(default)'))
+                        HKCU_LocalExe  = (Defang ([string]$hkcuLocal.'(default)'))
                     }
                 }
             }
@@ -3541,12 +3597,12 @@ Save-Output "03_advanced_persistence.txt" {
         if ($props.Debugger -or $props.GlobalFlag -or $props.VerifierDlls) {
             [PSCustomObject]@{
                 Image       = $_.PSChildName
-                Debugger    = $props.Debugger
+                Debugger    = (Defang ([string]$props.Debugger))
                 GlobalFlag  = $props.GlobalFlag
-                VerifierDlls= $props.VerifierDlls
+                VerifierDlls= (Defang ([string]$props.VerifierDlls))
             }
             if ($props.Debugger) {
-                Add-Finding 'HIGH' '03' (Ex "IFEO debugger hijack on $($_.PSChildName) ^17 $($props.Debugger)") '03_advanced_persistence.txt'
+                Add-Finding 'HIGH' '03' (Ex "IFEO debugger hijack on $($_.PSChildName) ^17 $(Defang ([string]$props.Debugger))") '03_advanced_persistence.txt'
             }
         }
     } | Format-Table -AutoSize
@@ -3587,7 +3643,7 @@ Save-Output "03_advanced_persistence.txt" {
             # flag an IFEO debugger specifically on an accessibility binary (the classic backdoor)
             $accDbg = (Get-ItemProperty (Join-Path $ifeoRoot $a) -ErrorAction SilentlyContinue).Debugger
             if ($accDbg) {
-                Add-Finding 'HIGH' '03' (Ex "Accessibility backdoor: IFEO debugger on $a ^17 $accDbg") '03_advanced_persistence.txt'
+                Add-Finding 'HIGH' '03' (Ex "Accessibility backdoor: IFEO debugger on $a ^17 $(Defang ([string]$accDbg))") '03_advanced_persistence.txt'
             }
         }
     }
@@ -3596,12 +3652,12 @@ Save-Output "03_advanced_persistence.txt" {
     # Shell should be 'explorer.exe'; Userinit should be 'C:\Windows\system32\userinit.exe,'.
     # Extra entries here run at every interactive logon.
     $wl = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon' -ErrorAction SilentlyContinue
-    $wl | Select-Object Shell, Userinit, Taskman, AppSetup, GinaDLL | Format-List
+    $wl | Select-Object @{N='Shell';E={Defang ([string]$_.Shell)}}, @{N='Userinit';E={Defang ([string]$_.Userinit)}}, @{N='Taskman';E={Defang ([string]$_.Taskman)}}, @{N='AppSetup';E={Defang ([string]$_.AppSetup)}}, @{N='GinaDLL';E={Defang ([string]$_.GinaDLL)}} | Format-List
     if ($wl.Shell -and $wl.Shell -notmatch '^explorer\.exe\s*$') {
-        Add-Finding 'HIGH' '03' (Ex "Winlogon Shell is not default explorer.exe: $($wl.Shell)") '03_advanced_persistence.txt'
+        Add-Finding 'HIGH' '03' (Ex "Winlogon Shell is not default explorer.exe: $(Defang ([string]$wl.Shell))") '03_advanced_persistence.txt'
     }
     if ($wl.Userinit -and $wl.Userinit -notmatch 'userinit\.exe,?\s*$') {
-        Add-Finding 'HIGH' '03' (Ex "Winlogon Userinit has extra entries: $($wl.Userinit)") '03_advanced_persistence.txt'
+        Add-Finding 'HIGH' '03' (Ex "Winlogon Userinit has extra entries: $(Defang ([string]$wl.Userinit))") '03_advanced_persistence.txt'
     }
 
     Write-Section "APPINIT_DLLS (loads into every GUI process)"
@@ -3611,11 +3667,11 @@ Save-Output "03_advanced_persistence.txt" {
         if ($w) {
             [PSCustomObject]@{
                 Hive            = $hive
-                AppInit_DLLs    = $w.AppInit_DLLs
+                AppInit_DLLs    = (Defang ([string]$w.AppInit_DLLs))
                 LoadAppInit_DLLs= $w.LoadAppInit_DLLs
             }
             if ($w.AppInit_DLLs -and $w.AppInit_DLLs.Trim() -ne '') {
-                Add-Finding 'HIGH' '03' (Ex "AppInit_DLLs set (loads into every process): $($w.AppInit_DLLs)") '03_advanced_persistence.txt'
+                Add-Finding 'HIGH' '03' (Ex "AppInit_DLLs set (loads into every process): $(Defang ([string]$w.AppInit_DLLs))") '03_advanced_persistence.txt'
             }
         }
     }
@@ -3743,7 +3799,7 @@ Save-Output "03_remote_access_tools.txt" {
                 "  user.config present - contains the configured relay/C2 host mapping:"
                 try {
                     Select-String -Path $cfg -Pattern 'https?://|\b\d{1,3}(\.\d{1,3}){3}\b|\.controlhub\.|\.screenconnect\.' -ErrorAction SilentlyContinue |
-                        Select-Object -First 10 | ForEach-Object { "    $($_.Line.Trim())" }
+                        Select-Object -First 10 | ForEach-Object { "    " + (Defang ($_.Line.Trim())) }
                 } catch {}
                 Add-Finding 'HIGH' '03' (Ex "ScreenConnect client instance found: $($_.Name) ^09 verify relay host in user.config is authorized") '03_remote_access_tools.txt'
             }
@@ -3770,7 +3826,7 @@ Save-Output "03_bits_jobs.txt" {
             $writable = '(?i)\\(Temp|AppData|Users\\Public|ProgramData|Downloads|Desktop)\\'
             foreach ($j in $jobs) {
                 $files = @($j.FileList)
-                $srcList = ($files | ForEach-Object { $_.RemoteName }) -join ' ; '
+                $srcList = Defang (($files | ForEach-Object { $_.RemoteName }) -join ' ; ')
                 $dstList = ($files | ForEach-Object { $_.LocalName }) -join ' ; '
                 [PSCustomObject]@{
                     JobId       = $j.JobId
@@ -3785,7 +3841,7 @@ Save-Output "03_bits_jobs.txt" {
                 foreach ($f in $files) {
                     $u = $f.RemoteName; $d = $f.LocalName
                     if ($u -match '(?i)^https?://\d{1,3}(\.\d{1,3}){3}') {
-                        Add-Finding 'HIGH' '03' (Ex "BITS job '$($j.DisplayName)' downloads from a raw IP ^17 $u") '03_bits_jobs.txt'
+                        Add-Finding 'HIGH' '03' (Ex "BITS job '$($j.DisplayName)' downloads from a raw IP ^17 $(Defang $u)") '03_bits_jobs.txt'
                     }
                     if ($d -and ($d -match $writable) -and ($d -notmatch $script:TrustedPathRx)) {
                         Add-Finding 'HIGH' '03' (Ex "BITS job '$($j.DisplayName)' writes to a writable path ^17 $d") '03_bits_jobs.txt'
@@ -3810,12 +3866,12 @@ Save-Output "03_bits_jobs.txt" {
     $ba = Join-Path $env:SystemRoot 'System32\bitsadmin.exe'
     if (Test-Path $ba) {
         $raw = (& $ba /list /allusers /verbose 2>&1 | Out-String)
-        $raw
+        Defang $raw
         foreach ($line in ($raw -split "`r?`n")) {
             if ($line -match '(?i)NotifyCmdLine:\s*(.+\S)') {
                 $ncl = $matches[1].Trim()
                 if ($ncl -and $ncl -notmatch '(?i)^\{?none\}?$') {
-                    Add-Finding 'HIGH' '03' (Ex "BITS job has a NotifyCmdLine (runs on completion) ^17 $ncl") '03_bits_jobs.txt'
+                    Add-Finding 'HIGH' '03' (Ex "BITS job has a NotifyCmdLine (runs on completion) ^17 $(Defang $ncl)") '03_bits_jobs.txt'
                 }
             }
         }
@@ -3828,7 +3884,7 @@ Save-Output "03_bits_jobs.txt" {
         LogName   = 'Microsoft-Windows-Bits-Client/Operational'
         StartTime = (Get-Date).AddDays(-$script:DaysBack)
     } -MaxEvents 200 -ErrorAction SilentlyContinue |
-        Select-Object TimeCreated, Id, @{N='Detail';E={($_.Message -replace '\s+',' ').Trim()}} |
+        Select-Object TimeCreated, Id, @{N='Detail';E={ Defang (($_.Message -replace '\s+',' ').Trim()) }} |
         Format-Table -AutoSize -Wrap
 }
 
