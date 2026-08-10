@@ -178,7 +178,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.2.2'
+$script:secgurdVersion = 'v2.2.3'
 
 # ---------------------------------------------
 
@@ -3135,6 +3135,13 @@ Save-Output "02_rdp_remote_access.txt" {
 #  3. PERSISTENCE
 
 # ---------------------------------------------
+
+# Deploy tell-tale: section 03 is the module whose artifacts are IOC-defanged (so a live payload on
+# disk can't trip the on-host EDR). Print a one-line marker when 03 runs so an operator can confirm
+# at a glance that the DEFANGED build - not a stale copy - is the one executing on the endpoint.
+if ($script:SelectedModules['03']) {
+    Write-Host ("  [DF] section 03 artifacts defanged - build $script:secgurdVersion") -ForegroundColor Cyan
+}
 
 Save-Output "03_persistence_registry.txt" {
     $runKeys = @(
