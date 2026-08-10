@@ -37,6 +37,12 @@
     the Task Scheduler service, so doing it for all tasks can take many minutes (or stall) on a
     busy or remote host. Off by default: secgurd still lists every task, but only resolves run
     times for non-Microsoft tasks (the ones that matter in triage).
+.PARAMETER WithBitsAdmin
+    Enumerate BITS jobs' NotifyCmdLine (a command run when a transfer completes - a BITS
+    persistence indicator, MITRE T1197) via bitsadmin.exe. bitsadmin is a LOLBIN that endpoint EDR
+    (e.g. SentinelOne) TERMINATES on execution, killing the scan, so it is OFF by default. Turn it
+    on only in a malware lab or on an EDR-excluded host; the native BITS active-jobs listing and the
+    BITS event log are collected either way.
 .PARAMETER IOCHashes
     Path to a file of known-bad hashes (MD5, SHA-1, or SHA-256; one per line, optional
     ",label"). secgurd
@@ -179,7 +185,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.2.4'
+$script:secgurdVersion = 'v2.2.5'
 
 # ---------------------------------------------
 
@@ -532,6 +538,7 @@ function Show-Help {
     Write-Host "    -WithOwners           Include process owners in 06_process_tree (slower)" -ForegroundColor Gray
     Write-Host "    -WithSignatures       Verify Authenticode signatures (slow, may stall offline)" -ForegroundColor Gray
     Write-Host "    -WithTaskInfo         Resolve run times for ALL tasks incl. Microsoft (slow; off by default)" -ForegroundColor Gray
+    Write-Host "    -WithBitsAdmin        Enumerate BITS NotifyCmdLine via bitsadmin.exe (LOLBIN; OFF by default - EDR may kill the scan)" -ForegroundColor Gray
     Write-Host "    -IOCHashes <file>     Match on-disk binaries vs an MD5/SHA-1/SHA-256 IOC list" -ForegroundColor Gray
     Write-Host "    -CommunityIOCHashes <file>  Explicit path to the community hash list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -CommunityMalUrls <file>    Explicit path to the community malicious-URL list (else auto-found next to script)" -ForegroundColor Gray
