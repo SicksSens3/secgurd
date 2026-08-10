@@ -88,6 +88,7 @@ param(
     [switch]$WithOwners,
     [switch]$WithSignatures,
     [switch]$WithTaskInfo,
+    [switch]$WithBitsAdmin,
     [string]$IOCHashes,
     [string]$CommunityIOCHashes,
     [string]$CommunityMalUrls,
@@ -178,7 +179,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.2.3'
+$script:secgurdVersion = 'v2.2.4'
 
 # ---------------------------------------------
 
@@ -201,6 +202,7 @@ $script:RunLineActive = $false
 $script:WithOwners = [bool]$WithOwners
 $script:WithSignatures = [bool]$WithSignatures
 $script:WithTaskInfo = [bool]$WithTaskInfo
+$script:WithBitsAdmin = [bool]$WithBitsAdmin
 $script:IOCHashFile = $null
 $script:IOCHashSet = $null
 $script:IOCHashCount = 0
@@ -3870,8 +3872,13 @@ Save-Output "03_bits_jobs.txt" {
     Write-Section "BITS JOBS incl. NotifyCmdLine (bitsadmin /list /allusers /verbose)"
     # bitsadmin is deprecated but is the only built-in that prints NotifyCmdLine - THE persistence
     # indicator (a command line executed when the job completes).
+    # NotifyCmdLine (a command that runs when a BITS job completes) is THE BITS-persistence indicator,
+    # but the only built-in that prints it is bitsadmin.exe - a LOLBIN (T1219/T1197) that on-host EDR
+    # (e.g. SentinelOne) TERMINATES on execution, killing the whole scan. Confirmed on live endpoints:
+    # spawning bitsadmin is what got secgurd's process killed mid-run. So we do NOT run it by default;
+    # pass -WithBitsAdmin to force this section in a lab / EDR-excluded context.
     $ba = Join-Path $env:SystemRoot 'System32\bitsadmin.exe'
-    if (Test-Path $ba) {
+    if ($script:WithBitsAdmin -and (Test-Path $ba)) {
         $raw = (& $ba /list /allusers /verbose 2>&1 | Out-String)
         Defang $raw
         foreach ($line in ($raw -split "`r?`n")) {
@@ -3882,6 +3889,8 @@ Save-Output "03_bits_jobs.txt" {
                 }
             }
         }
+    } elseif (-not $script:WithBitsAdmin) {
+        "(NotifyCmdLine enumeration skipped - bitsadmin.exe is a LOLBIN that EDR terminates on execution; pass -WithBitsAdmin to force it in a trusted / excluded context)"
     } else {
         "(bitsadmin.exe not present)"
     }
