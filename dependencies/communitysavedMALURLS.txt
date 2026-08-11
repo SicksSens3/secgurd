@@ -3,28 +3,24 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-10 08:13:43 UTC
+# Updated: 2026-08-11 07:45:29 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
-http://31-56-209-153.cprapid.com/nz/nz.arm6,malware_download
+http://31-56-209-153.cprapid.com/nz/nz.i686,malware_download
 http://69cnc.duckdns.org/bins/putita.m68k,malware_download
 http://archivoscrosoft.com/MSI.png,malware_download
-http://baltos.online/asset/update.dat,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
 http://genddos.st/bachekuni/ohshit.arm5,malware_download
-http://jkqhdbbbqwiujkaz.hopto.org/nz/nz.arm7,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
-http://lol.exodustrala.dpdns.org/xlumen/lkxstress.arm64,malware_download
 http://mrsweaterltd.com/o85pdfv8yi.png,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://purmed.ro/upwork/Odours.prx,malware_download
 http://reavercncv4.duckdns.org/boatnet.arm6,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
-http://s3o65awrf56.net/nz/nz.arm,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
-http://wqok85qtq.net/nz.sh,malware_download
-http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
+http://wqok85qtq.net/nz/nz.arc,malware_download
+http://www.69cnc.duckdns.org/bins/putita.x86,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://88.212.109.208.host.secureserver.net/?get=1,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
@@ -32,12 +28,14 @@ https://airtickts.com/,malware_download
 https://americanmanchester.org/americanserve/MSI_PRO.png,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
-https://cqylt.net/?e=v,malware_download
+https://del.sou.pp.ua/install.sh,malware_download
 https://deliverymailreport.co.za/MSI_033332.png,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
 https://drive.google.com/uc?export=download&id=1EznN9ZSMbkarOKxIJQJNw-P_JNXqHJQz,malware_download
+https://duct-master.com/00/newMSI_PRO.png,malware_download
 https://dynga.pl/common.dat,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/img_140608.png?alt=media&token=b5bd8e8c-f453-466e-8754-dcbea04e24cc,malware_download
+https://grantexx.com/Pred.inf,malware_download
 https://grupohenry1.com/astillerohenry.com/imgnic_165817.png,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://ipfs.io/ipfs/QmbPifgvVgU4RSccJkUnzWTmDxZEoS2scDEQquqzg6GUat,malware_download
@@ -46,7 +44,7 @@ https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,malware_download
 https://lenotecadiarqua.it/Lbskesl.u32,malware_download
-https://plain-wnam-prod-public.komododecks.com/202608/05/kk9ihQ9ebT47mHmrYHEr/image.png,malware_download
+https://plain-wnam-prod-public.komododecks.com/202608/09/xQah941ojbxnpRQKa4zi/image.png,malware_download
 https://quick-load.vercel.app/api/settings/bootstraplinux,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
@@ -56,10 +54,10 @@ https://sunix-technology.com/admin/niceimg_122852.png,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
-https://timestampasa.howto.rocks/img_075249.png,malware_download
 https://tuasesoriadigital.es/default.dat,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.dra.com.ve/wp-content/languages/plugins/ds5.txt,malware_download
 https://www.hqsblog.com/wordpress/wp-content/plugins/zxzxzx/stego_p0ci0zln28.png,malware_download
 https://www.kenwillzltd.com/kenwillzltd.zip,malware_download
+https://www.nccommunication.be/images/y11.png,malware_download
 https://xunyyymdfv.oss-cn-hongkong.aliyuncs.com/uuyc.4.1.0.zip,malware_download
