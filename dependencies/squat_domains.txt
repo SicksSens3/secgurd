@@ -11,6 +11,8 @@ contacts-microsoft.com
 corp-microsoft.com
 djsharepoint.com
 djsharepoint.net
+dmbllconmicrosoft.agency
+dmbllconmicrosoft.solutions
 docusign.fit
 docusignaccess.com
 docusignedhere.com
@@ -50,6 +52,7 @@ microsoft365norfolk.co.uk
 microsoftaifoundry.com
 microsoftapproval.net
 microsoftcareershub.com
+microsoftco.org
 microsoftfrontierfirm.com
 microsofthttps.icu
 microsoftloyalty.com
@@ -65,10 +68,12 @@ msonedrive-cdn.info
 neweraoutlook.com
 offic365.net
 office365-13.de
+office365-jpn.com
 office365-sync.net
 office365-view-message.online
 office365helps.de
 office365onlline.com
+office365onllne.com
 office365uae.com
 ofice365.org
 onedrive.biz.id
@@ -80,6 +85,7 @@ onesportsoffice365.com
 onesrive.live
 otakuoutlook.org
 ouplook.com
+outfityouroutlook.org
 outllook.mx
 outlooak.site
 outlook-curriculum.cc
@@ -106,8 +112,10 @@ provider-microsoft.com
 recsa20sharepoint.blog
 rtsoutlook.com
 setup-outlook3.web.id
+sharedfileoutlook.us
 sharepoint-by-hassan.com
 sharepoint-sharing.com
+sharkpoint.uk
 shmicapalmermontanash001outlook.org
 staging-outlook.online
 stateoutlooksurvey.org
