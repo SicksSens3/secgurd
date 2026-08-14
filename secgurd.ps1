@@ -43,6 +43,13 @@
     (e.g. SentinelOne) TERMINATES on execution, killing the scan, so it is OFF by default. Turn it
     on only in a malware lab or on an EDR-excluded host; the native BITS active-jobs listing and the
     BITS event log are collected either way.
+.PARAMETER BrowserDaysBack
+    Lookback window in days for module 10's browser-history detections and search queries.
+    Default 7. Separate from -DaysBack (which governs event logs and file collectors) because
+    browser history goes back months and, for lining a detection up against an alert, only the
+    days around the alert matter. A flagged URL whose visit time cannot be decoded is KEPT
+    regardless of the window - absence of a timestamp is not evidence that it is old - and the
+    per-profile file reports how many were kept that way.
 .PARAMETER IOCHashes
     Path to a file of known-bad hashes (MD5, SHA-1, or SHA-256; one per line, optional
     ",label"). secgurd
@@ -100,6 +107,7 @@ param(
     [string]$CommunityMalUrls,
     [string]$SquatDomains,
     [int]$DaysBack = 30,
+    [int]$BrowserDaysBack = 7,
     [string]$Find,
     [switch]$MakeS1Paste,
     [switch]$Help
@@ -185,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.2.5'
+$script:secgurdVersion = 'v2.3.0'
 
 # ---------------------------------------------
 
@@ -324,6 +332,11 @@ function Get-CmdLineFindings {
 if ($DaysBack -lt 1) { $DaysBack = 1 }
 if ($DaysBack -gt 3650) { $DaysBack = 3650 }
 $script:DaysBack = $DaysBack
+# Browser-history window is separate from $DaysBack and settable from the menu (t > b), so it lives
+# in script scope for the same reason: the menu writes it after the param block has already run.
+if ($BrowserDaysBack -lt 1) { $BrowserDaysBack = 1 }
+if ($BrowserDaysBack -gt 3650) { $BrowserDaysBack = 3650 }
+$script:BrowserDaysBack = $BrowserDaysBack
 
 # Optional output filter: when set, every artifact (and finding) is reduced to only the
 # lines/items that contain one of these strings. Seeded from -Find; also settable in the menu
@@ -544,6 +557,7 @@ function Show-Help {
     Write-Host "    -CommunityMalUrls <file>    Explicit path to the community malicious-URL list (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -SquatDomains <file>        Explicit path to the openSquat squat-domain watchlist (else auto-found next to script)" -ForegroundColor Gray
     Write-Host "    -DaysBack <N>         Lookback window for time-bounded collectors (default 30)" -ForegroundColor Gray
+    Write-Host "    -BrowserDaysBack <N>  Lookback window for browser detections + search queries (default 7)" -ForegroundColor Gray
     Write-Host "    -Find <terms>         Filter ALL output to lines/items containing any term (comma-separated, e.g. SmartPDF,evil.exe)" -ForegroundColor Gray
     Write-Host "    -MakeS1Paste          Copy a compressed (gzip+Base64) paste-ready version for the S1 shell" -ForegroundColor Gray
     Write-Host "    -Help                 Show this help" -ForegroundColor Gray
@@ -554,7 +568,7 @@ function Show-Help {
     Write-Host "    qa / net / ps         Apply a preset" -ForegroundColor Gray
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
     Write-Host "    d                     Dependencies sub-menu: IOC hashes / malicious URLs / squat domains (load/paste/list/toggle)" -ForegroundColor Gray
-    Write-Host "    t                     Set time / lookback window in days (time-bounded collectors)" -ForegroundColor Gray
+    Write-Host "    t                     Time windows sub-menu: [t] scan lookback (events/files/timeline), [b] browser history (module 10 + searches)" -ForegroundColor Gray
     Write-Host "    f                     Find/filter: scope all output to name(s)/string(s), comma-separated (blank clears)" -ForegroundColor Gray
     Write-Host "    p                     Pastable for remote shells - compressed paste [1-3] or web launcher [4]" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
@@ -1578,6 +1592,78 @@ function Invoke-DependenciesMenu {
     }
 }
 
+function Read-DaysValue {
+    # Prompt for a lookback value in days, shared by both windows in the Time sub-menu.
+    # Returns: a positive [int] = the new clamped value, 0 = leave unchanged (blank input),
+    # -1 = input wasn't a number (caller says so rather than silently keeping the old value).
+    param([string]$Prompt, [int]$Current)
+    Write-Host ""
+    Write-Host "  $Prompt" -ForegroundColor Cyan
+    Write-Host "  Current: $($Current)d    pick 1-3650, or Enter to keep" -ForegroundColor DarkGray
+    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+    $in = (Read-Host).Trim()
+    if ($in -eq '') { return 0 }
+    if ($in -notmatch '^\d+$') { return -1 }
+    $v = [int]$in
+    if ($v -lt 1) { $v = 1 }
+    if ($v -gt 3650) { $v = 3650 }
+    return $v
+}
+
+function Invoke-TimeMenu {
+    # Sub-menu for the two lookback windows. They're grouped because they answer the same question
+    # ("how far back?") but are deliberately independent: the scan lookback governs event logs, file
+    # collectors and the timeline, while the browser window governs module 10's detections and
+    # search queries. Browser history goes back months, so a 30-day scan window would drown an alert
+    # you're trying to match; a 7-day browser window keeps that view on the days that matter.
+    # Returns the last status message for the main menu to echo (or $null).
+    $msg = $null
+    $row = {
+        param($key, $label, $note)
+        Write-Host "   " -NoNewline
+        Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
+        Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f $key) -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-38}" -f $label) -ForegroundColor White -NoNewline
+        Write-Host $note -ForegroundColor DarkGray
+    }
+    while ($true) {
+        Clear-Host; Show-secgurdBannerCompact
+        Write-Host ""
+        if ($msg) { Write-Host "   $msg" -ForegroundColor Cyan; Write-Host ""; $msg = $null }
+        Write-Host "  TIME WINDOWS - how far back each collector reaches" -ForegroundColor Cyan
+        Write-Host "  Set independently: browser history goes back months, but when you're matching" -ForegroundColor DarkGray
+        Write-Host "  a detection to an alert time, only the days around it usually matter." -ForegroundColor DarkGray
+        Write-Host ""
+        & $row 't' 'Scan lookback (events, files, timeline)' "(currently $($script:DaysBack)d)"
+        & $row 'b' 'Browser history (module 10 + searches)' "(currently $($script:BrowserDaysBack)d)"
+        Write-Host ""
+        Write-Host "    [t/b] set a window    [Enter] back to main menu" -ForegroundColor DarkGray
+        Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+        $choice = (Read-Host).Trim().ToLower()
+        switch ($choice) {
+            't' {
+                $v = Read-DaysValue 'Scan lookback in days (event logs, file collectors, timeline):' $script:DaysBack
+                if     ($v -gt 0) { $script:DaysBack = $v; $msg = "Scan lookback set to $($script:DaysBack)d" }
+                elseif ($v -eq 0) { $msg = "Scan lookback unchanged: $($script:DaysBack)d" }
+                else              { $msg = "Not a number - scan lookback unchanged ($($script:DaysBack)d)" }
+            }
+            'b' {
+                $v = Read-DaysValue 'Browser-history window in days (module 10 detections + search queries):' $script:BrowserDaysBack
+                if     ($v -gt 0) { $script:BrowserDaysBack = $v; $msg = "Browser history window set to $($script:BrowserDaysBack)d" }
+                elseif ($v -eq 0) { $msg = "Browser window unchanged: $($script:BrowserDaysBack)d" }
+                else              { $msg = "Not a number - browser window unchanged ($($script:BrowserDaysBack)d)" }
+            }
+            default {
+                # 'b' is the browser window here, so it can't double as "back" the way it does in
+                # the dependencies sub-menu - Enter (or q/x) is the way out.
+                if ($choice -in @('q', 'x', 'back', '')) { return $msg }
+                $msg = "Pick t, b, or Enter to go back."
+            }
+        }
+    }
+}
+
 function Show-ModuleMenu {
     # Show the interactive menu whenever we can read keyboard input. We intentionally do NOT
     # treat S1's remote shell (ServerRemoteHost) as non-interactive - it supports Read-Host
@@ -1716,8 +1802,8 @@ function Show-ModuleMenu {
         Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
         Write-Host "  " -NoNewline
         Write-Host ("{0,-4}" -f 't') -ForegroundColor Yellow -NoNewline
-        Write-Host ("{0,-36}" -f 'Time / lookback window (days)') -ForegroundColor White -NoNewline
-        Write-Host "(currently $($script:DaysBack)d)" -ForegroundColor DarkGray
+        Write-Host ("{0,-36}" -f 'Time windows sub-menu (days)') -ForegroundColor White -NoNewline
+        Write-Host "(scan $($script:DaysBack)d, browser $($script:BrowserDaysBack)d)" -ForegroundColor DarkGray
 
         Write-Host "   " -NoNewline
         Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
@@ -1814,23 +1900,8 @@ function Show-ModuleMenu {
             continue
         }
 
-        if ($cmd -eq 't') {
-            Write-Host ""
-            Write-Host "  Lookback window in days (how far back time-bounded collectors reach):" -ForegroundColor Cyan
-            Write-Host "  Current: $($script:DaysBack)d    pick 1-3650, or Enter to keep" -ForegroundColor DarkGray
-            Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-            $dIn = (Read-Host).Trim()
-            if ($dIn -eq '') {
-                $pendingMsg = "Lookback unchanged: $($script:DaysBack)d"
-            } elseif ($dIn -match '^\d+$') {
-                $val = [int]$dIn
-                if ($val -lt 1) { $val = 1 }
-                if ($val -gt 3650) { $val = 3650 }
-                $script:DaysBack = $val
-                $pendingMsg = "Lookback window set to $($script:DaysBack)d"
-            } else {
-                $pendingMsg = "Not a number - lookback unchanged ($($script:DaysBack)d)"
-            }
+        if ($cmd -eq 't' -or $cmd -eq 'time') {
+            $pendingMsg = Invoke-TimeMenu
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -2559,10 +2630,23 @@ function Add-BrowserFlag {
     # caught by both a built-in heuristic AND a dependency list - would produce multiple identical
     # correlation rows. Squat precedence is handled at the call site (module 10 skips the heuristic
     # add when the same URL is a squat hit), so this only collapses genuine repeats.
-    param([string]$User, [string]$Browser, [string]$HostName, [string]$Severity, [string]$Reason, [string]$Url)
+    #
+    # -LastVisit carries the visit time decoded from the history DB (see Get-HistoryVisitTimeUtc),
+    # so a detection can be lined up against the time an alert fired. On a de-duplicated repeat we
+    # keep the LATEST time instead of discarding it - when the question is "was this host touched
+    # around 14:05?", the most recent visit is the one that answers it.
+    param([string]$User, [string]$Browser, [string]$HostName, [string]$Severity, [string]$Reason,
+          [string]$Url, [object]$LastVisit = $null)
     $key = "$User|$HostName|$Reason".ToLower()
     if ($script:BrowserFlaggedSeen.Add($key)) {
-        [void]$script:BrowserFlagged.Add([PSCustomObject]@{ User=$User; Browser=$Browser; Host=$HostName; Severity=$Severity; Reason=$Reason; Url=$Url })
+        [void]$script:BrowserFlagged.Add([PSCustomObject]@{ User=$User; Browser=$Browser; Host=$HostName; Severity=$Severity; Reason=$Reason; Url=$Url; LastVisit=$LastVisit })
+    } elseif ($LastVisit -is [datetime]) {
+        # Already recorded under this (user, host, reason) - fold in a newer time if we have one.
+        foreach ($prev in $script:BrowserFlagged) {
+            if ("$($prev.User)|$($prev.Host)|$($prev.Reason)".ToLower() -ne $key) { continue }
+            if (-not ($prev.LastVisit -is [datetime]) -or $LastVisit -gt $prev.LastVisit) { $prev.LastVisit = $LastVisit }
+            break
+        }
     }
 }
 
@@ -2818,7 +2902,13 @@ function Save-Output {
             return
         }
 
-        $result | Out-File -FilePath $file -Encoding UTF8 -Force
+        # -Width 4096 is NOT cosmetic. Out-File defaults its width to the host console (and to 80
+        # columns when there is no console - a redirected pipeline, a remote shell, a scheduled
+        # task), and any Format-Table in $result is rendered at that width, so wide table rows were
+        # being cut off in the saved artifact. It also removes a genuinely confusing inconsistency:
+        # the find-filter path above already renders through Out-String -Width 4096, which meant an
+        # artifact could come out MORE complete with -Find active than without it.
+        $result | Out-File -FilePath $file -Encoding UTF8 -Force -Width 4096
         $sw.Stop()
         $secs = ('{0,6:N1}s' -f ($sw.ElapsedMilliseconds / 1000))
         if ($script:RunLineActive) {
@@ -2925,7 +3015,7 @@ Save-Output "02_local_users.txt" {
     Write-Section "LOCAL USERS"
     $localUsers = Get-LocalUser
     $localUsers | Select-Object Name, @{N='SID';E={$_.SID.Value}}, Enabled, LastLogon,
-        PasswordLastSet, PasswordNeverExpires, Description | Format-Table -AutoSize
+        PasswordLastSet, PasswordNeverExpires, Description | Format-Table -AutoSize -Wrap
 
     # Flag users whose password was set within the lookback window (a decent proxy for creation)
 
@@ -3013,7 +3103,7 @@ Save-Output "02_logon_history.txt" {
             SourceIP    = $d['IpAddress']
         }
     } |
-    Format-Table -AutoSize
+    Format-Table -AutoSize -Wrap
 }
 
 Save-Output "02_rdp_remote_access.txt" {
@@ -3056,7 +3146,7 @@ Save-Output "02_rdp_remote_access.txt" {
         Where-Object { $_.LogonType -eq '10' } |
         Select-Object TimeCreated, User, Domain, SourceIP, SourceHost
     if ($rdpLogons) {
-        $rdpLogons | Format-Table -AutoSize
+        $rdpLogons | Format-Table -AutoSize -Wrap
         $srcIps = ($rdpLogons | Select-Object -ExpandProperty SourceIP -Unique) -join ', '
         Add-Finding 'MED' '02' (Ex "$(@($rdpLogons).Count) inbound RDP logon(s) from: $srcIps ^09 review for lateral movement") '02_rdp_remote_access.txt'
     } else {
@@ -3078,7 +3168,7 @@ Save-Output "02_rdp_remote_access.txt" {
         } |
         Where-Object { $_.LogonType -eq '10' } |
         Select-Object TimeCreated, User, SourceIP |
-        Format-Table -AutoSize
+        Format-Table -AutoSize -Wrap
 
     Write-Section "TERMINALSERVICES SESSION EVENTS (connect / reconnect / disconnect)"
     # 21=logon, 22=shell start, 24=disconnect, 25=reconnect, 1149=network connection (pre-auth)
@@ -3121,7 +3211,7 @@ Save-Output "02_rdp_remote_access.txt" {
                 [PSCustomObject]@{ SID = $sid; Destination = $_.Value; UsernameHint = '(MRU)' }
             }
         }
-    } | Format-Table -AutoSize
+    } | Format-Table -AutoSize -Wrap
     if (-not $foundDest) { "(no cached outbound RDP destinations found)" }
 
     Write-Section "RDP BITMAP CACHE FILES (evidence of past RDP sessions)"
@@ -3135,7 +3225,7 @@ Save-Output "02_rdp_remote_access.txt" {
                 [PSCustomObject]@{ User = $cacheDir.Split('\')[2]; File = $_.Name; Size = $_.Length; Modified = $_.LastWriteTime }
             }
         }
-    } | Format-Table -AutoSize
+    } | Format-Table -AutoSize -Wrap
     if (-not $bmFound) { "(no RDP bitmap cache files found)" }
 }
 
@@ -3256,12 +3346,15 @@ Save-Output "03_runmru_clickfix.txt" {
                 $suspicious = $cmd -match $badRx
                 $longish = $cmd.Length -ge 200          # pasted ClickFix one-liners are typically very long
                 $sev = if ($suspicious) { 'HIGH' } elseif ($longish) { 'MED' } else { 'INFO' }
+                $cmdSafe = Defang $cmd
                 $rows.Add([PSCustomObject]@{
                     Key     = $keyDisp
                     Order   = $rank
                     Slot    = $slot
                     Sev     = $sev
-                    Command = (Defang $cmd)
+                    Chars   = $cmd.Length
+                    Preview = if ($cmdSafe.Length -gt 60) { $cmdSafe.Substring(0, 60) + '...' } else { $cmdSafe }
+                    Command = $cmdSafe
                 })
                 if ($sev -eq 'HIGH') {
                     $short = if ($cmd.Length -gt 160) { $cmd.Substring(0,160) + '...' } else { $cmd }
@@ -3279,8 +3372,22 @@ Save-Output "03_runmru_clickfix.txt" {
     "Hives examined: $($hv.Hives.Count)  (offline mounted: $($hv.Mounted.Count); offline skipped: $($hv.OfflineSkipped))"
     ""
     if ($rows.Count) {
-        $rows | Sort-Object @{E={ switch ($_.Sev) { 'HIGH' {0} 'MED' {1} default {2} } }}, Key, Order |
-            Format-Table Key, Order, Slot, Sev, Command -AutoSize -Wrap
+        $ordered = @($rows | Sort-Object @{E={ switch ($_.Sev) { 'HIGH' {0} 'MED' {1} default {2} } }}, Key, Order)
+        Write-Section "INDEX (one row per Run-dialog entry)"
+        $ordered | Format-Table Key, Order, Slot, Sev, Chars, Preview -AutoSize -Wrap
+        ""
+        Write-Section "FULL COMMAND TEXT (verbatim - the complete pasted one-liner)"
+        "The table above is ONLY an index. A Format-Table column is rendered at the output width, so a"
+        "long ClickFix one-liner gets shredded into dozens of narrow fragments that can't be copied"
+        "back as a single string - and the whole point of this artifact is the command itself. Each"
+        "entry below is therefore printed WHOLE, on its own, with no table formatting and nothing"
+        "shortened. Hostile URLs/IPs remain defanged (so an on-host EDR doesn't quarantine the scan)."
+        ""
+        foreach ($r in $ordered) {
+            "--- [$($r.Sev)] $($r.Key)   slot '$($r.Slot)'   (order $($r.Order), $($r.Chars) chars) ---"
+            $r.Command
+            ""
+        }
     } else {
         "(no RunMRU / Run-dialog history found in any user hive)"
     }
@@ -3297,7 +3404,7 @@ Save-Output "03_scheduled_tasks.txt" {
         Select-Object TaskName, TaskPath, State,
             @{N='Actions';E={ Defang (($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; ') }},
             @{N='Triggers';E={($_.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join '; '}} |
-        Format-Table -AutoSize
+        Format-Table -AutoSize -Wrap
 
     Write-Section "ALL SCHEDULED TASKS (full detail)"
     # Get-ScheduledTaskInfo makes a per-task round-trip to the Task Scheduler service. Running it
@@ -3318,7 +3425,7 @@ Save-Output "03_scheduled_tasks.txt" {
             Actions    = Defang (($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' | ')
             Author     = $_.Principal.UserId
         }
-    } | Format-Table -AutoSize
+    } | Format-Table -AutoSize -Wrap
 
     Write-Section "SUSPICIOUS TASK ACTIONS (writable path / encoded / lolbin)"
     # Flag tasks whose action runs from a writable location or uses a download/encoded pattern.
@@ -3349,13 +3456,13 @@ Save-Output "03_scheduled_tasks.txt" {
 Save-Output "03_services.txt" {
     Write-Section "ALL SERVICES"
     Get-Service | Select-Object Name, DisplayName, Status, StartType |
-        Sort-Object Status, Name | Format-Table -AutoSize
+        Sort-Object Status, Name | Format-Table -AutoSize -Wrap
 
     Write-Section "RUNNING SERVICES WITH BINARY PATH"
     Get-CimInstance Win32_Service |
         Where-Object { $_.State -eq 'Running' } |
         Select-Object Name, DisplayName, StartMode, State, @{N='PathName';E={Defang ([string]$_.PathName)}}, StartName |
-        Format-Table -AutoSize
+        Format-Table -AutoSize -Wrap
 
     Write-Section "RECENTLY MODIFIED SERVICE BINARIES (within $($script:DaysBack) days)"
     Get-CimInstance Win32_Service | ForEach-Object {
@@ -3420,7 +3527,7 @@ Save-Output "03_services.txt" {
                 }
             }
         }
-    } | Format-Table -AutoSize
+    } | Format-Table -AutoSize -Wrap
 
     Write-Section "SUSPICIOUS SERVICE PATHS (location / unquoted)"
     # Two classic red flags:
@@ -3584,7 +3691,7 @@ Save-Output "03_com_hijacking_check.txt" {
             }
         }
         if ($hijacks) {
-            $hijacks | Format-Table -AutoSize
+            $hijacks | Format-Table -AutoSize -Wrap
         } else {
             (Ex "  (no HKCU CLSIDs shadow HKLM\CLSID ^09 clean)")
         }
@@ -3621,7 +3728,7 @@ Save-Output "03_advanced_persistence.txt" {
                 Add-Finding 'HIGH' '03' (Ex "IFEO debugger hijack on $($_.PSChildName) ^17 $(Defang ([string]$props.Debugger))") '03_advanced_persistence.txt'
             }
         }
-    } | Format-Table -AutoSize
+    } | Format-Table -AutoSize -Wrap
 
     Write-Section "ACCESSIBILITY BINARY HIJACKS (sethc / utilman / osk / magnify)"
     # Login-screen backdoors: replacing or IFEO-redirecting these gives pre-auth SYSTEM shell.
@@ -3691,12 +3798,44 @@ Save-Output "03_advanced_persistence.txt" {
             }
         }
     }
-    $appInitRows | Format-Table -AutoSize
+    $appInitRows | Format-Table -AutoSize -Wrap
 
     Write-Section "LSA SECURITY/AUTHENTICATION PACKAGES"
     # Rogue Security/Authentication packages = credential-theft persistence (e.g. mimilib).
     Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -ErrorAction SilentlyContinue |
         Select-Object 'Security Packages', 'Authentication Packages', 'Notification Packages' | Format-List
+}
+
+function Get-ScRelayHost {
+    # Pull the relay/C2 host out of a ScreenConnect user.config or service ImagePath. This is the
+    # DURABLE tenant identifier (ClickOnce instance-id hashes rotate when the console updates; the
+    # relay does not), so it's what we label an instance with. Prefers an explicit
+    # *.screenconnect.com / *.controlhub.* host, then falls back to the 'h=' launch parameter.
+    # Returns lowercase host, or ''.
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    if ($Text -match '(?i)\b([a-z0-9][a-z0-9\-\.]*\.(?:screenconnect\.com|controlhub\.[a-z\.]+))\b') { return $matches[1].ToLower() }
+    if ($Text -match '(?i)[&?"]h=([^&"''<>\s]+)') { return $matches[1].ToLower() }
+    return ''
+}
+
+function Get-ScCustomLabels {
+    # ScreenConnect bakes its console-defined custom fields (typically Company / Site / Department)
+    # into the client's launch parameters as repeated URL-encoded '&c=' values. Those are the
+    # human-readable NAME of a deployment - far more use in triage than a 16-hex-digit instance id.
+    # Returns them joined as 'a / b / c', or '' when the launch string carries none.
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    $vals = New-Object System.Collections.Generic.List[string]
+    foreach ($m in [regex]::Matches($Text, '(?i)[&?]c=([^&"''<>\s]*)')) {
+        $v = $m.Groups[1].Value
+        if (-not $v) { continue }
+        try { $v = [System.Uri]::UnescapeDataString($v) } catch {}
+        $v = $v.Trim()
+        if ($v) { [void]$vals.Add($v) }
+    }
+    if ($vals.Count -eq 0) { return '' }
+    return ($vals -join ' / ')
 }
 
 Save-Output "03_remote_access_tools.txt" {
@@ -3722,6 +3861,7 @@ Save-Output "03_remote_access_tools.txt" {
         @{ Pat='rustdesk';                     Name='RustDesk' }
         @{ Pat='tightvnc|ultravnc|realvnc|tigervnc'; Name='VNC variant' }
         @{ Pat='pulseway';                     Name='Pulseway' }
+        @{ Pat='ninjarmm|ninjaone';            Name='NinjaOne / NinjaRMM' }
         @{ Pat='kaseya|agentmon';              Name='Kaseya VSA' }
         @{ Pat='syncro|kabuto';                Name='Syncro' }
         @{ Pat='quickassist';                  Name='Quick Assist' }
@@ -3806,19 +3946,63 @@ Save-Output "03_remote_access_tools.txt" {
         $scRoots += (Join-Path $_.FullName 'AppData\Roaming')
         $scRoots += (Join-Path $_.FullName 'Documents\ConnectWiseControl')
     }
+    # Index ScreenConnect services by instance id first, so each instance folder can borrow its
+    # service's ImagePath - that launch string is where the '&c=' custom fields (company / site /
+    # department) live, and those are the only human-readable NAME a deployment carries on-host.
+    $scSvcById = @{}
+    try {
+        Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
+            Where-Object { $_.PathName -match '(?i)screenconnect' } | ForEach-Object {
+                $svcId = if ($_.PathName -match '(?i)ScreenConnect Client \(([0-9A-Fa-f]{6,})\)') { $matches[1] }
+                         elseif ($_.Name -match '(?i)([0-9A-Fa-f]{16})') { $matches[1] }
+                         else { '' }
+                if ($svcId) { $scSvcById[$svcId.ToLower()] = $_ }
+            }
+    } catch {}
+
     foreach ($r in ($scRoots | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique)) {
         Get-ChildItem $r -Directory -ErrorAction SilentlyContinue -Filter 'ScreenConnect Client*' | ForEach-Object {
             $scFound = $true
-            "Instance folder: $($_.FullName)   (created $($_.CreationTime))"
-            $cfg = Join-Path $_.FullName 'user.config'
-            if (Test-Path $cfg) {
-                "  user.config present - contains the configured relay/C2 host mapping:"
+            $inst = $_
+            $scId = if ($inst.Name -match '\(([0-9A-Fa-f]{6,})\)') { $matches[1] } else { '' }
+            $cfg  = Join-Path $inst.FullName 'user.config'
+            $cfgText = ''
+            if (Test-Path $cfg) { try { $cfgText = Get-Content -LiteralPath $cfg -Raw -ErrorAction Stop } catch {} }
+            $svc     = if ($scId) { $scSvcById[$scId.ToLower()] } else { $null }
+            $svcPath = if ($svc) { [string]$svc.PathName } else { '' }
+            $relay   = Get-ScRelayHost ("$cfgText`n$svcPath")
+            $labels  = Get-ScCustomLabels $svcPath
+            $scName  = if ($labels) { $labels } elseif ($relay) { ($relay -split '\.')[0] } else { '(unnamed)' }
+
+            ""
+            "Instance   : $($inst.Name)"
+            "  name     : $scName"
+            "  relay    : $(if ($relay) { Defang $relay } else { '(none found - user.config missing/unreadable and no service ImagePath)' })"
+            "  id       : $(if ($scId) { $scId } else { '(no instance id in folder name)' })"
+            "  folder   : $($inst.FullName)"
+            "  installed: $($inst.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC   (folder created = when this client was downloaded onto the host)"
+            "  last used: $($inst.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC   (folder last written)"
+            $scExe = Get-ChildItem -LiteralPath $inst.FullName -Filter '*.exe' -File -ErrorAction SilentlyContinue |
+                     Sort-Object Length -Descending | Select-Object -First 1
+            if ($scExe) {
+                "  client   : $($scExe.Name)  (downloaded $($scExe.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC, modified $($scExe.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC)"
+            }
+            if ($svc) { "  service  : $($svc.Name) [$($svc.State)] - $(Defang $svcPath)" }
+            if ($cfgText) {
+                "  user.config relay/host lines:"
                 try {
                     Select-String -Path $cfg -Pattern 'https?://|\b\d{1,3}(\.\d{1,3}){3}\b|\.controlhub\.|\.screenconnect\.' -ErrorAction SilentlyContinue |
                         Select-Object -First 10 | ForEach-Object { "    " + (Defang ($_.Line.Trim())) }
                 } catch {}
-                Add-Finding 'HIGH' '03' (Ex "ScreenConnect client instance found: $($_.Name) ^09 verify relay host in user.config is authorized") '03_remote_access_tools.txt'
+            } else {
+                "  user.config: NOT PRESENT or unreadable"
             }
+            # Flag every instance: this build carries no authorized-tenant list, so whether a relay
+            # is yours is a judgement only you can make. Judged even when user.config is missing -
+            # previously an instance with no config produced no output and no finding at all, so an
+            # attacker instance caught mid-install could pass silently.
+            $relayTxt = if ($relay) { Defang $relay } else { 'unknown relay' }
+            Add-Finding 'HIGH' '03' (Ex "ScreenConnect instance '$scName' ($($inst.Name)) ^09 relay $relayTxt ^09 downloaded $($inst.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm')) UTC - verify this tenant is authorized") '03_remote_access_tools.txt'
         }
     }
     if (-not $scFound) { "(no ScreenConnect client instance folders found)" }
@@ -4006,7 +4190,7 @@ Save-Output "04_ps_event_log.txt" {
     Write-Section "POWERSHELL OPERATIONAL EVENTS (last 200)"
     Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents 200 -ErrorAction SilentlyContinue |
         Select-Object TimeCreated, Id, LevelDisplayName, Message |
-        Format-Table -AutoSize
+        Format-Table -AutoSize -Wrap
 }
 
 # ---------------------------------------------
@@ -4030,13 +4214,13 @@ Save-Output "05_network_connections.txt" {
             ProcessName = $proc.Name
             ProcessPath = $proc.Path
         }
-    } | Sort-Object State | Format-Table -AutoSize
+    } | Sort-Object State | Format-Table -AutoSize -Wrap
 }
 
 Save-Output "05_dns_cache.txt" {
     Write-Section "DNS CLIENT CACHE"
     Get-DnsClientCache | Select-Object Entry, RecordName, RecordType, Status, DataLength, Data |
-        Format-Table -AutoSize
+        Format-Table -AutoSize -Wrap
 }
 
 Save-Output "05_intel_host_matches.txt" {
@@ -4119,7 +4303,7 @@ Save-Output "05_intel_host_matches.txt" {
 
 Save-Output "05_arp_hosts.txt" {
     Write-Section "ARP TABLE"
-    Get-NetNeighbor | Format-Table -AutoSize
+    Get-NetNeighbor | Format-Table -AutoSize -Wrap
 
     Write-Section "HOSTS FILE"
     Get-Content "$env:SystemRoot\System32\drivers\etc\hosts"
@@ -4127,16 +4311,16 @@ Save-Output "05_arp_hosts.txt" {
 
 Save-Output "05_network_shares.txt" {
     Write-Section "NETWORK SHARES"
-    Get-SmbShare | Format-Table -AutoSize
+    Get-SmbShare | Format-Table -AutoSize -Wrap
 
     Write-Section "MAPPED DRIVES"
-    Get-SmbMapping -ErrorAction SilentlyContinue | Format-Table -AutoSize
+    Get-SmbMapping -ErrorAction SilentlyContinue | Format-Table -AutoSize -Wrap
     net use 2>&1
 }
 
 Save-Output "05_firewall_rules.txt" {
     Write-Section "FIREWALL PROFILE STATUS"
-    Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction | Format-Table
+    Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction | Format-Table -AutoSize -Wrap
 
     Write-Section "INBOUND ALLOW RULES (program-specific)"
     # PERF: calling Get-NetFirewallApplicationFilter/PortFilter per-rule is extremely slow
@@ -4167,7 +4351,7 @@ Save-Output "05_firewall_rules.txt" {
                 LocalPorts  = $portByRule[$id].LocalPort
             }
         }
-    } | Format-Table -AutoSize
+    } | Format-Table -AutoSize -Wrap
     Write-Progress -Activity "Firewall rules" -Completed
 }
 
@@ -4188,11 +4372,11 @@ Save-Output "06_processes.txt" {
         @{N='Path';E={$_.Path}},
         @{N='StartTime';E={$_.StartTime}},
         @{N='CommandLine';E={$cmdLineByPid[[int]$_.Id]}} |
-        Sort-Object CPU -Descending | Format-Table -AutoSize
+        Sort-Object CPU -Descending | Format-Table -AutoSize -Wrap
 
     Write-Section "PROCESSES WITH NO IMAGE PATH (suspicious)"
     Get-Process | Where-Object { -not $_.Path } |
-        Select-Object Id, Name, CPU, WorkingSet | Format-Table -AutoSize
+        Select-Object Id, Name, CPU, WorkingSet | Format-Table -AutoSize -Wrap
 }
 
 Save-Output "06_process_tree.txt" {
@@ -4230,7 +4414,7 @@ Save-Output "06_process_tree.txt" {
         }
         if ($resolveOwners) { $row.Owner = $ownerByPid[[int]$proc.ProcessId] }
         [PSCustomObject]$row
-    } | Sort-Object PPID, PID | Format-Table -AutoSize
+    } | Sort-Object PPID, PID | Format-Table -AutoSize -Wrap
 
     if (-not $resolveOwners) {
         "`n(Process owners omitted for speed. Re-run with -WithOwners to include them.)"
@@ -4361,10 +4545,10 @@ Save-Output "06_loaded_dlls.txt" {
             catch { $sigCache[$_] = 'Unknown' }
         }
         $pairs | Select-Object PID, Process, Module, Path, @{N='SigStatus';E={$sigCache[$_.Path]}} |
-            Sort-Object Process, Module | Format-Table -AutoSize
+            Sort-Object Process, Module | Format-Table -AutoSize -Wrap
     } else {
         if ($pairs.Count -gt 0) {
-            $pairs | Sort-Object Process, Module | Format-Table -AutoSize
+            $pairs | Sort-Object Process, Module | Format-Table -AutoSize -Wrap
             "`nNOTE: DLLs above load from non-standard paths (outside System32/Program Files)."
             "Run with -WithSignatures to add Authenticode trust status (slower, may stall offline)."
         } else {
@@ -4384,7 +4568,7 @@ Save-Output "07_recently_modified_system32.txt" {
     Get-ChildItem "$env:SystemRoot\System32" -File -ErrorAction SilentlyContinue |
         Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-$script:DaysBack) } |
         Select-Object Name, LastWriteTime, Length, FullName |
-        Sort-Object LastWriteTime -Descending | Format-Table -AutoSize
+        Sort-Object LastWriteTime -Descending | Format-Table -AutoSize -Wrap
 }
 
 Save-Output "07_temp_executables.txt" {
@@ -4394,7 +4578,7 @@ Save-Output "07_temp_executables.txt" {
         "`n--- $p ---"
         Get-ChildItem $p -Recurse -Include '*.exe','*.dll','*.bat','*.ps1','*.vbs','*.js','*.cmd','*.msi','*.hta' -ErrorAction SilentlyContinue |
             Select-Object Name, LastWriteTime, Length, FullName |
-            Sort-Object LastWriteTime -Descending | Format-Table -AutoSize
+            Sort-Object LastWriteTime -Descending | Format-Table -AutoSize -Wrap
     }
 }
 
@@ -4412,7 +4596,7 @@ Save-Output "07_downloads_desktop.txt" {
                     Select-Object -First 50
                 if ($files) {
                     "`n--- $user\$folder ---"
-                    $files | Select-Object Name, LastWriteTime, Length | Format-Table -AutoSize
+                    $files | Select-Object Name, LastWriteTime, Length | Format-Table -AutoSize -Wrap
                 }
             }
         }
@@ -4444,7 +4628,7 @@ Save-Output "07_alternate_data_streams.txt" {
             }
         }
     }
-    if ($results) { $results | Format-Table -AutoSize }
+    if ($results) { $results | Format-Table -AutoSize -Wrap }
     else { "  (no suspicious alternate data streams found in user content folders)" }
 }
 
@@ -4584,7 +4768,7 @@ Save-Output "08_cleared_logs.txt" {
 Save-Output "08_event_log_status.txt" {
     Write-Section "EVENT LOG STATUS (size & last written)"
     Get-EventLog -List | Select-Object Log, MaximumKilobytes, Entries, OverflowAction, MinimumRetentionDays |
-        Format-Table -AutoSize
+        Format-Table -AutoSize -Wrap
 
     Write-Section "WEVTUTIL LOG STATUS"
     wevtutil el | ForEach-Object {
@@ -4592,7 +4776,7 @@ Save-Output "08_event_log_status.txt" {
         if ($info -match 'enabled: true') {
             [PSCustomObject]@{ Log = $_; Info = ($info -join ' ') }
         }
-    } | Format-Table -AutoSize
+    } | Format-Table -AutoSize -Wrap
 }
 
 # ---------------------------------------------
@@ -4612,7 +4796,7 @@ Save-Output "09_installed_software.txt" {
         Get-ItemProperty $_ -ErrorAction SilentlyContinue
     } | Where-Object { $_.DisplayName } |
         Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, InstallLocation |
-        Sort-Object InstallDate -Descending | Format-Table -AutoSize
+        Sort-Object InstallDate -Descending | Format-Table -AutoSize -Wrap
 }
 
 Save-Output "09_appdata_app_installs.txt" {
@@ -4812,7 +4996,7 @@ Save-Output "09_user_hive_software.txt" {
 
 Save-Output "09_patches.txt" {
     Write-Section "INSTALLED HOTFIXES / PATCHES"
-    Get-HotFix | Sort-Object InstalledOn -Descending | Format-Table -AutoSize
+    Get-HotFix | Sort-Object InstalledOn -Descending | Format-Table -AutoSize -Wrap
 }
 
 Save-Output "09_defender_status.txt" {
@@ -4902,23 +5086,163 @@ Save-Output "10_browser_artifacts.txt" {
         "`n--- $browser ---"
         $files = Get-ChildItem $profiles[$browser] -ErrorAction SilentlyContinue
         if ($files) {
-            $files | Select-Object FullName, LastWriteTime, Length | Format-Table -AutoSize
+            $files | Select-Object FullName, LastWriteTime, Length | Format-Table -AutoSize -Wrap
         } else { "  (not found)" }
     }
 }
 
+# ---------------------------------------------
+#  BROWSER HISTORY TIMESTAMPS (dependency-free SQLite record decoding)
+# ---------------------------------------------
+# secgurd never links a SQLite engine (no-dependencies rule), so history URLs are regexed out of the
+# raw DB bytes. That yields the URL but not WHEN it was visited - which is exactly what you need to
+# line a detection up against the moment an alert fired. These helpers recover the visit time by
+# decoding just enough of SQLite's on-disk record format around a URL we have already located.
+#
+# A table row is stored as [header][body]. The header is a size varint followed by one "serial type"
+# varint per column; the body holds the raw column values back to back. Crucially, in BOTH the
+# Chrome/Edge 'urls' table and Firefox's 'moz_places' the primary key is INTEGER PRIMARY KEY, which
+# SQLite stores as NULL occupying zero body bytes - so the URL text is the FIRST body value, and the
+# header must therefore end EXACTLY where the URL text begins. That gives a self-validating anchor:
+# walk backwards for a TEXT serial type, parse the remaining serial types forward, and accept the
+# candidate only if the header lands precisely on the URL. Then walk the body and take the first
+# integer column that decodes to a plausible date.
+#
+# Everything here fails safe - any mismatch returns $null. A missing timestamp is acceptable; a
+# WRONG timestamp on a security detection is not. Column ORDER is never assumed, so Firefox schema
+# drift between versions degrades to "time unknown" rather than to a bogus date.
+$script:HistEpochWebkit = [datetime]::SpecifyKind([datetime]'1601-01-01', [System.DateTimeKind]::Utc)  # Chrome/Edge: microseconds since 1601
+$script:HistEpochUnix   = [datetime]::SpecifyKind([datetime]'1970-01-01', [System.DateTimeKind]::Utc)  # Firefox: microseconds since 1970
+$script:HistTimeMin     = [datetime]::SpecifyKind([datetime]'2000-01-01', [System.DateTimeKind]::Utc)  # sanity floor
+$script:HistTimeMax     = (Get-Date).ToUniversalTime().AddDays(1)                                      # sanity ceiling (clock skew allowance)
+
+function ConvertFrom-SqliteVarint {
+    # SQLite varint: big-endian 7 bits per byte, high bit set means another byte follows, max 9.
+    # Returns @{ Value = [long]; Size = [int] }, or $null if it runs off the end of the buffer.
+    param([byte[]]$Buf, [int]$Offset)
+    if ($Offset -lt 0 -or $Offset -ge $Buf.Length) { return $null }
+    $v = [long]0
+    for ($i = 0; $i -lt 9; $i++) {
+        $p = $Offset + $i
+        if ($p -ge $Buf.Length) { return $null }
+        $b = $Buf[$p]
+        if ($i -eq 8) { return @{ Value = (($v -shl 8) -bor $b); Size = 9 } }   # 9th byte contributes all 8 bits
+        $v = ($v -shl 7) -bor ($b -band 0x7F)
+        if (($b -band 0x80) -eq 0) { return @{ Value = $v; Size = ($i + 1) } }
+    }
+    return $null
+}
+
+function Get-SqliteSerialWidth {
+    # Body byte width for a SQLite serial type. Returns -1 for the reserved types (10, 11).
+    param([long]$Serial)
+    if ($Serial -eq 0 -or $Serial -eq 8 -or $Serial -eq 9) { return 0 }         # NULL / literal 0 / literal 1
+    if ($Serial -ge 1 -and $Serial -le 4) { return [int]$Serial }               # 1..4-byte big-endian ints
+    if ($Serial -eq 5) { return 6 }                                             # 6-byte int
+    if ($Serial -eq 6 -or $Serial -eq 7) { return 8 }                           # 8-byte int / IEEE float
+    if ($Serial -ge 12) { return [int][math]::Floor(($Serial - 12) / 2) }       # BLOB (even) / TEXT (odd)
+    return -1
+}
+
+function Read-SqliteBigEndianInt {
+    # Big-endian two's-complement integer of $Width bytes; $null if it doesn't fit the buffer.
+    param([byte[]]$Buf, [int]$Offset, [int]$Width)
+    if ($Width -le 0 -or $Offset -lt 0 -or ($Offset + $Width) -gt $Buf.Length) { return $null }
+    $v = [long]0
+    for ($i = 0; $i -lt $Width; $i++) { $v = ($v -shl 8) -bor $Buf[$Offset + $i] }
+    if ($Width -lt 8) {
+        $signBit = [long]1 -shl (($Width * 8) - 1)
+        if (($v -band $signBit) -ne 0) { $v = $v - ([long]1 -shl ($Width * 8)) }
+    }
+    return $v
+}
+
+function Get-HistoryVisitTimeUtc {
+    # Recover a URL's last-visit time from raw history-DB bytes. $Offsets are the byte positions
+    # where that URL's text was found. Returns the LATEST plausible [datetime] (UTC) across them,
+    # or $null when nothing decodes cleanly.
+    #
+    # The URL text also appears inside SQLite's INDEX pages, where the record is (url, rowid) and
+    # carries no date at all. Those yield no plausible timestamp and are skipped - which is exactly
+    # why we try every recorded offset instead of just the first one.
+    param([byte[]]$Buf, [int[]]$Offsets, [string]$Browser, [int]$UrlLength)
+    if (-not $Buf -or -not $Offsets -or $Offsets.Count -eq 0) { return $null }
+    $epoch = if ($Browser -eq 'Firefox') { $script:HistEpochUnix } else { $script:HistEpochWebkit }
+    $best = $null
+    foreach ($urlStart in $Offsets) {
+        $floor = [Math]::Max(0, $urlStart - 48)      # the header sits immediately before the body
+        $hit = $null
+        # Two passes. Pass 1 demands that the header's declared URL length match the URL we actually
+        # matched, which rules out false anchors outright - without it the TITLE column's serial type
+        # (also TEXT, also ending exactly at the URL) parses as a valid header and silently wins,
+        # because it sits closer to the body than the real one. Pass 2 relaxes to "declares a
+        # URL-sized string" for records where the stored text and our match differ (trailing
+        # punctuation trimmed off, or the match ran on into the adjacent title column).
+        foreach ($strict in @($true, $false)) {
+            for ($h = $urlStart - 1; $h -ge $floor; $h--) {
+                $first = ConvertFrom-SqliteVarint $Buf $h
+                if ($null -eq $first) { continue }
+                if ($first.Value -lt 13 -or ($first.Value % 2) -eq 0) { continue }   # URL column must be TEXT (odd, >=13)
+                $w0 = Get-SqliteSerialWidth $first.Value
+                if ($strict) { if ($w0 -ne $UrlLength) { continue } }
+                elseif ($w0 -lt 8) { continue }
+                # Parse serial types forward. A genuine header ends EXACTLY at the URL text.
+                $serials = New-Object System.Collections.Generic.List[long]
+                $pos = $h
+                while ($pos -lt $urlStart) {
+                    $vi = ConvertFrom-SqliteVarint $Buf $pos
+                    if ($null -eq $vi) { break }
+                    [void]$serials.Add($vi.Value)
+                    $pos += $vi.Size
+                }
+                if ($pos -ne $urlStart -or $serials.Count -lt 3) { continue }   # overshot, or too few columns to be a history row
+                # Walk the body; serials[0] is the URL text itself. Take the first integer column
+                # that decodes to a plausible date - visit counts and row ids are far too small.
+                $bodyPos = $urlStart
+                for ($ci = 0; $ci -lt $serials.Count; $ci++) {
+                    $w = Get-SqliteSerialWidth $serials[$ci]
+                    if ($w -lt 0) { break }
+                    if ($ci -gt 0 -and $serials[$ci] -ge 1 -and $serials[$ci] -le 6) {
+                        $iv = Read-SqliteBigEndianInt $Buf $bodyPos $w
+                        # Bound BEFORE multiplying so the microseconds->ticks conversion can't overflow.
+                        if ($null -ne $iv -and $iv -gt 0 -and $iv -lt 100000000000000000) {
+                            $dt = $epoch.AddTicks($iv * 10)
+                            if ($dt -ge $script:HistTimeMin -and $dt -le $script:HistTimeMax) { $hit = $dt; break }
+                        }
+                    }
+                    $bodyPos += $w
+                    if ($bodyPos -gt $Buf.Length) { break }
+                }
+                # A header that parsed but yielded no date is a false anchor - or a SQLite INDEX
+                # record, which stores (url, rowid) and carries no time at all. Keep scanning
+                # backwards rather than giving up on this occurrence.
+                if ($hit) { break }
+            }
+            if ($hit) { break }
+        }
+        if ($hit -and ($null -eq $best -or $hit -gt $best)) { $best = $hit }
+    }
+    return $best
+}
+
 function Get-UrlsFromHistoryFile {
     # Dependency-free URL extraction from a browser history database (Chrome/Edge 'History' or
-    # Firefox 'places.sqlite'). We DON'T parse SQLite (that would need an external engine and
-    # break secgurd's no-dependencies rule); instead we read the raw file - opened with shared
-    # ReadWrite so an open browser's lock can't block us - and regex out the http(s) URL strings
-    # stored as UTF-8 text inside it. We also scan the '-wal' write-ahead-log sidecar, so the most
-    # recent visits (not yet checkpointed into the main DB while the browser is open) aren't
-    # missed. Returns a HashSet of unique URLs, or $null if nothing could be read.
+    # Firefox 'places.sqlite'). We DON'T link a SQLite engine (that would break secgurd's
+    # no-dependencies rule); instead we read the raw file - opened with shared ReadWrite so an open
+    # browser's lock can't block us - and regex out the http(s) URL strings stored as UTF-8 text
+    # inside it. We also read the '-wal' write-ahead-log sidecar, so the most recent visits (not yet
+    # checkpointed into the main DB while the browser is open) aren't missed.
+    #
+    # Returns $null if nothing could be read, else a hashtable:
+    #   Urls    - HashSet of unique URLs
+    #   Bytes   - the raw bytes the URLs were found in (main DB followed by the -wal), one flat
+    #             buffer so an offset is unambiguous across both
+    #   Offsets - lowercased url -> [int[]] byte positions of that URL's text inside Bytes
+    # Bytes/Offsets are what Get-HistoryVisitTimeUtc needs. They are handed back so the CALLER can
+    # resolve times for FLAGGED urls only - decoding every URL on a busy profile (tens of thousands)
+    # would cost far more scan time than the timestamps are worth.
     param([string]$Path)
-    $urls = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
-    $rx = [regex]"(?i)https?://[^\s""'<>\\)(\]\[}{\x00-\x1f]{4,2048}"
-    $anyRead = $false
+    $segs = New-Object System.Collections.Generic.List[byte[]]
     foreach ($p in @($Path, "$Path-wal")) {     # main DB + write-ahead log
         if (-not (Test-Path -LiteralPath $p)) { continue }
         try {
@@ -4929,28 +5253,49 @@ function Get-UrlsFromHistoryFile {
         try {
             $len = $fs.Length
             if ($len -le 0 -or $len -gt 80MB) { continue }   # history DBs are far smaller; cap RAM use
-            $buf = New-Object byte[] ([int]$len)
+            $b = New-Object byte[] ([int]$len)
             $read = 0
             while ($read -lt $len) {
-                $n = $fs.Read($buf, $read, [int]($len - $read))
+                $n = $fs.Read($b, $read, [int]($len - $read))
                 if ($n -le 0) { break }
                 $read += $n
             }
+            if ($read -gt 0) { [void]$segs.Add($b) }
         } catch {
             continue
         } finally {
             $fs.Close()
         }
-        $anyRead = $true
-        # Latin1 maps each byte to one char, so binary stays intact and ASCII URLs match cleanly.
-        $text = [System.Text.Encoding]::GetEncoding(28591).GetString($buf)
-        foreach ($m in $rx.Matches($text)) {
-            $u = $m.Value.TrimEnd('.', ',', ';', ')', '>', '"', "'", '!', '`')
-            if ($u.Length -ge 8) { [void]$urls.Add($u) }
-        }
     }
-    if (-not $anyRead) { return $null }
-    return $urls
+    if ($segs.Count -eq 0) { return $null }
+
+    # Flatten to one buffer so a match index is a single unambiguous offset across DB + WAL.
+    $total = 0
+    foreach ($s in $segs) { $total += $s.Length }
+    $buf = New-Object byte[] $total
+    $at = 0
+    foreach ($s in $segs) { [Array]::Copy($s, 0, $buf, $at, $s.Length); $at += $s.Length }
+    $segs.Clear()
+
+    # Latin1 maps each byte to exactly one char, so binary stays intact, ASCII URLs match cleanly,
+    # and a match index is also a BYTE offset - which is what the record decoder needs.
+    $text = [System.Text.Encoding]::GetEncoding(28591).GetString($buf)
+    $urls = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+    $offsets = @{}
+    $rx = [regex]"(?i)https?://[^\s""'<>\\)(\]\[}{\x00-\x1f]{4,2048}"
+    foreach ($m in $rx.Matches($text)) {
+        $u = $m.Value.TrimEnd('.', ',', ';', ')', '>', '"', "'", '!', '`')
+        if ($u.Length -lt 8) { continue }
+        [void]$urls.Add($u)
+        $k = $u.ToLower()
+        $lst = $offsets[$k]
+        if ($null -eq $lst) { $lst = New-Object System.Collections.Generic.List[int]; $offsets[$k] = $lst }
+        # A handful of positions is plenty to find the table row among the index entries, and it
+        # bounds both memory and the decode cost on a URL visited thousands of times.
+        if ($lst.Count -lt 8) { [void]$lst.Add($m.Index) }
+    }
+    $text = $null   # release the 2-bytes-per-byte string copy; the buffer is what we keep
+    return @{ Urls = $urls; Bytes = $buf; Offsets = $offsets }
 }
 
 function Get-UrlHost {
@@ -5032,6 +5377,7 @@ $script:WatchlistHosts = @(
 )
 $script:WatchlistTlds = @(
     'beer'
+    'monster'   # seen live in a triaged alert; long-running high-abuse TLD
     # add more abuse-prone TLDs here, one per line (no dot), e.g. 'lat'
 )
 
@@ -5112,7 +5458,7 @@ function Test-SuspiciousUrl {
     if ($urlHost -match '(^|\.)xn--') {
         return @{ Severity = 'MED'; Reason = 'punycode host (possible homoglyph/spoof)' }
     }
-    if ($lower -match '(anydesk|teamviewer|atera|splashtop|screenconnect|connectwise|logmein|gotomypc|remoteutilities|ammyy|netsupport|meshcentral|rustdesk)') {
+    if ($lower -match '(anydesk|teamviewer|atera|splashtop|screenconnect|connectwise|logmein|gotomypc|remoteutilities|ammyy|netsupport|meshcentral|rustdesk|ninjarmm|ninjaone|pulseway|kaseya|syncro|dwservice)') {
         return @{ Severity = 'INFO'; Reason = 'remote-access tool reference (confirm authorized)' }
     }
     return $null
@@ -5121,13 +5467,21 @@ function Test-SuspiciousUrl {
 Save-Output "10_browser_history.txt" {
     Write-Section "BROWSER HISTORY - URL EXTRACTION & ANALYSIS (per user)"
     "Dependency-free: URLs are read directly from each browser's history database (Chrome/Edge"
-    "'History', Firefox 'places.sqlite', plus the -wal sidecar) - no SQLite engine, so per-visit"
-    "timestamps/counts are not decoded; instead each profile's DB last-write time is shown in UTC"
-    "as coarse timing context. Individual URLs are NOT added to the post-run FINDINGS list /"
+    "'History', Firefox 'places.sqlite', plus the -wal sidecar) - no SQLite engine. For FLAGGED"
+    "URLs the last-visit timestamp is decoded straight out of the raw SQLite record and shown in"
+    "UTC, so a detection can be lined up against the time an alert fired; where the record doesn't"
+    "decode cleanly the entry reads 'time unknown' (never a guessed date) and the profile's DB"
+    "last-write time below is the fallback. Individual URLs are NOT added to the FINDINGS list /"
     "00_SUMMARY (too noisy) - a few HIGH/MED are echoed live during the scan for awareness, and"
     "EVERY flagged URL of every severity is written in full to the per-user files. A single"
     "summary finding points you there. The full URL list per profile is written to:"
     "    10_browser_history\<user>\<browser>_<profile>.txt"
+    "Detections and search queries are scoped to the last $($script:BrowserDaysBack) day(s) - set with -BrowserDaysBack"
+    "or the menu's Time windows (t > b); raise it when you need a wider window. Only a DECODED visit"
+    "time can put a detection outside the window - one whose time wouldn't decode is kept and"
+    "counted, so a profile whose dates are unreadable never reads as 'nothing happened'. Each"
+    "profile also lists the SEARCH QUERIES typed into Google/Bing/DuckDuckGo/etc with their times,"
+    "which is usually what lines up with a lure timeline."
     if ($script:MalUrlCount -gt 0) {
         "Community malicious-URL feed active: $($script:MalUrlCount) URL(s) from communitysavedMALURLS.txt"
         "(abuse.ch URLhaus) - any visited URL or host on the feed is flagged HIGH."
@@ -5155,6 +5509,13 @@ Save-Output "10_browser_history.txt" {
     $highEchoed = 0; $highCap = 5   # HIGH URLs echoed live during the scan (not recorded)
     $medEchoed  = 0; $medCap  = 3   # MED URLs echoed live during the scan (not recorded)
     $summaryRows = New-Object System.Collections.Generic.List[object]
+    # -BrowserDaysBack window. History goes back months; when you are lining a detection up against
+    # an alert only the days around it matter, so anything we can PROVE is older is dropped. A URL
+    # whose time didn't decode is kept and counted - no timestamp is not evidence of age.
+    $browserCutoff = (Get-Date).ToUniversalTime().AddDays(-[Math]::Abs($script:BrowserDaysBack))
+    # Search-engine query URLs: "when did they search for this" is usually the question that lines
+    # up with a lure timeline, and it's a different question from "what did they visit".
+    $searchRx = '(?i)^https?://(?:[a-z0-9\-]+\.)*(google\.[a-z.]+|bing\.com|duckduckgo\.com|search\.yahoo\.[a-z.]+|search\.brave\.com|ecosia\.org|startpage\.com|yandex\.[a-z.]+|baidu\.com)/[^\s]*[?&](q|p|wd|text)=([^&]+)'
 
     foreach ($b in $browsers) {
         $dbs = Get-ChildItem $b.Glob -ErrorAction SilentlyContinue -Force
@@ -5163,16 +5524,18 @@ Save-Output "10_browser_history.txt" {
             $profileName = Split-Path (Split-Path $db.FullName -Parent) -Leaf
 
             $dbModUtc = $db.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm') + 'Z'
-            $urls = Get-UrlsFromHistoryFile -Path $db.FullName
-            if ($null -eq $urls) {
+            $hist = Get-UrlsFromHistoryFile -Path $db.FullName
+            if ($null -eq $hist) {
                 $summaryRows.Add([PSCustomObject]@{ User = $user; Browser = $b.Name; Profile = $profileName; 'ModifiedUTC' = $dbModUtc; URLs = 'LOCKED/ERR'; Flagged = '-' })
                 continue
             }
             $usersSeen[$user] = $true
-            $urlList = @($urls) | Sort-Object
+            $urlList = @($hist.Urls) | Sort-Object
             $grandTotalUrls += $urlList.Count
 
             $flagged = New-Object System.Collections.Generic.List[object]
+            $outOfWindow = 0      # detections we could prove are older than -BrowserDaysBack
+            $noTimeKept  = 0      # detections kept because their visit time wouldn't decode
             foreach ($u in $urlList) {
                 $uHost = Get-UrlHost $u
                 # Is this host on the squat watchlist? Resolved up-front so a squat hit can OWN the
@@ -5182,15 +5545,33 @@ Save-Output "10_browser_history.txt" {
                 $sqMatch = if ($script:SquatDomainCount -gt 0) { Test-SquatHost $uHost } else { $null }
 
                 $verdict = Test-SuspiciousUrl $u
+                # Decode the visit time ONLY for URLs that are actually going to be reported. It is
+                # the analyst-facing half of a detection ("was this touched when the alert fired?"),
+                # but decoding all of them - a busy profile holds tens of thousands - would cost far
+                # more scan time than it is worth. $vTime is $null when nothing decoded cleanly.
+                $vTime = $null
+                if ($verdict -or $sqMatch) {
+                    $vTime = Get-HistoryVisitTimeUtc -Buf $hist.Bytes -Offsets $hist.Offsets[$u.ToLower()] -Browser $b.Name -UrlLength $u.Length
+                }
+                # Apply the -BrowserDaysBack window. Only a DECODED time can put a detection out of
+                # the window; an undecodable one is kept and counted, so the file never quietly
+                # implies "nothing else happened" when it simply couldn't read the dates.
+                if (($verdict -or $sqMatch) -and $vTime -is [datetime] -and $vTime -lt $browserCutoff) {
+                    $outOfWindow++
+                    continue
+                }
+                if (($verdict -or $sqMatch) -and -not ($vTime -is [datetime])) { $noTimeKept++ }
+                $vStr = if ($vTime) { $vTime.ToString('yyyy-MM-dd HH:mm:ss') + 'Z' } else { 'time unknown' }
+
                 if ($verdict) {
                     # Always list the heuristic/feed verdict in the per-user detail file (raw data).
-                    $flagged.Add([PSCustomObject]@{ Severity = $verdict.Severity; Reason = $verdict.Reason; URL = $u })
+                    $flagged.Add([PSCustomObject]@{ Severity = $verdict.Severity; Reason = $verdict.Reason; URL = $u; LastVisit = $vTime; LastVisitStr = $vStr })
                     # But only feed the correlation + live echo when squat is NOT also claiming this
                     # URL (else the host double-alerts). Add-BrowserFlag further dedupes identical
                     # (user, host, reason). Echoes stay -NoRecord (kept out of the FINDINGS list).
                     if (-not $sqMatch) {
-                        Add-BrowserFlag $user $b.Name $uHost $verdict.Severity $verdict.Reason $u
-                        $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $($verdict.Reason): $u")
+                        Add-BrowserFlag $user $b.Name $uHost $verdict.Severity $verdict.Reason $u -LastVisit $vTime
+                        $msg = (Ex "Browser URL [$user/$($b.Name)] ^09 $vStr ^09 $($verdict.Reason): $u")
                         switch ($verdict.Severity) {
                             'HIGH' { if ($highEchoed -lt $highCap) { Add-Finding 'HIGH' '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $highEchoed++ } }
                             'MED'  { if ($medEchoed  -lt $medCap)  { Add-Finding 'MED'  '10' $msg '10_browser_history.txt' -NoRecord -HighlightUrl $u; $medEchoed++ } }
@@ -5203,12 +5584,39 @@ Save-Output "10_browser_history.txt" {
                 # feeds 10_squat_watchlist.txt and 00_BROWSER_ALERTS.txt.
                 if ($sqMatch -and $script:SquatSeen.Add("$user|$uHost")) {
                     $reason = "matches openSquat squat-domain watchlist ($sqMatch)"
-                    $script:SquatMatches.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Url=$u; Host=$uHost; Matched=$sqMatch; Source='browser-history' })
-                    Add-Finding 'HIGH' '10' (Ex "Browser URL [$user/$($b.Name)] ^09 $($reason): $u") '10_squat_watchlist.txt' -HighlightUrl $u
-                    Add-BrowserFlag $user $b.Name $uHost 'HIGH' $reason $u
+                    $script:SquatMatches.Add([PSCustomObject]@{ User=$user; Browser=$b.Name; Url=$u; Host=$uHost; Matched=$sqMatch; Source='browser-history'; LastVisit=$vStr })
+                    Add-Finding 'HIGH' '10' (Ex "Browser URL [$user/$($b.Name)] ^09 $vStr ^09 $($reason): $u") '10_squat_watchlist.txt' -HighlightUrl $u
+                    Add-BrowserFlag $user $b.Name $uHost 'HIGH' $reason $u -LastVisit $vTime
                 }
             }
             $grandFlagged += $flagged.Count
+
+            # --- Search queries inside the window (what the user actually typed, and when) ---
+            # Bounded on purpose: only URLs matching a search-engine query pattern are decoded -
+            # never the whole history - and the number of matches considered is capped too.
+            $searchSeen = @{}
+            $searchScanned = 0
+            foreach ($su in $urlList) {
+                if ($searchScanned -ge 500) { break }
+                if ($su -match $searchRx) {
+                    $searchScanned++
+                    $sEngine = $matches[1]
+                    $sTerm   = $matches[3]
+                    try { $sTerm = [System.Uri]::UnescapeDataString($sTerm.Replace('+', ' ')) } catch {}
+                    $sTerm = $sTerm.Trim()
+                    if (-not $sTerm) { continue }
+                    $sWhen = Get-HistoryVisitTimeUtc -Buf $hist.Bytes -Offsets $hist.Offsets[$su.ToLower()] -Browser $b.Name -UrlLength $su.Length
+                    if ($sWhen -is [datetime] -and $sWhen -lt $browserCutoff) { continue }
+                    $sKey  = "$sEngine|$($sTerm.ToLower())"
+                    $prevS = $searchSeen[$sKey]
+                    if ($null -eq $prevS) {
+                        $searchSeen[$sKey] = [PSCustomObject]@{ When = $sWhen; Engine = $sEngine; Term = $sTerm }
+                    } elseif ($sWhen -is [datetime] -and (-not ($prevS.When -is [datetime]) -or $sWhen -gt $prevS.When)) {
+                        $prevS.When = $sWhen   # same query repeated - keep the most recent time
+                    }
+                }
+            }
+            $searches = @($searchSeen.Values | Sort-Object @{E={$_.When}; Descending=$true})
 
             # Build the per-user detail content.
             $lines = New-Object System.Collections.Generic.List[string]
@@ -5216,18 +5624,55 @@ Save-Output "10_browser_history.txt" {
             $lines.Add("Source DB   : $($db.FullName)")
             $lines.Add("DB modified : $($db.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC   ($($db.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss')) local)")
             $lines.Add("Unique URLs : $($urlList.Count)    Flagged: $($flagged.Count)")
+            $lines.Add("Window      : last $($script:BrowserDaysBack) day(s) (-BrowserDaysBack / menu t > b), i.e. visits on/after $($browserCutoff.ToString('yyyy-MM-dd HH:mm:ss')) UTC")
+            $lines.Add("              $outOfWindow detection(s) dropped as older than the window; $noTimeKept kept with an undecodable time")
             $lines.Add('')
             $lines.Add((Write-Section "FLAGGED URLS (heuristic - verify before acting)"))
             if ($flagged.Count) {
                 $firstFlag = $true
-                foreach ($f in ($flagged | Sort-Object Severity, URL)) {
+                foreach ($f in ($flagged | Sort-Object Severity, @{E={$_.LastVisit}; Descending=$true}, URL)) {
                     if (-not $firstFlag) { $lines.Add('') }   # blank line between each flagged entry
                     $lines.Add(("[{0,-4}] {1}" -f $f.Severity, $f.Reason))
+                    $lines.Add(("        last visit: {0}" -f $f.LastVisitStr))
                     $lines.Add(("        {0}" -f $f.URL))
                     $firstFlag = $false
                 }
             } else {
                 $lines.Add("(none flagged by heuristics)")
+            }
+            $lines.Add('')
+            # Time-ordered view of the same detections, so an alert timestamp can be matched against
+            # this profile's activity without re-sorting the severity-ordered list above by hand.
+            $lines.Add((Write-Section "FLAGGED URLS BY TIME (most recent visit first)"))
+            $timed = @($flagged | Where-Object { $_.LastVisit -is [datetime] } | Sort-Object LastVisit -Descending)
+            if ($timed.Count) {
+                foreach ($f in $timed) {
+                    $lines.Add(("{0}  [{1,-4}] {2}" -f $f.LastVisitStr, $f.Severity, $f.URL))
+                }
+                $noTime = @($flagged | Where-Object { -not ($_.LastVisit -is [datetime]) })
+                if ($noTime.Count) {
+                    $lines.Add('')
+                    $lines.Add(("({0} further flagged URL(s) had no decodable visit time - see the list above)" -f $noTime.Count))
+                }
+            } else {
+                $lines.Add("(no flagged URL yielded a decodable visit time - fall back to the DB last-write time above)")
+            }
+            $lines.Add('')
+            # What the user typed into a search engine, newest first. This is the view that lines up
+            # with a lure timeline ("they searched 'adobe reader download' at 14:03, landed on the
+            # fake installer at 14:04") - a question the visited-URL list alone doesn't answer.
+            $lines.Add((Write-Section "SEARCH QUERIES (last $($script:BrowserDaysBack) day(s), most recent first)"))
+            if ($searches.Count) {
+                foreach ($s in $searches) {
+                    $sWhenStr = if ($s.When -is [datetime]) { $s.When.ToString('yyyy-MM-dd HH:mm:ss') + 'Z' } else { 'time unknown       ' }
+                    $lines.Add(("{0}  [{1}]  {2}" -f $sWhenStr, $s.Engine, $s.Term))
+                }
+                if ($searchScanned -ge 500) {
+                    $lines.Add('')
+                    $lines.Add("(search scan capped at 500 matching URLs for this profile - older queries not considered)")
+                }
+            } else {
+                $lines.Add("(no search-engine queries found in the window)")
             }
             $lines.Add('')
             $lines.Add((Write-Section "ALL UNIQUE URLS ($($urlList.Count))"))
@@ -5260,7 +5705,7 @@ Save-Output "10_browser_history.txt" {
 
     Write-Section "SUMMARY (per user / browser / profile)"
     if ($summaryRows.Count) {
-        $summaryRows | Sort-Object User, Browser, Profile | Format-Table -AutoSize
+        $summaryRows | Sort-Object User, Browser, Profile | Format-Table -AutoSize -Wrap
     } else {
         "No browser history databases found for any user on this host."
         "(Chrome / Edge / Firefox not installed, or no user profiles present.)"
@@ -5414,7 +5859,7 @@ Save-Output "10_credential_files.txt" {
         $found = Get-ChildItem $t -ErrorAction SilentlyContinue -Force
         if ($found) {
             "`n[FOUND] $t"
-            $found | Select-Object FullName, LastWriteTime, Length | Format-Table -AutoSize
+            $found | Select-Object FullName, LastWriteTime, Length | Format-Table -AutoSize -Wrap
         }
     }
 }
@@ -5466,7 +5911,7 @@ Save-Output "11_lolbin_usage.txt" {
         $distinct = ($lolHits.Binary | Sort-Object -Unique) -join ', '
         Add-Finding 'MED' '11' "$($lolHits.Count) LOLBin execution(s) in 4688 logs: $distinct" '11_lolbin_usage.txt'
     }
-    $lolHits | Format-Table -AutoSize
+    $lolHits | Format-Table -AutoSize -Wrap
 }
 
 # ---------------------------------------------
@@ -5508,7 +5953,7 @@ Save-Output "13_prefetch.txt" {
         Get-ChildItem $prefetchDir -Filter '*.pf' -ErrorAction SilentlyContinue |
             Sort-Object LastWriteTime -Descending |
             Select-Object Name, LastWriteTime, Length |
-            Format-Table -AutoSize
+            Format-Table -AutoSize -Wrap
     } else {
         "Prefetch directory not found (may be disabled or Server OS)"
     }
@@ -5526,7 +5971,7 @@ Save-Output "14_named_pipes.txt" {
         Get-ChildItem -Path '\\.\pipe\' -ErrorAction Stop |
             Sort-Object Name |
             Select-Object Name |
-            Format-Table -AutoSize
+            Format-Table -AutoSize -Wrap
     } catch {
         # Fallback for older systems
 
@@ -5974,6 +6419,7 @@ if (($script:BrowserFlagged -and $script:BrowserFlagged.Count -gt 0) -or ($scrip
             Reason      = $bf.Reason
             Note        = $note
             Url         = $bf.Url
+            LastVisit   = $bf.LastVisit
         })
     }
 
@@ -5985,6 +6431,8 @@ if (($script:BrowserFlagged -and $script:BrowserFlagged.Count -gt 0) -or ($scrip
     $abLines.Add("(Downloads/Desktop, Temp, IOC matches, and other findings).")
     $abLines.Add("EffSeverity HIGH = the URL's filename was actually found on the host, OR a")
     $abLines.Add("lookalike/payload host; verify before acting - these are leads, not verdicts.")
+    $abLines.Add("Times are the last-visit timestamp decoded from the browser's own history record,")
+    $abLines.Add("in UTC. 'time unknown' means that record did not decode cleanly - never a guess.")
     $abLines.Add(("-" * 72))
     $abLines.Add("Flagged URLs correlated : $($alertRows.Count)")
     $abLines.Add("Corroborated on host    : $highCount")
@@ -5992,13 +6440,32 @@ if (($script:BrowserFlagged -and $script:BrowserFlagged.Count -gt 0) -or ($scrip
     $abLines.Add("Download origins (Zone.Id): $($script:DownloadSources.Count) total (see 07_download_origins.txt)")
     $abLines.Add('')
 
+    # Time-ordered index FIRST: this is what you scan when you have an alert timestamp and need to
+    # know what the browser was doing around it, without hunting through the per-user detail below.
+    $timedRows = @($alertRows | Where-Object { $_.LastVisit -is [datetime] } | Sort-Object LastVisit -Descending)
+    $abLines.Add((Write-Section "ALERT TIMELINE (most recent visit first)"))
+    if ($timedRows.Count) {
+        foreach ($row in $timedRows) {
+            $abLines.Add(("{0}  [{1,-4}] {2}  {3}" -f ($row.LastVisit.ToString('yyyy-MM-dd HH:mm:ss') + 'Z'), $row.EffSeverity, $row.User, $row.Url))
+        }
+        $unknownCount = $alertRows.Count - $timedRows.Count
+        if ($unknownCount -gt 0) {
+            $abLines.Add('')
+            $abLines.Add("($unknownCount flagged URL(s) had no decodable visit time - see the per-user detail below)")
+        }
+    } else {
+        $abLines.Add("(no flagged URL yielded a decodable visit time - fall back to each profile's DB last-write time in 10_browser_history.txt)")
+    }
+    $abLines.Add('')
+
     foreach ($userGrp in ($alertRows | Group-Object User | Sort-Object Name)) {
         $abLines.Add((Write-Section "USER: $($userGrp.Name)"))
         foreach ($hostGrp in ($userGrp.Group | Group-Object Host | Sort-Object Name)) {
             $abLines.Add("  host: $($hostGrp.Name)")
-            $ordered = $hostGrp.Group | Sort-Object @{E={$sevRank[$_.EffSeverity]};Descending=$true}, Url
+            $ordered = $hostGrp.Group | Sort-Object @{E={$sevRank[$_.EffSeverity]};Descending=$true}, @{E={$_.LastVisit};Descending=$true}, Url
             foreach ($row in $ordered) {
                 $abLines.Add(("    [{0,-4}] {1}" -f $row.EffSeverity, $row.Reason))
+                $abLines.Add(("           last visit: {0}" -f $(if ($row.LastVisit -is [datetime]) { $row.LastVisit.ToString('yyyy-MM-dd HH:mm:ss') + 'Z' } else { 'time unknown' })))
                 if ($row.Note) { $abLines.Add("           ^ $($row.Note)") }
                 $abLines.Add("           $($row.Url)")
             }
