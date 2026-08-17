@@ -7,6 +7,7 @@ bitunixdocusign.icu
 bleakoutlook.com
 capvisag-onmicrosoft.com
 castoutlook.com
+com-onedrive.live
 contacts-microsoft.com
 corp-microsoft.com
 djsharepoint.com
@@ -82,7 +83,9 @@ office365helps.de
 office365onlline.com
 office365onllne.com
 office365uae.com
+officeroutlook.com
 ofice365.org
+onedrive-hope-studyabraod.com
 onedrive.biz.id
 onedrive.com.de
 onedrivedownloadsfile.com
@@ -104,6 +107,7 @@ outlookdigitalholdings.co
 outlookhotmail.online
 outlookjewellery.com
 outlookk.space
+outlookke.com
 outlookmail.my.id
 outlookmailhub.com
 outlookorange.co
@@ -120,6 +124,7 @@ primesportsoffice365.com
 protectionmicrosoft.com
 provider-microsoft.com
 recsa20sharepoint.blog
+refreshingoutlooksc8.cloud
 rtsoutlook.com
 servis-center-microsoft.ru
 setup-outlook3.web.id
@@ -129,6 +134,7 @@ sharepoint-my.com.de
 sharepoint-sharing.com
 sharepointanalytics.ai
 sharepointdocument.help
+sharepointhelp.com
 sharepointonline.com.de
 sharkpoint.uk
 shmicapalmermontanash001outlook.org
