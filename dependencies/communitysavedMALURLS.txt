@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-18 07:19:43 UTC
+# Updated: 2026-08-19 07:20:38 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://172-104-49-49.ip.linodeusercontent.com/bot.mips,malware_download
@@ -25,7 +25,6 @@ http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://88.212.109.208.host.secureserver.net/?get=1,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
-https://airtickts.com/,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
 https://del.sou.pp.ua/install.sh,malware_download
@@ -33,9 +32,9 @@ https://deliverymailreport.co.za/MSI_033332.png,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
 https://download.tfyxzai.com/donwnload/prortonvpn_x64.zip,malware_download
 https://drive.google.com/uc?export=download&id=1EznN9ZSMbkarOKxIJQJNw-P_JNXqHJQz,malware_download
-https://duct-master.com/00/newMSI_PRO.png,malware_download
 https://dynga.pl/common.dat,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/invergrace.png?alt=media&token=54ae32e9-1f20-404f-80a5-8fcc841a3c2b,malware_download
+https://grantexx.com/Pred.inf,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://iptoasn.com/data/ip2asn-v4.tsv.gz,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
@@ -51,7 +50,6 @@ https://signageinsignia.co.za/kizzy/1.jpg,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
-https://timelevel12.com/big,malware_download
 https://www-connect-secure-wellcfargo.sekolahkejarpaket.com/wellsfargo_new_obf_08.07.26.zip,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.hqsblog.com/wordpress/wp-content/plugins/zxzxzx/stego_p0ci0zln28.png,malware_download
