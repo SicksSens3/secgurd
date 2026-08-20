@@ -50,6 +50,7 @@ micro-soft.store
 microsoft-africa.org
 microsoft-agnew.online
 microsoft-m365.online
+microsoft-mailbox.com
 microsoft-milan.com
 microsoft-platform.ru
 microsoft-splashmaps.online
@@ -60,6 +61,7 @@ microsoft.rent
 microsoft123.net
 microsoft365australia.net
 microsoft365norfolk.co.uk
+microsoftaccountslogin.com
 microsoftaifoundry.com
 microsoftapproval.net
 microsoftbillings.org
@@ -80,6 +82,7 @@ microsoftteam.us
 microsoftteamss.team
 microsolt.info
 microsuft.one
+moneyballoutlook.com
 msonedrive-cdn.info
 neweraoutlook.com
 offic365.net
@@ -123,6 +126,7 @@ outlookmail.my.id
 outlookmailhub.com
 outlookorange.co
 outlookresidential.com
+outlooksapparel.com
 outlooksonline.ai
 outlooktalentsolutions.com
 outlooktesting.com
@@ -140,6 +144,7 @@ rtsoutlook.com
 service-center-microsoft.ru
 servis-center-microsoft.ru
 setup-outlook3.web.id
+shabooutlook.com
 sharedfileoutlook.us
 sharepoint-by-hassan.com
 sharepoint-my.com.de
@@ -160,6 +165,7 @@ theeduoutlook.com
 theinvestoroutlook.net
 themodernoutlook.net
 thermalfusionoutlook.com
+thescienceoutlook.com
 topmicrosoftpartners.online
 topsportsoffice365.com
 transportation-outlook.com
