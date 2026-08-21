@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.3.0'
+$script:secgurdVersion = 'v2.4.0'
 
 # ---------------------------------------------
 
@@ -705,7 +705,7 @@ $script:ModuleCatalogue = @(
     [PSCustomObject]@{ Id='07'; Name='Filesystem';           Desc='temp exes, ads, download origins, recycle bin' }
     [PSCustomObject]@{ Id='08'; Name='Event logs';           Desc='account changes, log clearing' }
     [PSCustomObject]@{ Id='09'; Name='Software & defender';  Desc='installed apps, patches, defender posture' }
-    [PSCustomObject]@{ Id='10'; Name='Browser & creds';      Desc='history+url analysis, extensions, .ssh/.aws' }
+    [PSCustomObject]@{ Id='10'; Name='Browser & creds';      Desc='history+url analysis, extensions, notifications, .ssh/.aws' }
     [PSCustomObject]@{ Id='11'; Name='LOLBins';              Desc='certutil, mshta, rundll32 in 4688' }
     [PSCustomObject]@{ Id='12'; Name='AmCache / ShimCache';  Desc='execution artifact locations' }
     [PSCustomObject]@{ Id='13'; Name='Prefetch';             Desc='.pf files, last run times' }
@@ -5360,6 +5360,27 @@ function Test-LookalikeDomain {
     return $null
 }
 
+function Test-RandomLookingLabel {
+    # Flag a DNS label that looks machine-GENERATED rather than human-chosen - the throwaway
+    # subdomain pattern behind notification-spam and phishing infrastructure, e.g. the
+    # d9p0dsqnaffc739qnmo0 in d9p0dsqnaffc739qnmo0.pzma-adguard.com. Deliberately narrow: a label
+    # only qualifies when it is long, mixes letters AND digits, and is vowel-starved or carries a
+    # long consonant run - which is how generated strings differ from real words. Real subdomains
+    # ('mail', 'login', 'notifications', 'cdn2') fail on length or on having no digits.
+    param([string]$Label)
+    if (-not $Label) { return $false }
+    $l = $Label.ToLower()
+    if ($l.Length -lt 12)    { return $false }   # short labels are too ambiguous to judge
+    if ($l -notmatch '\d')   { return $false }   # generated strings almost always carry digits
+    if ($l -notmatch '[a-z]'){ return $false }
+    $letters = ([regex]::Matches($l, '[a-z]')).Count
+    if ($letters -lt 6) { return $false }
+    $vowels = ([regex]::Matches($l, '[aeiou]')).Count
+    $vowelRatio = $vowels / $letters
+    $longConsonantRun = $l -match '[bcdfghjklmnpqrstvwxyz]{5,}'
+    return ($vowelRatio -lt 0.28 -or $longConsonantRun)
+}
+
 # ---------------------------------------------
 #  CURATED MALICIOUS-DOMAIN WATCHLIST (hand-maintained)
 # ---------------------------------------------
@@ -5837,6 +5858,98 @@ Save-Output "10_browser_extensions.txt" {
         "Total extensions: $($rows.Count)"
     } else {
         "(no Chromium browser extensions found, or no profiles present)"
+    }
+    # --- Notification / Web Push permissions ---------------------------------------------------
+    # A site granted the notification permission can raise NATIVE OS toasts. That is the delivery
+    # engine behind the fake-antivirus scareware wave - "Windows Defender found 5 threats ... Delete
+    # Viruses", arriving 'via Microsoft Edge'. The toast is rendered by Windows, not drawn inside a
+    # web page, so the user's "don't trust the browser" instinct never fires. The durable artifact is
+    # the PERMISSION GRANT, which outlives the toast and the browsing session that created it.
+    #
+    # Chromium stores grants in the profile's 'Preferences' JSON (plain JSON - ConvertFrom-Json is
+    # built in, so this stays dependency-free) under
+    # profile.content_settings.exceptions.notifications, where setting 1 = allow and 2 = block. Any
+    # live Web Push subscription is listed separately under push_messaging_application_id_map; a
+    # subscription is STRONGER evidence than a bare grant, because the site is actively wired up.
+    ""
+    Write-Section "NOTIFICATION / WEB PUSH PERMISSIONS (Chromium: Chrome/Edge/Brave)"
+    "A site holding the notification permission can raise native-looking OS toasts - the delivery"
+    "mechanism for fake-AV scareware ('threats found ... Delete Viruses', shown 'via Microsoft"
+    "Edge'). EVERY grant is listed, because a normal user has very few, so any unexpected origin"
+    "here is worth an eyeball on its own. ALLOW grants are additionally cross-checked against the"
+    "same URL heuristics used on browser history (URLhaus feed, curated watchlist, abuse TLDs,"
+    "punycode, squat watchlist) plus a check for machine-generated subdomain labels."
+    ""
+    $notifRoots = @(
+        @{ Browser='Chrome'; Glob='C:\Users\*\AppData\Local\Google\Chrome\User Data\*\Preferences' }
+        @{ Browser='Edge';   Glob='C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Preferences' }
+        @{ Browser='Brave';  Glob='C:\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Preferences' }
+    )
+    $notifRows = New-Object System.Collections.Generic.List[object]
+    foreach ($nr in $notifRoots) {
+        foreach ($pf in (Get-ChildItem $nr.Glob -File -ErrorAction SilentlyContinue -Force)) {
+            $nUser = if ($pf.FullName -match '(?i)\Users\([^\]+)\') { $matches[1] } else { 'unknown' }
+            $nProfile = Split-Path (Split-Path $pf.FullName -Parent) -Leaf
+            $prefs = $null
+            try { $prefs = Get-Content -LiteralPath $pf.FullName -Raw -ErrorAction Stop | ConvertFrom-Json } catch { continue }
+            # Origins with a LIVE push subscription - actively wired up to receive pushes.
+            $pushHosts = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+            try {
+                if ($prefs.push_messaging_application_id_map) {
+                    foreach ($p in $prefs.push_messaging_application_id_map.PSObject.Properties) {
+                        $ph = Get-UrlHost ([string]$p.Value)
+                        if (-not $ph) { $ph = Get-UrlHost ([string]$p.Name) }
+                        if ($ph) { [void]$pushHosts.Add($ph) }
+                    }
+                }
+            } catch {}
+            $notif = $null
+            try { $notif = $prefs.profile.content_settings.exceptions.notifications } catch {}
+            if (-not $notif) { continue }
+            foreach ($entry in $notif.PSObject.Properties) {
+                $pattern = [string]$entry.Name          # e.g. "https://example.com:443,*" or "[*.]example.com"
+                $setting = $null
+                try { $setting = $entry.Value.setting } catch {}
+                $state = switch ("$setting") { '1' { 'ALLOW' } '2' { 'BLOCK' } default { "setting=$setting" } }
+                $originPart = ($pattern -split ',')[0]
+                $nHost = Get-UrlHost $originPart
+                if (-not $nHost) { $nHost = ($originPart -replace '^\[\*\.\]', '').Trim('/').ToLower() }
+                $why = @()
+                if ($state -eq 'ALLOW' -and $nHost) {
+                    $v = Test-SuspiciousUrl $originPart
+                    if ($v) { $why += $v.Reason }
+                    if ($script:SquatDomainCount -gt 0) {
+                        $sq = Test-SquatHost $nHost
+                        if ($sq) { $why += "matches openSquat squat-domain watchlist ($sq)" }
+                    }
+                    $firstLabel = ($nHost -split '\.')[0]
+                    if (Test-RandomLookingLabel $firstLabel) {
+                        $why += "machine-generated subdomain label '$firstLabel' - throwaway notification-spam infrastructure"
+                    }
+                }
+                $notifRows.Add([PSCustomObject]@{
+                    User=$nUser; Browser=$nr.Browser; Profile=$nProfile
+                    State=$state; Push=$(if ($nHost -and $pushHosts.Contains($nHost)) { 'YES' } else { '' })
+                    Host=(Defang $nHost); Concern=($why -join '; ')
+                })
+                if ($state -eq 'ALLOW' -and $why.Count) {
+                    Add-Finding 'HIGH' '10' (Ex "Notification permission ALLOWED for a suspicious origin [$nUser/$($nr.Browser)] ^09 $(Defang $nHost) ^09 $($why -join '; ') ^09 can raise native OS toasts") '10_browser_extensions.txt'
+                } elseif ($state -eq 'ALLOW' -and $nHost -and $pushHosts.Contains($nHost)) {
+                    Add-Finding 'MED' '10' (Ex "Origin has an ACTIVE Web Push subscription [$nUser/$($nr.Browser)] ^09 $(Defang $nHost) ^09 can raise native OS toasts - confirm the user expects this") '10_browser_extensions.txt'
+                }
+            }
+        }
+    }
+    if ($notifRows.Count) {
+        # Concerning rows first, so a scareware origin is not buried under legitimate grants.
+        $notifRows | Sort-Object @{E={ if ($_.Concern) { 0 } else { 1 } }}, User, Browser, State, Host |
+            Format-Table User, Browser, Profile, State, Push, Host, Concern -AutoSize -Wrap
+        ""
+        "Notification grants: $($notifRows.Count) total, $(@($notifRows | Where-Object { $_.State -eq 'ALLOW' }).Count) ALLOW, $(@($notifRows | Where-Object { $_.Push -eq 'YES' }).Count) with a live push subscription"
+        "Firefox is not covered here - its desktop-notification grants live in permissions.sqlite"
+        "(moz_perms), a different format from Chromium's Preferences JSON."
+    } else {
+        "(no Chromium notification permissions recorded, or no profiles present)"
     }
 }
 
