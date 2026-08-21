@@ -10,6 +10,7 @@ castoutlook.com
 com-onedrive.live
 contacts-microsoft.com
 corp-microsoft.com
+d0cusign.info
 djsharepoint.com
 djsharepoint.net
 dmbllconmicrosoft.agency
@@ -61,6 +62,7 @@ microsoft.rent
 microsoft123.net
 microsoft365australia.net
 microsoft365norfolk.co.uk
+microsoft515.pp.ua
 microsoftaccountslogin.com
 microsoftaifoundry.com
 microsoftapproval.net
