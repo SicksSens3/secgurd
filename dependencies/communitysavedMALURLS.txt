@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-22 07:09:31 UTC
+# Updated: 2026-08-23 07:10:41 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://31-56-209-153.cprapid.com/nz/nz.arm6,malware_download
@@ -21,28 +21,29 @@ http://wer-ldr.duckdns.org/bots/bot.spc,malware_download
 http://wqok85qtq.net/nz/nz.arc,malware_download
 http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
-https://88.212.109.208.host.secureserver.net/?get=1,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
 https://airtickts.com/,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
 https://balanced-red-emhnkdfj-dp7g2kvqxx8n.edgeone.dev/,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
-https://coconutoficial.com.br/image/stego_3d5qe0layt.png,malware_download
-https://colibrik.com/vlccz.zip,malware_download
+https://coconutoficial.com.br/img/stego_anepqnd5rj.png,malware_download
 https://del.sou.pp.ua/install.sh,malware_download
+https://deliverymailreport.co.za/img_043051.png,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
 https://download.tfyxzai.com/donwnload/prortonvpn_x64.zip,malware_download
 https://drive.google.com/uc?export=download&id=1zDAuolFaqf-s5nc96PTj-NMi5vlJTvMM,malware_download
 https://duct-master.com/00/newMSI_PRO.png,malware_download
+https://eccmice.com/dot/n1.png,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/invergrace.png?alt=media&token=54ae32e9-1f20-404f-80a5-8fcc841a3c2b,malware_download
-https://gaiadeqi.com/vlc.zip,malware_download
+https://flicargo.com/.well-known/New/stego_rabit.png,malware_download
+https://gaiadeqi.com/vlc3.zip,malware_download
 https://grantexx.com/Pred.inf,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://iptoasn.com/data/ip2asn-v4.tsv.gz,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
-https://kee126.com/vlc.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/Images/stego_jxdqj7fw9j.png,malware_download
+https://munihuacho.gob.pe/imagenes2/MSI_PRO.png,malware_download
 https://pic.li/images/MSI_PRO_Last.jpeg,malware_download
 https://plain-wnam-prod-public.komododecks.com/202608/05/kk9ihQ9ebT47mHmrYHEr/image.png,malware_download
 https://profitable-pink-0y9btnew-dpk6vqe6eheo.edgeone.dev/,malware_download
