@@ -3,23 +3,21 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-23 07:10:41 UTC
+# Updated: 2026-08-24 07:42:12 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://31-56-209-153.cprapid.com/nz/nz.arm6,malware_download
 http://69cnc.duckdns.org/bins/putita.m68k,malware_download
 http://bserail.com/cabin/Diocle.emz,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
-http://genddos.st/bachekuni/ohshit.arm5,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
-http://manbipll.duckdns.org/LjEZs/debug.dbg,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
 http://wer-ldr.duckdns.org/bots/bot.spc,malware_download
 http://wqok85qtq.net/nz/nz.arc,malware_download
-http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
+http://www.69cnc.duckdns.org/bins/putita.x86,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
 https://airtickts.com/,malware_download
