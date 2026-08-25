@@ -3,10 +3,9 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-24 07:42:12 UTC
+# Updated: 2026-08-25 07:25:10 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
-http://31-56-209-153.cprapid.com/nz/nz.arm6,malware_download
 http://69cnc.duckdns.org/bins/putita.m68k,malware_download
 http://bserail.com/cabin/Diocle.emz,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
@@ -16,8 +15,7 @@ http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
 http://wer-ldr.duckdns.org/bots/bot.spc,malware_download
-http://wqok85qtq.net/nz/nz.arc,malware_download
-http://www.69cnc.duckdns.org/bins/putita.x86,malware_download
+http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
 https://airtickts.com/,malware_download
@@ -31,7 +29,6 @@ https://download.bt.cn/install/install_panel.sh,malware_download
 https://download.tfyxzai.com/donwnload/prortonvpn_x64.zip,malware_download
 https://drive.google.com/uc?export=download&id=1zDAuolFaqf-s5nc96PTj-NMi5vlJTvMM,malware_download
 https://duct-master.com/00/newMSI_PRO.png,malware_download
-https://eccmice.com/dot/n1.png,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/invergrace.png?alt=media&token=54ae32e9-1f20-404f-80a5-8fcc841a3c2b,malware_download
 https://flicargo.com/.well-known/New/stego_rabit.png,malware_download
 https://gaiadeqi.com/vlc3.zip,malware_download
@@ -52,6 +49,7 @@ https://sh.classera.com/Naew8m,malware_download
 https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
 https://signageinsignia.co.za/kizzy/1.jpg,malware_download
 https://somostask.co/Candy.png,malware_download
+https://sxetnavelelaio.com/depend/boost.zip,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
