@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.4.0'
+$script:secgurdVersion = 'v2.4.1'
 
 # ---------------------------------------------
 
@@ -5859,26 +5859,42 @@ Save-Output "10_browser_extensions.txt" {
     } else {
         "(no Chromium browser extensions found, or no profiles present)"
     }
-    # --- Notification / Web Push permissions ---------------------------------------------------
-    # A site granted the notification permission can raise NATIVE OS toasts. That is the delivery
-    # engine behind the fake-antivirus scareware wave - "Windows Defender found 5 threats ... Delete
-    # Viruses", arriving 'via Microsoft Edge'. The toast is rendered by Windows, not drawn inside a
-    # web page, so the user's "don't trust the browser" instinct never fires. The durable artifact is
-    # the PERMISSION GRANT, which outlives the toast and the browsing session that created it.
-    #
-    # Chromium stores grants in the profile's 'Preferences' JSON (plain JSON - ConvertFrom-Json is
-    # built in, so this stays dependency-free) under
-    # profile.content_settings.exceptions.notifications, where setting 1 = allow and 2 = block. Any
-    # live Web Push subscription is listed separately under push_messaging_application_id_map; a
-    # subscription is STRONGER evidence than a bare grant, because the site is actively wired up.
+    # Chromium records notification behaviour across SEVERAL sibling keys, not just the grant list.
+    # Reading only 'notifications' misses the most incriminating case of all: when Chrome/Edge's own
+    # safety checks decide a site is abusive they REVOKE the grant and move the origin into
+    # abusive_notification_permissions / disruptive_notification_permissions. A scareware site can
+    # therefore vanish from the grant list PRECISELY BECAUSE it misbehaved - which is exactly how a
+    # confirmed-bad origin goes missing from a report that only reads grants.
+    # notification_interactions additionally records origins that actually DISPLAYED notifications,
+    # which survives even after a permission is reset.
+    $notifKeys = @(
+        @{ Key='notifications';                            Label='grant' }
+        @{ Key='abusive_notification_permissions';         Label='ABUSIVE' }
+        @{ Key='disruptive_notification_permissions';      Label='DISRUPTIVE' }
+        @{ Key='suspicious_notification_ids';              Label='SUSPICIOUS' }
+        @{ Key='notification_permission_review';           Label='review-queue' }
+        @{ Key='edge_notification_referrer_chain_blocked'; Label='EDGE-BLOCKED' }
+        @{ Key='notification_interactions';                Label='shown/interacted' }
+    )
+    # Keys where the BROWSER ITSELF judged the origin abusive - presence is the finding, whether or
+    # not a grant still exists.
+    $notifBadKeys = @('abusive_notification_permissions','disruptive_notification_permissions',
+                      'suspicious_notification_ids','edge_notification_referrer_chain_blocked')
     ""
     Write-Section "NOTIFICATION / WEB PUSH PERMISSIONS (Chromium: Chrome/Edge/Brave)"
     "A site holding the notification permission can raise native-looking OS toasts - the delivery"
     "mechanism for fake-AV scareware ('threats found ... Delete Viruses', shown 'via Microsoft"
-    "Edge'). EVERY grant is listed, because a normal user has very few, so any unexpected origin"
-    "here is worth an eyeball on its own. ALLOW grants are additionally cross-checked against the"
-    "same URL heuristics used on browser history (URLhaus feed, curated watchlist, abuse TLDs,"
-    "punycode, squat watchlist) plus a check for machine-generated subdomain labels."
+    "Edge'). EVERY origin is listed, because a normal user has very few, so any unexpected one is"
+    "worth an eyeball on its own."
+    ""
+    "Source column: 'grant' = a live allow/block entry. ABUSIVE / DISRUPTIVE / SUSPICIOUS /"
+    "EDGE-BLOCKED = the BROWSER ITSELF flagged this origin and will usually have REVOKED its grant,"
+    "so such an origin does NOT appear as a grant - that makes it more incriminating, not less."
+    "'shown/interacted' = the origin actually displayed notifications, which survives a reset."
+    ""
+    "ALLOW grants and browser-flagged origins are cross-checked against the same heuristics used on"
+    "browser history (URLhaus feed, curated watchlist, abuse TLDs, punycode, squat watchlist) plus a"
+    "machine-generated subdomain check."
     ""
     $notifRoots = @(
         @{ Browser='Chrome'; Glob='C:\Users\*\AppData\Local\Google\Chrome\User Data\*\Preferences' }
@@ -5886,13 +5902,19 @@ Save-Output "10_browser_extensions.txt" {
         @{ Browser='Brave';  Glob='C:\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Preferences' }
     )
     $notifRows = New-Object System.Collections.Generic.List[object]
+    $notifSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($nr in $notifRoots) {
         foreach ($pf in (Get-ChildItem $nr.Glob -File -ErrorAction SilentlyContinue -Force)) {
-            $nUser = if ($pf.FullName -match '(?i)\Users\([^\]+)\') { $matches[1] } else { 'unknown' }
+            $nUser = if ($pf.FullName -match '(?i)\\Users\\([^\\]+)\\') { $matches[1] } else { 'unknown' }
             $nProfile = Split-Path (Split-Path $pf.FullName -Parent) -Leaf
             $prefs = $null
             try { $prefs = Get-Content -LiteralPath $pf.FullName -Raw -ErrorAction Stop | ConvertFrom-Json } catch { continue }
-            # Origins with a LIVE push subscription - actively wired up to receive pushes.
+            $exc = $null
+            try { $exc = $prefs.profile.content_settings.exceptions } catch {}
+            if (-not $exc) { continue }
+            # Origins with a LIVE push subscription. This key is absent on many profiles, so its
+            # absence is NOT evidence there is no subscription - only that this profile has no
+            # record of one here.
             $pushHosts = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
             try {
                 if ($prefs.push_messaging_application_id_map) {
@@ -5903,53 +5925,70 @@ Save-Output "10_browser_extensions.txt" {
                     }
                 }
             } catch {}
-            $notif = $null
-            try { $notif = $prefs.profile.content_settings.exceptions.notifications } catch {}
-            if (-not $notif) { continue }
-            foreach ($entry in $notif.PSObject.Properties) {
-                $pattern = [string]$entry.Name          # e.g. "https://example.com:443,*" or "[*.]example.com"
-                $setting = $null
-                try { $setting = $entry.Value.setting } catch {}
-                $state = switch ("$setting") { '1' { 'ALLOW' } '2' { 'BLOCK' } default { "setting=$setting" } }
-                $originPart = ($pattern -split ',')[0]
-                $nHost = Get-UrlHost $originPart
-                if (-not $nHost) { $nHost = ($originPart -replace '^\[\*\.\]', '').Trim('/').ToLower() }
-                $why = @()
-                if ($state -eq 'ALLOW' -and $nHost) {
-                    $v = Test-SuspiciousUrl $originPart
-                    if ($v) { $why += $v.Reason }
-                    if ($script:SquatDomainCount -gt 0) {
-                        $sq = Test-SquatHost $nHost
-                        if ($sq) { $why += "matches openSquat squat-domain watchlist ($sq)" }
+            foreach ($nk in $notifKeys) {
+                $bucket = $null
+                try { $bucket = $exc.($nk.Key) } catch {}
+                if (-not $bucket) { continue }
+                foreach ($entry in $bucket.PSObject.Properties) {
+                    $pattern = [string]$entry.Name     # "https://example.com:443,*" or "[*.]example.com"
+                    $setting = $null
+                    try { $setting = $entry.Value.setting } catch {}
+                    $state = if ($nk.Key -ne 'notifications') { '-' } else {
+                        switch ("$setting") { '1' { 'ALLOW' } '2' { 'BLOCK' } default { "setting=$setting" } }
                     }
-                    $firstLabel = ($nHost -split '\.')[0]
-                    if (Test-RandomLookingLabel $firstLabel) {
-                        $why += "machine-generated subdomain label '$firstLabel' - throwaway notification-spam infrastructure"
+                    $originPart = ($pattern -split ',')[0]
+                    $nHost = Get-UrlHost $originPart
+                    if (-not $nHost) { $nHost = ($originPart -replace '^\[\*\.\]', '').Trim('/').ToLower() }
+                    if (-not $nHost) { continue }
+                    $flaggedByBrowser = ($notifBadKeys -contains $nk.Key)
+                    $why = @()
+                    if ($flaggedByBrowser) {
+                        $why += "the browser itself flagged this origin ($($nk.Key)) and will have revoked its grant"
                     }
-                }
-                $notifRows.Add([PSCustomObject]@{
-                    User=$nUser; Browser=$nr.Browser; Profile=$nProfile
-                    State=$state; Push=$(if ($nHost -and $pushHosts.Contains($nHost)) { 'YES' } else { '' })
-                    Host=(Defang $nHost); Concern=($why -join '; ')
-                })
-                if ($state -eq 'ALLOW' -and $why.Count) {
-                    Add-Finding 'HIGH' '10' (Ex "Notification permission ALLOWED for a suspicious origin [$nUser/$($nr.Browser)] ^09 $(Defang $nHost) ^09 $($why -join '; ') ^09 can raise native OS toasts") '10_browser_extensions.txt'
-                } elseif ($state -eq 'ALLOW' -and $nHost -and $pushHosts.Contains($nHost)) {
-                    Add-Finding 'MED' '10' (Ex "Origin has an ACTIVE Web Push subscription [$nUser/$($nr.Browser)] ^09 $(Defang $nHost) ^09 can raise native OS toasts - confirm the user expects this") '10_browser_extensions.txt'
+                    if ($state -eq 'ALLOW' -or $flaggedByBrowser) {
+                        $v = Test-SuspiciousUrl $originPart
+                        if ($v) { $why += $v.Reason }
+                        if ($script:SquatDomainCount -gt 0) {
+                            $sq = Test-SquatHost $nHost
+                            if ($sq) { $why += "matches openSquat squat-domain watchlist ($sq)" }
+                        }
+                        $firstLabel = ($nHost -split '\.')[0]
+                        if (Test-RandomLookingLabel $firstLabel) {
+                            $why += "machine-generated subdomain label '$firstLabel' - throwaway notification-spam infrastructure"
+                        }
+                    }
+                    $notifRows.Add([PSCustomObject]@{
+                        User=$nUser; Browser=$nr.Browser; Profile=$nProfile
+                        Source=$nk.Label; State=$state
+                        Push=$(if ($pushHosts.Contains($nHost)) { 'YES' } else { '' })
+                        Host=(Defang $nHost); Concern=($why -join '; ')
+                    })
+                    # One finding per (user, browser, host, class) so a host recorded under several
+                    # keys does not fire the same finding repeatedly.
+                    $fKey = "$nUser|$($nr.Browser)|$nHost|$(if ($why.Count) { 'bad' } else { 'push' })"
+                    if ($why.Count) {
+                        if ($notifSeen.Add($fKey)) {
+                            Add-Finding 'HIGH' '10' (Ex "Browser notification origin flagged [$nUser/$($nr.Browser)] ^09 $(Defang $nHost) ^09 $($why -join '; ') ^09 can raise native OS toasts") '10_browser_extensions.txt'
+                        }
+                    } elseif ($state -eq 'ALLOW' -and $pushHosts.Contains($nHost)) {
+                        if ($notifSeen.Add($fKey)) {
+                            Add-Finding 'MED' '10' (Ex "Origin has an ACTIVE Web Push subscription [$nUser/$($nr.Browser)] ^09 $(Defang $nHost) ^09 can raise native OS toasts - confirm the user expects this") '10_browser_extensions.txt'
+                        }
+                    }
                 }
             }
         }
     }
     if ($notifRows.Count) {
-        # Concerning rows first, so a scareware origin is not buried under legitimate grants.
-        $notifRows | Sort-Object @{E={ if ($_.Concern) { 0 } else { 1 } }}, User, Browser, State, Host |
-            Format-Table User, Browser, Profile, State, Push, Host, Concern -AutoSize -Wrap
+        # Concerning rows first, so an origin revoked for abuse is not buried under normal grants.
+        $notifRows | Sort-Object @{E={ if ($_.Concern) { 0 } else { 1 } }}, User, Browser, Source, Host |
+            Format-Table User, Browser, Profile, Source, State, Push, Host, Concern -AutoSize -Wrap
         ""
-        "Notification grants: $($notifRows.Count) total, $(@($notifRows | Where-Object { $_.State -eq 'ALLOW' }).Count) ALLOW, $(@($notifRows | Where-Object { $_.Push -eq 'YES' }).Count) with a live push subscription"
+        "Notification origins: $($notifRows.Count) row(s) across $($notifKeys.Count) Chromium keys - $(@($notifRows | Where-Object { $_.State -eq 'ALLOW' }).Count) live ALLOW grant(s), $(@($notifRows | Where-Object { $_.Concern }).Count) flagged"
         "Firefox is not covered here - its desktop-notification grants live in permissions.sqlite"
         "(moz_perms), a different format from Chromium's Preferences JSON."
     } else {
-        "(no Chromium notification permissions recorded, or no profiles present)"
+        "(no Chromium notification data recorded, or no profiles present)"
     }
 }
 
