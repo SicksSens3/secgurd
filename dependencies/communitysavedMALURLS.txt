@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-25 07:25:10 UTC
+# Updated: 2026-08-26 07:25:16 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://69cnc.duckdns.org/bins/putita.m68k,malware_download
@@ -19,6 +19,7 @@ http://www.69cnc.duckdns.org/bins/putita.arm6,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
 https://airtickts.com/,malware_download
+https://attention-check.online/files/attention-check.online/3e58de873486d6db/extension-fix-TY4TYU.zip,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
 https://balanced-red-emhnkdfj-dp7g2kvqxx8n.edgeone.dev/,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
@@ -39,21 +40,22 @@ https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/Images/stego_jxdqj7fw9j.png,malware_download
 https://munihuacho.gob.pe/imagenes2/MSI_PRO.png,malware_download
+https://nw.almfwb.com/almfwb.zip,malware_download
 https://pic.li/images/MSI_PRO_Last.jpeg,malware_download
 https://plain-wnam-prod-public.komododecks.com/202608/05/kk9ihQ9ebT47mHmrYHEr/image.png,malware_download
 https://profitable-pink-0y9btnew-dpk6vqe6eheo.edgeone.dev/,malware_download
 https://quick-load.vercel.app/api/settings/bootstraplinux,malware_download
+https://safe-pdf-viewer.lat/files/safe-pdf-viewer.lat/3e58de873486d6db/DOC-LNK5QD.zip,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
 https://sh.classera.com/Naew8m,malware_download
 https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
 https://signageinsignia.co.za/kizzy/1.jpg,malware_download
 https://somostask.co/Candy.png,malware_download
-https://sxetnavelelaio.com/depend/boost.zip,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
-https://www-connect-secure-wellcfargo.sekolahkejarpaket.com/wellsfargo_new_obf_08.07.26.zip,malware_download
+https://wordtax.ink/down/setup.aac,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.hqsblog.com/wordpress/wp-content/plugins/zxzxzx/stego_p0ci0zln28.png,malware_download
 https://www.kenwillzltd.com/kenwillzltd.zip,malware_download
