@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.4.1'
+$script:secgurdVersion = 'v2.4.2'
 
 # ---------------------------------------------
 
@@ -205,6 +205,11 @@ $ErrorActionPreference = 'SilentlyContinue'
 $script:RunStart = Get-Date
 $script:Findings = [System.Collections.Generic.List[string]]::new()
 $script:FindingFileCounts = @{}   # artifact filename -> number of findings pointing at it (00_SUMMARY index)
+# Optional structured detail for a finding, keyed by its stored single-line string. The headline
+# STAYS one line on purpose - severity sorting, the {file:...} regex and the -Find filter all parse
+# it line-wise - and this renders underneath it as an aligned "Label : Value" block an analyst can
+# scan down instead of unpicking a long run-on sentence.
+$script:FindingDetails = @{}
 $script:CollectedCount = 0
 $script:ErrorCount = 0
 $script:SkippedCount = 0
@@ -2509,7 +2514,8 @@ function Write-Section {
 }
 
 function Add-Finding {
-    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '', [switch]$Quiet, [switch]$NoRecord, [string]$HighlightUrl = '')
+    param([string]$Severity, [string]$Module, [string]$Message, [string]$Artifact = '', [switch]$Quiet, [switch]$NoRecord, [string]$HighlightUrl = '',
+          [string[]]$Detail = @())
     # Severity: HIGH / MED / INFO. Artifact (optional) is the exact .txt filename this
     # finding points at, so the HTML report can highlight just that file (not the whole module).
     # We encode it inside the stored string as {file:NAME} and strip it before display.
@@ -2526,7 +2532,9 @@ function Add-Finding {
 
     if (-not $NoRecord) {
         $tag = if ($Artifact) { " {file:$Artifact}" } else { '' }
-        $script:Findings.Add("[$Severity] ($Module) $Message$tag")
+        $stored = "[$Severity] ($Module) $Message$tag"
+        $script:Findings.Add($stored)
+        if ($Detail -and $Detail.Count) { $script:FindingDetails[$stored] = $Detail }
         if ($Artifact) {
             if ($script:FindingFileCounts.ContainsKey($Artifact)) { $script:FindingFileCounts[$Artifact]++ }
             else { $script:FindingFileCounts[$Artifact] = 1 }
@@ -2568,6 +2576,34 @@ function Add-Finding {
     }
     if ($ptr) { Write-Host $ptr -ForegroundColor DarkGray -NoNewline }
     Write-Host ""   # end the line
+}
+
+function Format-FindingDetail {
+    # Render a finding's structured detail as an aligned "Label : Value" block, so an analyst scans
+    # a column instead of unpicking a long sentence. Each item is "Label|Value"; an item with no
+    # pipe is emitted as a bare line. The label column is padded to the widest label in THIS block,
+    # so every finding self-aligns without a hard-coded width. Returns already-indented lines, or an
+    # empty array when the finding carries no detail (which is most of them).
+    param([string[]]$Detail, [string]$Indent = '         ')
+    if (-not $Detail -or $Detail.Count -eq 0) { return @() }
+    $pairs = @()
+    foreach ($d in $Detail) {
+        $i = ([string]$d).IndexOf('|')
+        if ($i -lt 0) { $pairs += ,@([string]$d, $null) }
+        else          { $pairs += ,@(([string]$d).Substring(0, $i), ([string]$d).Substring($i + 1)) }
+    }
+    $w = 0
+    foreach ($p in $pairs) { if ($p[0].Length -gt $w) { $w = $p[0].Length } }
+    $out = New-Object System.Collections.Generic.List[string]
+    $out.Add($Indent + ('-' * 56))
+    foreach ($p in $pairs) {
+        if ($null -eq $p[1]) { $out.Add($Indent + $p[0]) }
+        # The extra parentheses are load-bearing: inside .Add(...) the commas would otherwise parse
+        # as METHOD ARGUMENT separators, so -f would receive one argument for a three-slot format
+        # string and throw on every line.
+        else { $out.Add(('{0}{1} : {2}' -f $Indent, $p[0].PadRight($w), $p[1])) }
+    }
+    return $out.ToArray()
 }
 
 function Write-FindingRecap {
@@ -4001,8 +4037,20 @@ Save-Output "03_remote_access_tools.txt" {
             # is yours is a judgement only you can make. Judged even when user.config is missing -
             # previously an instance with no config produced no output and no finding at all, so an
             # attacker instance caught mid-install could pass silently.
-            $relayTxt = if ($relay) { Defang $relay } else { 'unknown relay' }
-            Add-Finding 'HIGH' '03' (Ex "ScreenConnect instance '$scName' ($($inst.Name)) ^09 relay $relayTxt ^09 downloaded $($inst.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm')) UTC - verify this tenant is authorized") '03_remote_access_tools.txt'
+            # Headline stays short and single-line (sorting / regex / filter all parse it);
+            # everything an analyst actually chases moves into the aligned detail block.
+            $relayTxt = if ($relay) { Defang $relay } else { '(unknown - no user.config or service ImagePath)' }
+            $scDetail = @(
+                "Name|$scName"
+                "Relay|$relayTxt"
+                "Instance|$(if ($scId) { $scId } else { '(no id in folder name)' })"
+                "Installed|$($inst.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC   (downloaded onto this host)"
+                "Last used|$($inst.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC"
+            )
+            if ($scExe) { $scDetail += "Client|$($scExe.Name)   (downloaded $($scExe.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')) UTC)" }
+            if ($svc)   { $scDetail += "Service|$($svc.Name)  |  Status: $($svc.State)" }
+            $scDetail += "Folder|$($inst.FullName)"
+            Add-Finding 'HIGH' '03' "ScreenConnect '$scName' - verify this tenant is authorized" '03_remote_access_tools.txt' -Detail $scDetail
         }
     }
     if (-not $scFound) { "(no ScreenConnect client instance folders found)" }
@@ -6214,6 +6262,7 @@ if ($script:Findings.Count -eq 0) {
             $line = "[{0}] {1}  {2}" -f $matches[1], $matches[3], $matches[2]
         }
         $summaryLines += "  $line"
+        foreach ($dl in (Format-FindingDetail $script:FindingDetails[$_])) { $summaryLines += $dl }
     }
 }
 $summaryLines += ""
@@ -6653,6 +6702,7 @@ if ($script:Findings.Count -gt 0) {
     Write-Alert (Ex "  ^24 FINDINGS ($($script:Findings.Count))")
     foreach ($f in ($script:Findings | Sort-Object)) {
         Write-FindingRecap $f
+        foreach ($dl in (Format-FindingDetail $script:FindingDetails[$f])) { Write-Host $dl -ForegroundColor DarkGray }
     }
     Write-Host ""
 } else {
