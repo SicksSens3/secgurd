@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.5.2'
+$script:secgurdVersion = 'v2.6.0'
 
 # ---------------------------------------------
 
@@ -574,6 +574,7 @@ function Show-Help {
     Write-Host "    o                     Toggle: open output folder when done" -ForegroundColor Gray
     Write-Host "    d                     Dependencies sub-menu: IOC hashes / malicious URLs / squat domains (load/paste/list/toggle)" -ForegroundColor Gray
     Write-Host "    t                     Time windows sub-menu: [t] scan lookback (events/files/timeline), [b] browser history (module 10 + searches)" -ForegroundColor Gray
+    Write-Host "    v                     View results: browse findings and artifacts in colour, without opening the .txt files" -ForegroundColor Gray
     Write-Host "    f                     Find/filter: scope all output to name(s)/string(s), comma-separated (blank clears)" -ForegroundColor Gray
     Write-Host "    p                     Pastable for remote shells - compressed paste [1-3] or web launcher [4]" -ForegroundColor Gray
     Write-Host "    r                     Run selected modules" -ForegroundColor Gray
@@ -1767,6 +1768,326 @@ function Invoke-TimeMenu {
     }
 }
 
+# ---------------------------------------------
+#  RESULTS BROWSER
+# ---------------------------------------------
+# Read findings and artifacts INSIDE secgurd instead of pulling the zip back and opening plain .txt
+# files. This matters most from a pasted run: in a SentinelOne remote shell you cannot conveniently
+# cat a file or retrieve the archive, so without this the analyst's only view of the results is the
+# handful of lines that scrolled past during the scan.
+#
+# Navigation is Read-Host ONLY - type a number, press Enter. The S1 remote shell supports that but
+# NOT raw key capture, so arrow keys / [Console]::ReadKey would make the whole feature useless in
+# the one place it earns its keep. Two keys mean the same thing on every screen: 'b' goes up one
+# level, 'q' leaves the browser entirely. A breadcrumb prints at the top of each screen because,
+# with no cursor and no scrollbar, it is the only thing showing how deep you are.
+#
+# Read-only: nothing here writes to disk, so nothing new can trip an on-host EDR. Colour is applied
+# on screen only; the .txt files, the zip and the hash manifest are untouched.
+
+$script:MauveAnsi = '38;2;170;130;230'   # #aa82e6 - same mauve the live URL echo and finding recap use
+
+function Get-SecgurdScans {
+    # Every secgurd output folder next to this run, newest first, with a findings tally read from
+    # each 00_SUMMARY.txt. Folders whose summary is missing are still listed (marked) - knowing a
+    # scan happened is useful even when its artifacts have been cleaned up.
+    param([string]$Root)
+    $out = New-Object System.Collections.Generic.List[object]
+    if (-not $Root -or -not (Test-Path -LiteralPath $Root)) { return $out }
+    $dirs = @(Get-ChildItem -LiteralPath $Root -Directory -Filter 'secgurd_*' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending)
+    foreach ($d in $dirs) {
+        $sum = Join-Path $d.FullName '00_SUMMARY.txt'
+        $hi = 0; $me = 0; $inf = 0; $has = $false
+        if (Test-Path -LiteralPath $sum) {
+            $has = $true
+            foreach ($ln in @(Get-Content -LiteralPath $sum -ErrorAction SilentlyContinue)) {
+                if     ($ln -match '^\s*\[HIGH\]') { $hi++ }
+                elseif ($ln -match '^\s*\[MED\s*\]') { $me++ }
+                elseif ($ln -match '^\s*\[INFO\]') { $inf++ }
+            }
+        }
+        $out.Add([PSCustomObject]@{
+            Path = $d.FullName; Name = $d.Name; When = $d.LastWriteTime
+            High = $hi; Med = $me; Info = $inf; HasSummary = $has
+        })
+    }
+    return $out
+}
+
+function Read-ScanFindings {
+    # Parse a scan's 00_SUMMARY.txt back into finding objects. Reading from the FILE rather than
+    # $script:Findings means the browser works identically for the run that just finished and for
+    # any earlier scan still on the box - one code path, no special case for "current".
+    param([string]$ScanPath)
+    $res = New-Object System.Collections.Generic.List[object]
+    $sum = Join-Path $ScanPath '00_SUMMARY.txt'
+    if (-not (Test-Path -LiteralPath $sum)) { return $res }
+    $lines = @(Get-Content -LiteralPath $sum -ErrorAction SilentlyContinue)
+    $group = ''
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $l = $lines[$i]
+        if ($l -match '^\s{2}([A-Z][A-Z &]+?)\s+-{3,}') { $group = $matches[1].Trim(); continue }
+        if ($l -match '^\s*\[(HIGH|MED\s*|INFO)\]\s+(\S+\.txt)\s*$') {
+            $sev = $matches[1].Trim(); $art = $matches[2]
+            $body = if (($i + 1) -lt $lines.Count) { $lines[$i + 1].Trim() } else { '' }
+            $res.Add([PSCustomObject]@{ Sev = $sev; Artifact = $art; Body = $body; Group = $group })
+        }
+    }
+    return $res
+}
+
+function Write-ArtifactLine {
+    # Colour one artifact line for the pager. The rules mirror what the tool already does elsewhere,
+    # so the browser looks like the rest of secgurd rather than a separate skin: severity tags in
+    # their finding colours, defanged indicators and paths in mauve (the same #aa82e6 the live URL
+    # echo uses), section rules dim. $Match highlights a search term the way flagged terms already
+    # highlight on the scan screen.
+    param([string]$Line, [string]$Match = '')
+
+    $emit = {
+        param($txt, $ansi, $fb)
+        if ($Match -and $txt -and $txt.IndexOf($Match, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $rest = $txt
+            while ($true) {
+                $s = $rest.IndexOf($Match, [StringComparison]::OrdinalIgnoreCase)
+                if ($s -lt 0) { Wc $rest $ansi $fb; break }
+                if ($s -gt 0) { Wc $rest.Substring(0, $s) $ansi $fb }
+                Wc $rest.Substring($s, $Match.Length) '30;43' 'Yellow'
+                $rest = $rest.Substring($s + $Match.Length)
+            }
+        } else { Wc $txt $ansi $fb }
+    }
+
+    if ($Line -match '^\s*={10,}\s*$' -or $Line -match '^\s*-{10,}\s*$') {
+        & $emit $Line '38;5;238' 'DarkGray'; Write-Host ''; return
+    }
+    if ($Line -match '^\s*\((none|no |not )') { & $emit $Line '38;5;242' 'DarkGray'; Write-Host ''; return }
+
+    # severity tag leading the line
+    if ($Line -match '^(\s*)(\[(HIGH|MED\s*|INFO)\])(.*)$') {
+        $pad = $matches[1]; $tag = $matches[2]; $sev = $matches[3].Trim(); $rest = $matches[4]
+        Write-Host $pad -NoNewline
+        switch ($sev) {
+            'HIGH' { Wc $tag $script:BrickAnsi 'Red' }
+            'MED'  { Wc $tag '38;5;179' 'Yellow' }
+            default { Wc $tag '38;5;242' 'DarkGray' }
+        }
+        & $emit $rest '0' 'Gray'; Write-Host ''; return
+    }
+    # "Label : value" detail rows - dim the label so the values carry the eye
+    if ($Line -match '^(\s+)([A-Za-z][\w /\.]{0,18})\s+:\s(.*)$') {
+        Write-Host $matches[1] -NoNewline
+        Wc ("{0} : " -f $matches[2]) '38;5;242' 'DarkGray'
+        & $emit $matches[3] $script:MauveAnsi 'Magenta'; Write-Host ''; return
+    }
+    # defanged indicator or a drive path anywhere on the line
+    if ($Line -match 'hxxps?://|fxp://|[A-Za-z]:\\' -or $Line -match [regex]::Escape([string][char]0x00B7)) {
+        & $emit $Line $script:MauveAnsi 'Magenta'; Write-Host ''; return
+    }
+    & $emit $Line '0' 'Gray'; Write-Host ''
+}
+
+function Show-ArtifactPager {
+    # Paged, coloured view of one artifact. Page size follows the window height so it fills the
+    # screen without scrolling past. '/text' searches within the file, 't' jumps to the top,
+    # 'b' returns to whatever opened it and 'q' leaves the browser.
+    # Returns 'quit' when the user asked to leave the browser entirely, else 'back'.
+    param([string]$Path, [string]$Crumb, [int]$StartLine = 0)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        Write-Host "  (artifact not found: $Path)" -ForegroundColor DarkGray
+        Write-Host "  Press Enter..." -ForegroundColor DarkGray; Read-Host | Out-Null; return 'back'
+    }
+    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    $name  = Split-Path $Path -Leaf
+    $top   = [Math]::Max(0, $StartLine)
+    $term  = ''
+    while ($true) {
+        $h = 30
+        try { $h = $Host.UI.RawUI.WindowSize.Height } catch {}
+        $page = [Math]::Max(8, $h - 8)
+        if ($top -ge $lines.Count) { $top = [Math]::Max(0, $lines.Count - $page) }
+        $end = [Math]::Min($lines.Count, $top + $page)
+
+        Clear-Host
+        Write-Host ("  $Crumb ") -ForegroundColor DarkGray -NoNewline
+        Write-Host $name -ForegroundColor Cyan
+        Write-Host ("  {0,-40}  lines {1}-{2} of {3}" -f $name, ($top + 1), $end, $lines.Count) -ForegroundColor DarkGray
+        Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
+        for ($i = $top; $i -lt $end; $i++) { Write-Host "  " -NoNewline; Write-ArtifactLine $lines[$i] $term }
+        Write-Host ''
+        $more = if ($end -lt $lines.Count) { '[Enter] next page   ' } else { '[Enter] back   ' }
+        Write-Host ("   $more[/text] search   [t] top   [b] back   [q] exit browser") -ForegroundColor DarkGray
+        Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
+        $k = (Read-Host).Trim()
+
+        if ($k -eq '')      { if ($end -lt $lines.Count) { $top = $end; continue } else { return 'back' } }
+        if ($k -eq 'q')     { return 'quit' }
+        if ($k -eq 'b')     { return 'back' }
+        if ($k -eq 't')     { $top = 0; $term = ''; continue }
+        if ($k.StartsWith('/')) {
+            $term = $k.Substring(1).Trim()
+            if (-not $term) { continue }
+            $hits = @()
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i].IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += $i }
+            }
+            if ($hits.Count -eq 0) {
+                Write-Host "  no match for '$term'" -ForegroundColor DarkGray
+                Write-Host '  Press Enter...' -ForegroundColor DarkGray; Read-Host | Out-Null; $term = ''
+            } else {
+                $top = [Math]::Max(0, $hits[0] - 2)
+                Write-Host ("  {0} match(es) - jumped to line {1}" -f $hits.Count, ($hits[0] + 1)) -ForegroundColor Yellow
+                Start-Sleep -Milliseconds 450
+            }
+            continue
+        }
+        if ($k -match '^\d+$') { $top = [Math]::Max(0, [int]$k - 3); continue }
+    }
+}
+
+function Show-ResultsBrowser {
+    # Entry point. -ScanPath preselects a scan (the one that just finished); with none, the newest
+    # secgurd_* folder is used. 'b' walks up one level, 'q' leaves from anywhere.
+    param([string]$ScanPath = '')
+    $root = if ($ScanPath) { Split-Path -Parent $ScanPath } else { $env:TEMP }
+    $scans = Get-SecgurdScans -Root $root
+    if ($scans.Count -eq 0) {
+        Write-Host ''
+        Write-Host '  No secgurd scan folders found to browse.' -ForegroundColor DarkGray
+        Write-Host '  Press Enter...' -ForegroundColor DarkGray; Read-Host | Out-Null; return
+    }
+    $cur = if ($ScanPath) { @($scans | Where-Object { $_.Path -eq $ScanPath })[0] } else { $null }
+    if (-not $cur) { $cur = $scans[0] }
+
+    while ($true) {
+        $findings = Read-ScanFindings -ScanPath $cur.Path
+        $arts = @(Get-ChildItem -LiteralPath $cur.Path -Filter '*.txt' -File -ErrorAction SilentlyContinue |
+                  Sort-Object Name)
+        Clear-Host
+        Write-Host '  results' -ForegroundColor DarkGray
+        Write-Host '  RESULTS' -ForegroundColor White -NoNewline
+        Write-Host ("  {0} - {1} - {2} files" -f $cur.Name, $cur.When.ToString('yyyy-MM-dd HH:mm'), $arts.Count) -ForegroundColor DarkGray
+        Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
+        Write-Host '   [1]  ' -ForegroundColor Yellow -NoNewline
+        Write-Host ('{0,-22}' -f 'Findings') -ForegroundColor White -NoNewline
+        Wc ("{0} HIGH" -f $cur.High) $script:BrickAnsi 'Red'
+        Write-Host ("  {0} MED  {1} INFO" -f $cur.Med, $cur.Info) -ForegroundColor DarkGray
+        Write-Host '   [2]  ' -ForegroundColor Yellow -NoNewline
+        Write-Host ('{0,-22}' -f 'Artifacts') -ForegroundColor White -NoNewline
+        Write-Host ("{0} written" -f $arts.Count) -ForegroundColor DarkGray
+        Write-Host '   [3]  ' -ForegroundColor Yellow -NoNewline
+        Write-Host ('{0,-22}' -f 'Switch scan') -ForegroundColor White -NoNewline
+        Write-Host ("{0} on this host" -f $scans.Count) -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Host '   [q] back to secgurd menu' -ForegroundColor DarkGray
+        Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
+        $c = (Read-Host).Trim().ToLower()
+        if ($c -in @('q','b','')) { return }
+
+        if ($c -eq '1') {
+            while ($true) {
+                Clear-Host
+                Write-Host '  results > ' -ForegroundColor DarkGray -NoNewline
+                Write-Host 'findings' -ForegroundColor White
+                Write-Host ("  FINDINGS  {0}" -f $findings.Count) -ForegroundColor White
+                Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
+                if ($findings.Count -eq 0) { Write-Host '  (none auto-flagged in this scan)' -ForegroundColor DarkGray }
+                $n = 0; $lastG = ''
+                foreach ($f in $findings) {
+                    if ($f.Group -ne $lastG -and $f.Group) {
+                        Write-Host ''
+                        Write-Host ("  {0}" -f $f.Group) -ForegroundColor DarkCyan
+                        $lastG = $f.Group
+                    }
+                    $n++
+                    Write-Host ("   [{0}] " -f $n) -ForegroundColor Yellow -NoNewline
+                    switch ($f.Sev) {
+                        'HIGH' { Wc '[HIGH]' $script:BrickAnsi 'Red' }
+                        'MED'  { Wc '[MED ]' '38;5;179' 'Yellow' }
+                        default { Wc '[INFO]' '38;5;242' 'DarkGray' }
+                    }
+                    Write-Host (' ' + $f.Body) -ForegroundColor Gray
+                    Write-Host ('             ' + $f.Artifact) -ForegroundColor Cyan
+                }
+                Write-Host ''
+                Write-Host '   [number] open artifact   [b] back   [q] exit browser' -ForegroundColor DarkGray
+                Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
+                $p = (Read-Host).Trim().ToLower()
+                if ($p -eq 'q') { return }
+                if ($p -in @('b','')) { break }
+                if ($p -match '^\d+$' -and [int]$p -ge 1 -and [int]$p -le $findings.Count) {
+                    $sel = $findings[[int]$p - 1]
+                    $r = Show-ArtifactPager -Path (Join-Path $cur.Path $sel.Artifact) -Crumb 'results > findings >'
+                    if ($r -eq 'quit') { return }
+                }
+            }
+            continue
+        }
+
+        if ($c -eq '2') {
+            while ($true) {
+                Clear-Host
+                Write-Host '  results > ' -ForegroundColor DarkGray -NoNewline
+                Write-Host 'artifacts' -ForegroundColor White
+                Write-Host ("  ARTIFACTS  {0} written" -f $arts.Count) -ForegroundColor White
+                Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
+                $i = 0; $lastG = ''
+                foreach ($a in $arts) {
+                    $mod = if ($a.Name -match '^(\d{2})_') { $matches[1] } else { '' }
+                    $g = if ($mod) { Get-ModuleGroupName $mod } else { 'SUMMARY' }
+                    if ($g -ne $lastG) { Write-Host ("  {0}" -f $g) -ForegroundColor DarkCyan; $lastG = $g }
+                    $i++
+                    $fc = @($findings | Where-Object { $_.Artifact -eq $a.Name }).Count
+                    Write-Host ("   [{0,2}] " -f $i) -ForegroundColor Yellow -NoNewline
+                    Write-Host ('{0,-34}' -f $a.Name) -ForegroundColor White -NoNewline
+                    Write-Host ('{0,7:N0} KB' -f ($a.Length / 1KB)) -ForegroundColor DarkGray -NoNewline
+                    if ($fc -gt 0) { Wc ("   * {0} finding(s)" -f $fc) $script:BrickAnsi 'Red' }
+                    Write-Host ''
+                }
+                Write-Host ''
+                Write-Host '   [number] open   [b] back   [q] exit browser' -ForegroundColor DarkGray
+                Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
+                $p = (Read-Host).Trim().ToLower()
+                if ($p -eq 'q') { return }
+                if ($p -in @('b','')) { break }
+                if ($p -match '^\d+$' -and [int]$p -ge 1 -and [int]$p -le $arts.Count) {
+                    $r = Show-ArtifactPager -Path $arts[[int]$p - 1].FullName -Crumb 'results > artifacts >'
+                    if ($r -eq 'quit') { return }
+                }
+            }
+            continue
+        }
+
+        if ($c -eq '3') {
+            Clear-Host
+            Write-Host '  results > ' -ForegroundColor DarkGray -NoNewline
+            Write-Host 'switch scan' -ForegroundColor White
+            Write-Host ("  SCANS ON THIS HOST  ({0})" -f $scans.Count) -ForegroundColor White
+            Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
+            $i = 0
+            foreach ($s in $scans) {
+                $i++
+                Write-Host ("   [{0}] " -f $i) -ForegroundColor Yellow -NoNewline
+                Write-Host ("{0}  " -f $s.When.ToString('yyyy-MM-dd HH:mm')) -ForegroundColor White -NoNewline
+                if (-not $s.HasSummary) { Write-Host '(no summary - artifacts cleaned up)' -ForegroundColor DarkGray }
+                else {
+                    Wc ("{0} HIGH" -f $s.High) $script:BrickAnsi 'Red'
+                    Write-Host ("  {0} MED  {1} INFO" -f $s.Med, $s.Info) -ForegroundColor DarkGray -NoNewline
+                    if ($s.Path -eq $cur.Path) { Write-Host '   <- current' -ForegroundColor Green } else { Write-Host '' }
+                }
+            }
+            Write-Host ''
+            Write-Host '   [number] switch   [b] back   [q] exit browser' -ForegroundColor DarkGray
+            Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
+            $p = (Read-Host).Trim().ToLower()
+            if ($p -eq 'q') { return }
+            if ($p -match '^\d+$' -and [int]$p -ge 1 -and [int]$p -le $scans.Count) { $cur = $scans[[int]$p - 1] }
+            continue
+        }
+    }
+}
+
 function Show-ModuleMenu {
     # Show the interactive menu whenever we can read keyboard input. We intentionally do NOT
     # treat S1's remote shell (ServerRemoteHost) as non-interactive - it supports Read-Host
@@ -1923,6 +2244,13 @@ function Show-ModuleMenu {
         Write-Host "   " -NoNewline
         Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
         Write-Host "  " -NoNewline
+        Write-Host ("{0,-4}" -f 'v') -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-36}" -f 'View results (browse findings/files)') -ForegroundColor White -NoNewline
+        Write-Host "(no need to open the .txt files)" -ForegroundColor DarkGray
+
+        Write-Host "   " -NoNewline
+        Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
+        Write-Host "  " -NoNewline
         if (Get-Command Show-S1Compressed -ErrorAction SilentlyContinue) {
         Write-Host ("{0,-4}" -f 'p') -ForegroundColor Yellow -NoNewline
         Write-Host ("{0,-36}" -f 'Pastable version for remote shells') -ForegroundColor White -NoNewline
@@ -2024,6 +2352,12 @@ function Show-ModuleMenu {
 
         if ($cmd -eq 't' -or $cmd -eq 'time') {
             $pendingMsg = Invoke-TimeMenu
+            Clear-Host; Show-secgurdBannerCompact
+            continue
+        }
+
+        if ($cmd -eq 'v' -or $cmd -eq 'view') {
+            Show-ResultsBrowser
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -7166,6 +7500,19 @@ Write-Host (Ex " ^11^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01^01
 Write-Host ""
 
 # Optionally open the output folder when done (interactive desktop only; the 'o' menu toggle).
+
+# Offer the results browser right where people currently go hunting for files. Skipped for -Auto
+# (headless by definition) and when there is no console to read a key from.
+if (-not $Auto -and [Environment]::UserInteractive) {
+    Write-Host ""
+    Write-Host "   [v] " -ForegroundColor Yellow -NoNewline
+    Write-Host "browse results here" -ForegroundColor White -NoNewline
+    Write-Host "    [Enter] exit" -ForegroundColor DarkGray
+    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+    try {
+        if ((Read-Host).Trim().ToLower() -eq 'v') { Show-ResultsBrowser -ScanPath $OutputPath }
+    } catch {}
+}
 
 if ([Environment]::UserInteractive -and $script:OpenFolderWhenDone) {
     try { Invoke-Item $OutputPath } catch {}
