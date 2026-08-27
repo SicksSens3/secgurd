@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.4.3'
+$script:secgurdVersion = 'v2.5.0'
 
 # ---------------------------------------------
 
@@ -716,6 +716,28 @@ $script:ModuleCatalogue = @(
     [PSCustomObject]@{ Id='13'; Name='Prefetch';             Desc='.pf files, last run times' }
     [PSCustomObject]@{ Id='14'; Name='Named pipes';          Desc='active pipes, c2 detection' }
 )
+
+# Display grouping for the menu AND for the findings summary - deliberately the same taxonomy, so
+# there is one mental model to learn rather than two. Every group is a CONTIGUOUS id range, which is
+# why the menu reads 01..14 straight down without renumbering a single module (renumbering would
+# have renamed all 54 artifacts and broken the presets, -Modules, and the AI file's evidence list).
+$script:ModuleGroups = @(
+    [PSCustomObject]@{ Name='SYSTEM & IDENTITY';       Ids=@('01','02') }
+    [PSCustomObject]@{ Name='PERSISTENCE & SCRIPTING'; Ids=@('03','04') }
+    [PSCustomObject]@{ Name='NETWORK';                 Ids=@('05') }
+    [PSCustomObject]@{ Name='HOST STATE';              Ids=@('06','07','08','09') }
+    [PSCustomObject]@{ Name='BROWSER & CREDENTIALS';   Ids=@('10') }
+    [PSCustomObject]@{ Name='EXECUTION TRACES';        Ids=@('11','12','13','14') }
+)
+
+function Get-ModuleGroupName {
+    # Which group a module id belongs to. Used by the findings summary so a finding files itself
+    # under the same heading its module sits under in the menu. Unknown ids fall back to 'OTHER'
+    # rather than being dropped - a finding must never vanish because its module was not mapped.
+    param([string]$Id)
+    foreach ($g in $script:ModuleGroups) { if ($g.Ids -contains $Id) { return $g.Name } }
+    return 'OTHER'
+}
 
 $script:Presets = @{
     'qa'  = @{ Label='Quick attack triage'; Modules=@('03','04','06','11'); Desc='persistence, ps, procs, lolbins' }
@@ -1693,26 +1715,36 @@ function Show-ModuleMenu {
         Write-Host (Ex "  ^16  No interactive input available ^09 running all modules.") -ForegroundColor Yellow
         Write-Host (Ex "       (use -Auto for headless runs, or -Modules to pick specific ones)") -ForegroundColor DarkGray
         Write-Host ""
-        foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
-        $script:ProceedWithRun = $true
-        return
-    }
-
-    # Splash first: the animated logo on its own screen. Because nothing is printed below it, the
-    # sword tip is always at the top of the viewport and fully visible - so the blood-drip stays
-    # aligned with the blade and can never scroll off (both problems it had running under the menu).
-    # A keypress clears the splash and drops into the menu, which shows the SAME banner statically
-    # above the options - no drip there, so the long menu scrolling on a short window is harmless.
-    Wait-BannerSplash
-    Clear-Host
-    Show-secgurdBannerCompact
-    $pendingMsg = $null
-    while ($true) {
-        Write-Host ""
-        if ($pendingMsg) {
-            Write-Host "   $pendingMsg" -ForegroundColor Cyan
-            Write-Host ""
-            $pendingMsg = $null
+        # Grouped, three across. Same row count as the old flat list, but the ids now read 01..14
+        # straight down and each group states what that block of modules is FOR - the flat list
+        # never said. Per-module descriptions move to '?' so three fit on a line; a narrow terminal
+        # falls back to one module per row rather than wrapping into nonsense.
+        $wide = $true
+        try { $wide = ($Host.UI.RawUI.BufferSize.Width -ge 96) } catch {}
+        $perRow = if ($wide) { 3 } else { 1 }
+        foreach ($grp in $script:ModuleGroups) {
+            Write-Host ("   {0}" -f $grp.Name) -ForegroundColor DarkCyan
+            $col = 0
+            foreach ($id in $grp.Ids) {
+                $m = $script:ModuleCatalogue | Where-Object { $_.Id -eq $id } | Select-Object -First 1
+                if (-not $m) { continue }
+                if ($col -eq 0) { Write-Host "    " -NoNewline }
+                $on = $script:SelectedModules[$m.Id]
+                $mark = if ($on) { (Ex "[^14]") } else { '[ ]' }
+                $markColor = if ($on) { 'Green' } else { 'DarkGray' }
+                $nameColor = if ($on) { 'White' } else { 'DarkGray' }
+                Write-Host $mark -ForegroundColor $markColor -NoNewline
+                Write-Host $m.Id -ForegroundColor Yellow -NoNewline
+                if ($perRow -eq 1) {
+                    Write-Host ("  {0,-22}" -f $m.Name) -ForegroundColor $nameColor -NoNewline
+                    Write-Host $m.Desc -ForegroundColor DarkGray
+                } else {
+                    Write-Host (" {0,-21}" -f $m.Name) -ForegroundColor $nameColor -NoNewline
+                }
+                $col++
+                if ($col -ge $perRow) { if ($perRow -gt 1) { Write-Host "" }; $col = 0 }
+            }
+            if ($col -ne 0) { Write-Host "" }
         }
         Write-Host "  " -NoNewline
         Write-Host "Select modules to run." -ForegroundColor White -NoNewline
@@ -1984,7 +2016,17 @@ function Show-ModuleMenu {
 
         # parse module numbers   supports "03" or "3" or multiple "1 3 5"
 
-        $tokens = $cmd -split '[\s,]+' | Where-Object { $_ }
+        # Ranges ('06-09') expand to their members before anything else. Every menu group is a
+        # contiguous id range, so this covers "toggle that whole group" without inventing group
+        # letters - and every free letter left would have collided with an existing command.
+        $tokens = @()
+        foreach ($raw in ($cmd -split '[\s,]+' | Where-Object { $_ })) {
+            if ($raw -match '^(\d{1,2})\s*-\s*(\d{1,2})$') {
+                $lo = [int]$matches[1]; $hi = [int]$matches[2]
+                if ($lo -gt $hi) { $tmp = $lo; $lo = $hi; $hi = $tmp }
+                for ($rn = $lo; $rn -le $hi; $rn++) { $tokens += ('{0:D2}' -f $rn) }
+            } else { $tokens += $raw }
+        }
         $toggledAny = $false
         $unknown = @()
         foreach ($t in $tokens) {
@@ -3392,12 +3434,34 @@ Save-Output "03_runmru_clickfix.txt" {
                     Preview = if ($cmdSafe.Length -gt 60) { $cmdSafe.Substring(0, 60) + '...' } else { $cmdSafe }
                     Command = $cmdSafe
                 })
-                if ($sev -eq 'HIGH') {
-                    $short = if ($cmd.Length -gt 160) { $cmd.Substring(0,160) + '...' } else { $cmd }
-                    $short = Defang $short
-                    Add-Finding 'HIGH' '03' (Ex "RunMRU (Win+R) command looks like ClickFix/paste-and-run ($($h.Acct)) ^17 $short") '03_runmru_clickfix.txt'
-                } elseif ($sev -eq 'MED') {
-                    Add-Finding 'MED' '03' (Ex "Unusually long RunMRU (Win+R) command ($($h.Acct)) - review for paste-and-run") '03_runmru_clickfix.txt'
+                if ($sev -eq 'HIGH' -or $sev -eq 'MED') {
+                    # The whole point of this artifact is the command, so put it IN the finding
+                    # rather than making the analyst open the file for it. Wrapped across detail
+                    # lines because a 1500-char ClickFix one-liner on one line is unreadable; the
+                    # verbatim single-string copy still lives in 03_runmru_clickfix.txt.
+                    $mruDetail = @(
+                        "User|$($h.Acct)"
+                        "Key|$keyDisp"
+                        "Slot|'$slot'  (position $rank in the Run dialog MRU)"
+                        "Length|$($cmd.Length) chars"
+                    )
+                    $wrapAt = 96
+                    $pos = 0
+                    $seg = 1
+                    while ($pos -lt $cmdSafe.Length -and $seg -le 8) {
+                        $take = [Math]::Min($wrapAt, $cmdSafe.Length - $pos)
+                        $label = if ($seg -eq 1) { 'Command' } else { '  …cont' }
+                        $mruDetail += ("{0}|{1}" -f $label, $cmdSafe.Substring($pos, $take))
+                        $pos += $take; $seg++
+                    }
+                    if ($pos -lt $cmdSafe.Length) {
+                        $mruDetail += ("  …cont|[+{0} more chars - full verbatim copy in 03_runmru_clickfix.txt]" -f ($cmdSafe.Length - $pos))
+                    }
+                    if ($sev -eq 'HIGH') {
+                        Add-Finding 'HIGH' '03' "RunMRU (Win+R) command looks like ClickFix/paste-and-run ($($h.Acct))" '03_runmru_clickfix.txt' -Detail $mruDetail
+                    } else {
+                        Add-Finding 'MED' '03' "Unusually long RunMRU (Win+R) command ($($h.Acct)) - review for paste-and-run" '03_runmru_clickfix.txt' -Detail $mruDetail
+                    }
                 }
             }
         }
@@ -6337,13 +6401,61 @@ if ($script:Findings.Count -eq 0) {
     # Lead each finding with its source artifact so the summary says exactly which file to open for
     # detail. The bare (module) tag is dropped - the filename already carries the module number.
     # Artifact-less findings keep their (module) locator unchanged.
-    $script:Findings | Sort-Object | ForEach-Object {
-        $line = $_
-        if ($line -match '^\[(HIGH|MED|INFO)\]\s+\(\w+\)\s+(.*?)\s*\{file:([^}]+)\}\s*$') {
-            $line = "[{0}] {1}  {2}" -f $matches[1], $matches[3], $matches[2]
+    # Findings, grouped under the SAME headings the menu uses, so there is one taxonomy rather than
+    # two. Two ordering rules, both fixing a real defect in the old flat list:
+    #   1. Severity is ranked, not sorted alphabetically. Sort-Object put [INFO] above [MED]
+    #      (H < I < M), so every INFO finding outranked every MED one in the file you open first.
+    #   2. Groups lead with their worst finding, so a group containing a HIGH always sorts above a
+    #      group that does not - you read top-down and stop when it stops mattering.
+    $sevRankS = @{ 'HIGH' = 0; 'MED' = 1; 'INFO' = 2 }
+    $parsed = New-Object System.Collections.Generic.List[object]
+    foreach ($f in $script:Findings) {
+        $sev = 'INFO'; $mod = ''; $body = $f; $art = ''
+        if ($f -match '^\[(HIGH|MED|INFO)\]\s+\((\w+)\)\s+(.*?)\s*\{file:([^}]+)\}\s*$') {
+            $sev = $matches[1]; $mod = $matches[2]; $body = $matches[3]; $art = $matches[4]
+        } elseif ($f -match '^\[(HIGH|MED|INFO)\]\s+\((\w+)\)\s+(.*)$') {
+            $sev = $matches[1]; $mod = $matches[2]; $body = $matches[3]
         }
-        $summaryLines += "  $line"
-        foreach ($dl in (Format-FindingDetail $script:FindingDetails[$_])) { $summaryLines += $dl }
+        $gName = Get-ModuleGroupName $mod
+        # Menu position, so groups that tie on severity fall back to the order they appear in the
+        # menu rather than to alphabetical - the reader already knows that order.
+        $gOrder = 99
+        for ($gi = 0; $gi -lt $script:ModuleGroups.Count; $gi++) {
+            if ($script:ModuleGroups[$gi].Name -eq $gName) { $gOrder = $gi; break }
+        }
+        $parsed.Add([PSCustomObject]@{
+            Raw = $f; Sev = $sev; Rank = $sevRankS[$sev]; Module = $mod
+            Group = $gName; GroupOrder = $gOrder; Artifact = $art; Body = $body
+        })
+    }
+    $hiN = @($parsed | Where-Object { $_.Sev -eq 'HIGH' }).Count
+    $meN = @($parsed | Where-Object { $_.Sev -eq 'MED'  }).Count
+    $inN = @($parsed | Where-Object { $_.Sev -eq 'INFO' }).Count
+    $summaryLines += (Ex "  $($parsed.Count) total  ^10  HIGH $hiN  ^10  MED $meN  ^10  INFO $inN")
+    $summaryLines += ''
+
+    # Worst group first: by best (lowest) severity present, then by how many HIGHs it holds, then by
+    # menu order. So a group with two HIGHs outranks one with a single HIGH, and equal groups appear
+    # in the order the menu taught you.
+    $grouped = $parsed | Group-Object Group | Sort-Object `
+        @{ Expression = { ($_.Group | Measure-Object -Property Rank -Minimum).Minimum } }, `
+        @{ Expression = { @($_.Group | Where-Object { $_.Sev -eq 'HIGH' }).Count }; Descending = $true }, `
+        @{ Expression = { ($_.Group | Measure-Object -Property GroupOrder -Minimum).Minimum } }
+    foreach ($gp in $grouped) {
+        $gHi = @($gp.Group | Where-Object { $_.Sev -eq 'HIGH' }).Count
+        $tail = if ($gHi -gt 0) { "($($gp.Count), $gHi high)" } else { "($($gp.Count))" }
+        $head = "$($gp.Name) "
+        $summaryLines += ("  {0}{1} {2}" -f $head, ('-' * [Math]::Max(3, 40 - $head.Length)), $tail)
+        foreach ($it in ($gp.Group | Sort-Object Rank, Artifact, Body)) {
+            if ($it.Artifact) {
+                $summaryLines += ("    [{0,-4}] {1}" -f $it.Sev, $it.Artifact)
+                $summaryLines += ("           {0}" -f $it.Body)
+            } else {
+                $summaryLines += ("    [{0,-4}] {1}" -f $it.Sev, $it.Body)
+            }
+            foreach ($dl in (Format-FindingDetail $script:FindingDetails[$it.Raw] '           ')) { $summaryLines += $dl }
+        }
+        $summaryLines += ''
     }
 }
 $summaryLines += ""
@@ -6781,9 +6893,24 @@ Write-Host ""
 
 if ($script:Findings.Count -gt 0) {
     Write-Alert (Ex "  ^24 FINDINGS ($($script:Findings.Count))")
-    foreach ($f in ($script:Findings | Sort-Object)) {
-        Write-FindingRecap $f
-        foreach ($dl in (Format-FindingDetail $script:FindingDetails[$f])) { Write-Host $dl -ForegroundColor DarkGray }
+    # Same grouping and ranking the summary file uses, so the screen and 00_SUMMARY.txt tell the
+    # same story in the same order. Ranked by severity, NOT sorted alphabetically - a plain sort put
+    # INFO above MED (H < I < M).
+    $sevRankR = @{ 'HIGH' = 0; 'MED' = 1; 'INFO' = 2 }
+    $recap = foreach ($f in $script:Findings) {
+        $sv = 'INFO'; $md = ''
+        if ($f -match '^\[(HIGH|MED|INFO)\]\s+\((\w+)\)') { $sv = $matches[1]; $md = $matches[2] }
+        [PSCustomObject]@{ Raw=$f; Rank=$sevRankR[$sv]; Group=(Get-ModuleGroupName $md) }
+    }
+    $recapGroups = $recap | Group-Object Group |
+        Sort-Object @{E={ ($_.Group | Measure-Object -Property Rank -Minimum).Minimum }}, Name
+    foreach ($rg in $recapGroups) {
+        Write-Host ""
+        Write-Host ("   $($rg.Name)  ({0})" -f $rg.Count) -ForegroundColor DarkCyan
+        foreach ($it in ($rg.Group | Sort-Object Rank, Raw)) {
+            Write-FindingRecap $it.Raw
+            foreach ($dl in (Format-FindingDetail $script:FindingDetails[$it.Raw])) { Write-Host $dl -ForegroundColor DarkGray }
+        }
     }
     Write-Host ""
 } else {
