@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.7.1'
+$script:secgurdVersion = 'v2.7.2'
 
 # ---------------------------------------------
 
@@ -2321,6 +2321,13 @@ function Show-ResultsBrowser {
         }
 
         if ($c -eq '2') {
+            # Default is MODULE ORDER, not severity. This screen is used to go looking for what
+            # the findings engine did NOT flag - "did we miss anything" - and severity order buries
+            # exactly those files at the bottom. Fixed 00 -> 14 order also means a file sits in the
+            # same place every run, which is what makes it findable from memory. [s] switches to
+            # triage order for when you do want the loud ones first; the choice sticks while you
+            # work and resets when you reopen the screen.
+            $artSort = 'mod'
             while ($true) {
                 Clear-Host
                 Write-Host '  results > ' -ForegroundColor DarkGray -NoNewline
@@ -2330,24 +2337,50 @@ function Show-ResultsBrowser {
                 # Same rail treatment as the findings screen. The two screens used to draw group
                 # headings differently - findings got a leading blank line, artifacts did not -
                 # which is a large part of why the browser felt loose.
+                # Each artifact carries its own worst-severity rank, computed once. 'OK' (no
+                # findings at all) ranks last so files with nothing in them sink to the bottom of
+                # their group rather than sitting between two that need reading.
+                $sevRankA = @{ 'HIGH' = 0; 'MED' = 1; 'INFO' = 2; 'OK' = 3 }
                 $decorated = @($arts | ForEach-Object {
-                    $mod = if ($_.Name -match '^(\d{2})_') { $matches[1] } else { '' }
+                    $mod  = if ($_.Name -match '^(\d{2})_') { $matches[1] } else { '' }
                     [PSCustomObject]@{
                         File = $_
                         Grp  = if ($mod) { Get-ModuleGroupName $mod } else { 'OTHER' }
                     }
                 })
-                # Group order follows the menu, with REPORT pinned first - it holds the summary you
-                # almost always want before anything else.
+                # $_ is rebound inside the nested Where-Object, so the artifact name has to be
+                # captured before the pipeline is entered - hence a second pass rather than doing
+                # it inline above.
+                foreach ($dd in $decorated) {
+                    $nm = $dd.File.Name
+                    $ws = Get-WorstSev @($findings | Where-Object { $_.Artifact -eq $nm })
+                    $dd | Add-Member -NotePropertyName Sev  -NotePropertyValue $ws -Force
+                    $dd | Add-Member -NotePropertyName Rank -NotePropertyValue $sevRankA[$ws] -Force
+                }
+
+                # Two orders, because they answer different questions. 'sev' is triage order: the
+                # groups holding a HIGH float up and the files with nothing sink, so the top of the
+                # screen is what needs reading. 'mod' is the fixed 00 -> 14 module order, which is
+                # what you want when you know the file you are after and just need it in the same
+                # place it was last time. REPORT is pinned first in BOTH - the summary is the thing
+                # you want before anything else regardless of what it contains.
                 $grpOrder = @('REPORT') + @($script:ModuleGroups | ForEach-Object { $_.Name }) + @('OTHER')
-                $aGroups = @($decorated | Group-Object Grp | Sort-Object @{E={
-                    $ix = [Array]::IndexOf($grpOrder, $_.Name)
-                    if ($ix -lt 0) { $grpOrder.Count } else { $ix }
-                }})
+                $aGroups = @($decorated | Group-Object Grp)
+                foreach ($ag in $aGroups) {
+                    $ix = [Array]::IndexOf($grpOrder, $ag.Name)
+                    if ($ix -lt 0) { $ix = $grpOrder.Count }
+                    $ag | Add-Member -NotePropertyName Pin  -NotePropertyValue $(if ($ag.Name -eq 'REPORT') { 0 } else { 1 }) -Force
+                    $ag | Add-Member -NotePropertyName MIx  -NotePropertyValue $ix -Force
+                    $ag | Add-Member -NotePropertyName GRnk -NotePropertyValue (($ag.Group | Measure-Object Rank -Minimum).Minimum) -Force
+                }
+                $aGroups = if ($artSort -eq 'sev') { @($aGroups | Sort-Object Pin, GRnk, MIx) }
+                           else                    { @($aGroups | Sort-Object Pin, MIx) }
+
                 $ordArts = New-Object System.Collections.Generic.List[object]
                 $i = 0
                 foreach ($ag in $aGroups) {
-                    $files = @($ag.Group | Sort-Object { $_.File.Name })
+                    $files = if ($artSort -eq 'sev') { @($ag.Group | Sort-Object Rank, { $_.File.Name }) }
+                             else                    { @($ag.Group | Sort-Object { $_.File.Name }) }
                     $gf = @($findings | Where-Object { $fn = $_.Artifact; @($files | Where-Object { $_.File.Name -eq $fn }).Count -gt 0 })
                     $gWorst = Get-WorstSev $gf
                     $gHi = @($gf | Where-Object { ($_.Sev -replace '\s','').ToUpper() -eq 'HIGH' }).Count
@@ -2369,23 +2402,50 @@ function Show-ResultsBrowser {
                         # row. An artifact with no findings gets the green OK rail.
                         Write-GroupRail (Get-WorstSev $mine) -NoNewline
                         Write-Host (" [{0,2}] " -f $i) -ForegroundColor Yellow -NoNewline
-                        Write-Host ('{0,-32}' -f $a.Name) -ForegroundColor White -NoNewline
-                        Write-Host ('{0,7:N0} KB' -f ($a.Length / 1KB)) -ForegroundColor DarkGray -NoNewline
+
+                        # Split the filename instead of printing it flat. Every row repeats a
+                        # two-digit prefix and a '.txt', which is ~7 characters of identical noise
+                        # per line that the eye has to skip past to reach the part that differs.
+                        # Dim the boilerplate, keep the distinctive middle bright, and the column
+                        # becomes scannable: "browser_extensions" reads, "10_browser_extensions.txt"
+                        # has to be parsed. The full real name is still on screen, because it is
+                        # what you need to find the file inside the zip.
+                        $nm = $a.Name
+                        $pre = ''; $mid = $nm; $ext = ''
+                        if ($nm -match '^(\d{2}_)(.+?)(\.txt)$') { $pre = $matches[1]; $mid = $matches[2]; $ext = $matches[3] }
+                        elseif ($nm -match '^(.+?)(\.txt)$')      { $mid = $matches[1]; $ext = $matches[2] }
+                        Wc $pre $script:InfoAnsi $script:InfoCon
+                        Write-Host $mid -ForegroundColor White -NoNewline
+                        Wc $ext $script:InfoAnsi $script:InfoCon
+                        $padTo = 34 - ($pre.Length + $mid.Length + $ext.Length)
+                        if ($padTo -gt 0) { Write-Host (' ' * $padTo) -NoNewline }
+
+                        # Size in whatever unit keeps it to three or four digits. '112 KB' and
+                        # '1,204 KB' in the same column force a mental conversion on every glance.
+                        $sz = if ($a.Length -ge 1MB) { '{0,6:N1} MB' -f ($a.Length / 1MB) }
+                              elseif ($a.Length -ge 1KB) { '{0,6:N0} KB' -f ($a.Length / 1KB) }
+                              else { '{0,6:N0}  B' -f $a.Length }
+                        Wc $sz $script:InfoAnsi $script:InfoCon
+
                         # The count used to be painted brick red no matter what was in it, so an
                         # artifact holding nothing but INFO notes advertised itself in the alert
                         # colour. Colour it by the WORST severity it actually contains.
                         if ($mine.Count -gt 0) {
-                            Write-Sev ("   * {0}" -f $mine.Count) (Get-WorstSev $mine)
+                            Write-Sev ("   {0,2} finding(s)" -f $mine.Count) (Get-WorstSev $mine)
                         } else { Write-Host '' }
                     }
                 }
                 Write-Host ''
                 Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
-                Write-Host '   [number] open   [b] back   [q] exit browser' -ForegroundColor DarkGray
+                Write-Host '   [number] open   ' -ForegroundColor DarkGray -NoNewline
+                Write-Host '[s] ' -ForegroundColor Yellow -NoNewline
+                Write-Host ("sort: {0}" -f $(if ($artSort -eq 'sev') { 'severity' } else { 'module order' })) -ForegroundColor DarkGray -NoNewline
+                Write-Host '   [b] back   [q] exit browser' -ForegroundColor DarkGray
                 Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
                 $p = (Read-Host).Trim().ToLower()
                 if ($p -eq 'q') { return }
                 if ($p -in @('b','')) { break }
+                if ($p -eq 's') { $artSort = if ($artSort -eq 'sev') { 'mod' } else { 'sev' }; continue }
                 if ($p -match '^\d+$' -and [int]$p -ge 1 -and [int]$p -le $ordArts.Count) {
                     $r = Show-ArtifactPager -Path $ordArts[[int]$p - 1].FullName -Crumb 'results > artifacts >'
                     if ($r -eq 'quit') { return }
@@ -4283,12 +4343,19 @@ Save-Output "03_scheduled_tasks.txt" {
     $allTasks = @(Get-ScheduledTask -ErrorAction SilentlyContinue)
 
     Write-Section "SCHEDULED TASKS (non-Microsoft)"
-    $allTasks |
-        Where-Object { $_.TaskPath -notlike '\Microsoft\*' } |
-        Select-Object TaskName, TaskPath, State,
-            @{N='Actions';E={ Defang (($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; ') }},
-            @{N='Triggers';E={($_.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join '; '}} |
-        Format-Table -AutoSize -Wrap
+    # Record blocks: the action is a full command line with arguments, so in a table it pushed
+    # the task name and path - the two things you scan for - off to the right.
+    $nonMs = @($allTasks | Where-Object { $_.TaskPath -notlike '\Microsoft\*' })
+    if ($nonMs.Count) {
+        foreach ($t in ($nonMs | Sort-Object TaskPath, TaskName)) {
+            $act = Defang (($t.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; ')
+            $trg = ($t.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join '; '
+            Format-RecordBlock -Title ([string]$t.TaskName) -TitleRight ([string]$t.State) -Indent '  ' -Width 98 `
+                -Fields ([ordered]@{ 'path' = [string]$t.TaskPath; 'action' = $act; 'triggers' = $trg })
+        }
+        ""
+        "Total non-Microsoft tasks: $($nonMs.Count)"
+    } else { "(no non-Microsoft scheduled tasks)" }
 
     Write-Section "ALL SCHEDULED TASKS (full detail)"
     # Get-ScheduledTaskInfo makes a per-task round-trip to the Task Scheduler service. Running it
@@ -4309,7 +4376,18 @@ Save-Output "03_scheduled_tasks.txt" {
             Actions    = Defang (($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' | ')
             Author     = $_.Principal.UserId
         }
-    } | Format-Table -AutoSize -Wrap
+    } | ForEach-Object {
+        # Eight columns including two datetimes and a joined command line. The times and the state
+        # are short and belong together on the title line; the action wraps beneath.
+        $f = [ordered]@{ 'path' = [string]$_.Path }
+        if ($_.Author)     { $f['author']  = [string]$_.Author }
+        if ($_.LastRun)    { $f['last run'] = [string]$_.LastRun }
+        if ($_.NextRun)    { $f['next run'] = [string]$_.NextRun }
+        if ($null -ne $_.LastResult) { $f['result'] = [string]$_.LastResult }
+        if ($_.Actions)    { $f['action']  = [string]$_.Actions }
+        Format-RecordBlock -Title ([string]$_.Name) -TitleRight ([string]$_.State) `
+            -Fields $f -Indent '  ' -Width 98
+    }
 
     Write-Section "SUSPICIOUS TASK ACTIONS (writable path / encoded / lolbin)"
     # Flag tasks whose action runs from a writable location or uses a download/encoded pattern.
@@ -4345,10 +4423,20 @@ Save-Output "03_services.txt" {
         Sort-Object Status, Name | Format-Table -AutoSize -Wrap
 
     Write-Section "RUNNING SERVICES WITH BINARY PATH"
-    Get-CimInstance Win32_Service |
-        Where-Object { $_.State -eq 'Running' } |
-        Select-Object Name, DisplayName, StartMode, State, @{N='PathName';E={Defang ([string]$_.PathName)}}, StartName |
-        Format-Table -AutoSize -Wrap
+    # PathName is a full quoted binary path with arguments and routinely passes 120 characters,
+    # which is the whole point of the artifact - so it gets its own wrapped field rather than a
+    # column that shoves every other value sideways.
+    $runSvc = @(Get-CimInstance Win32_Service | Where-Object { $_.State -eq 'Running' } | Sort-Object Name)
+    foreach ($s in $runSvc) {
+        Format-RecordBlock -Title ([string]$s.Name) -TitleRight ([string]$s.StartMode) -Indent '  ' -Width 98 `
+            -Fields ([ordered]@{
+                'display'  = [string]$s.DisplayName
+                'binary'   = Defang ([string]$s.PathName)
+                'runs as'  = [string]$s.StartName
+            })
+    }
+    ""
+    "Total running services: $($runSvc.Count)"
 
     Write-Section "RECENTLY MODIFIED SERVICE BINARIES (within $($script:DaysBack) days)"
     Get-CimInstance Win32_Service | ForEach-Object {

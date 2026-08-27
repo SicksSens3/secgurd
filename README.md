@@ -287,12 +287,29 @@ field:
 
 Because the change is in the **writer**, the `.txt` on disk improves as well as the coloured browser
 view - and `Write-ArtifactLine` already colourises `label : value` rows, so the browser lights these
-up for free. Converted so far: `10_browser_extensions.txt` (eight columns, of which a 32-char id, a
-~50-char update URL and a 100+ char permission list made a ~250-char row), `04_ps_event_log.txt`
-(the full script-block text in a single cell), `06_processes.txt` (image path *and* command line
-both unbounded in one row) and `06_process_tree.txt` (where an unbounded command line was pushing
-the parent/child columns that are the artifact's whole purpose off to the right). Labels are capped
-at 19 characters, because that is the longest one `Write-ArtifactLine` will recognise and colour.
+up for free. Converted so far:
+
+| Artifact | What was wrong |
+|---|---|
+| `10_browser_extensions.txt` | eight columns; a 32-char id, a ~50-char update URL and a 100+ char permission list made a ~250-char row |
+| `04_ps_event_log.txt` | the complete script-block text in a single cell |
+| `06_processes.txt` | image path **and** command line, both unbounded, in one row |
+| `06_process_tree.txt` | the command line pushed the parent/child columns - the artifact's whole purpose - off to the right |
+| `03_scheduled_tasks.txt` | eight columns including two datetimes and a joined command line, over every task on the host |
+| `03_services.txt` | `PathName` is a quoted binary path with arguments, routinely past 120 characters |
+
+Labels are capped at 19 characters, because that is the longest one `Write-ArtifactLine` will
+recognise and colour. Narrow tables stay tables - nothing that already fits gets churned.
+
+**The artifacts list is ordered for looking, not for triage.** It defaults to fixed module order
+(`00` -> `14`, with `REPORT` pinned first) rather than severity, because the reason you open this
+screen is usually to check what the findings engine did *not* flag - and severity order buries
+exactly those files at the bottom. Fixed order also means a file sits in the same place every run,
+which is what makes it findable from memory. **`[s]`** switches to severity order for when you do
+want the loud ones first. Each row splits the filename so the repeated `NN_` prefix and `.txt`
+suffix dim out and the distinctive middle stays bright - `browser_extensions` reads at a glance
+where `10_browser_extensions.txt` has to be parsed - and file sizes pick their own unit so the
+column never mixes `112 KB` with `1,204 KB`.
 
 **The pager wraps and pages by screen rows.** A 4096-character line used to soft-wrap into dozens of
 rows, so a "page" of 22 lines could scroll hundreds of rows past before stopping. Page height is now
