@@ -249,7 +249,7 @@ Two details make this work in the shell it was written for. **Interactivity is j
 
 ### Reading results: colour, sections and record blocks
 
-**Severity has one palette, defined once.** HIGH is brick red, **MED is amber** (`38;2;214;138;42`),
+**Severity has one palette, defined once.** HIGH is brick red, **MED is yellow** (`38;2;232;196;66`),
 INFO is neutral grey, and a verdict of *clean* is green. The table used to be hand-written in five
 places and the copies had drifted: MED rendered as tan in the results browser but as bright
 `Yellow` during the live scan - the same severity in two colours in one session - and two count
@@ -259,10 +259,11 @@ zero. MED's 16-colour fallback is **`DarkYellow`, not `Yellow`**, because `Yello
 literally indistinguishable.
 
 **Findings and artifacts are sectioned by a severity rail.** Each of the six groups is drawn with a
-coloured `|` running down its left edge, taking the colour of the **worst finding in that group** -
-red where a HIGH lives, amber for MED-only, green where nothing was flagged - with per-group tallies
-on the heading. You can find the section that matters by colour before any of the text has been
-read. It is ASCII `|`, never a box-drawing character: those mojibake in a remote shell running a
+coloured `|` running down its left edge. The **group heading** takes the colour of the worst finding
+in that group - red where a HIGH lives, yellow for MED-only, green where nothing was flagged - so you
+can find the section that matters before any of its rows have been read. Below the heading each
+**row's rail takes that row's own severity**, which turns the left edge into a severity gutter you
+can scan straight down. Per-group tallies sit on the heading. It is ASCII `|`, never a box-drawing character: those mojibake in a remote shell running a
 non-UTF8 codepage, which is the shell this tool exists for. Colour is never the *only* signal - the
 literal `[HIGH]` / `[MED ]` / `[INFO]` tag and the numeric tally stay in the text, so stripping
 colour entirely still leaves a readable screen.

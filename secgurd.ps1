@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.7.0'
+$script:secgurdVersion = 'v2.7.1'
 
 # ---------------------------------------------
 
@@ -441,7 +441,7 @@ $script:BrickCon  = 'Red'              # fallback ConsoleColor when ANSI/VT is u
 # MED is amber, NOT yellow. Yellow is already spoken for: it is the colour of the [n] selector
 # indexes, so a yellow MED tag was indistinguishable from the number used to open it - and on a
 # 16-colour host they were literally the same ConsoleColor. DarkYellow keeps them apart there.
-$script:MedAnsi  = '38;2;214;138;42'   # amber, RGB (214,138,42) - reads orange next to both red and grey
+$script:MedAnsi  = '38;2;232;196;66'   # yellow, RGB (232,196,66) - the medium-alert colour
 $script:MedCon   = 'DarkYellow'        # NOT Yellow: that is the [n] selector colour
 $script:InfoAnsi = '38;5;242'          # neutral grey - present, not shouting
 $script:InfoCon  = 'DarkGray'
@@ -2287,7 +2287,11 @@ function Show-ResultsBrowser {
                         # Every finding short enough not to wrap would have rendered as one letter.
                         $body = @(Split-ForWidth -Text $f.Body -Width $wrapAt)
                         for ($bi = 0; $bi -lt $body.Count; $bi++) {
-                            Write-GroupRail $worst -NoNewline
+                            # The rail beside a row takes THAT ROW's severity, so the stripe reads
+                            # as a severity gutter down the whole screen rather than one flat colour
+                            # per section. The heading rail keeps the group's worst, which is what
+                            # makes a section findable before any of its rows have been read.
+                            Write-GroupRail $f.Sev -NoNewline
                             if ($bi -eq 0) {
                                 Write-Host (" [{0}] " -f $n) -ForegroundColor Yellow -NoNewline
                                 Write-SevTag $f.Sev
@@ -2296,7 +2300,7 @@ function Show-ResultsBrowser {
                                 Write-Host ('        ' + $body[$bi]) -ForegroundColor Gray
                             }
                         }
-                        Write-GroupRail $worst -NoNewline
+                        Write-GroupRail $f.Sev -NoNewline
                         Write-Host ('        ' + $f.Artifact) -ForegroundColor Cyan
                     }
                 }
@@ -2361,7 +2365,9 @@ function Show-ResultsBrowser {
                         $i++
                         $ordArts.Add($a)
                         $mine = @($findings | Where-Object { $_.Artifact -eq $a.Name })
-                        Write-GroupRail $gWorst -NoNewline
+                        # Same rule as the findings screen: the rail beside a row reflects that
+                        # row. An artifact with no findings gets the green OK rail.
+                        Write-GroupRail (Get-WorstSev $mine) -NoNewline
                         Write-Host (" [{0,2}] " -f $i) -ForegroundColor Yellow -NoNewline
                         Write-Host ('{0,-32}' -f $a.Name) -ForegroundColor White -NoNewline
                         Write-Host ('{0,7:N0} KB' -f ($a.Length / 1KB)) -ForegroundColor DarkGray -NoNewline
@@ -2441,6 +2447,27 @@ function Show-ModuleMenu {
         Write-Host (Ex "  ^16  No interactive input available ^09 running all modules.") -ForegroundColor Yellow
         Write-Host (Ex "       (use -Auto for headless runs, or -Modules to pick specific ones)") -ForegroundColor DarkGray
         Write-Host ""
+        Write-Host "  " -NoNewline
+        Write-Host "Select modules to run." -ForegroundColor White -NoNewline
+        Write-Host "  [" -ForegroundColor DarkGray -NoNewline
+        Write-Host " number " -ForegroundColor Yellow -NoNewline
+        Write-Host (Ex "] toggle  ^10  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host " a " -ForegroundColor Yellow -NoNewline
+        Write-Host (Ex "] all  ^10  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host " n " -ForegroundColor Yellow -NoNewline
+        Write-Host (Ex "] none  ^10  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host " r " -ForegroundColor Green -NoNewline
+        Write-Host (Ex "] run  ^10  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host " ? " -ForegroundColor Yellow -NoNewline
+        Write-Host (Ex "] help  ^10  [") -ForegroundColor DarkGray -NoNewline
+        Write-Host " q " -ForegroundColor Red -NoNewline
+        Write-Host (Ex "] quit  ^10  [ ") -ForegroundColor DarkGray -NoNewline
+        Write-Host "cleanup" -ForegroundColor Cyan -NoNewline
+        Write-Host " ] clean_files" -ForegroundColor DarkGray -NoNewline
+        Write-Host ""
+        Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  collection modules  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
+        Write-Host ""
+
         # Grouped, three across. Same row count as the old flat list, but the ids now read 01..14
         # straight down and each group states what that block of modules is FOR - the flat list
         # never said. Per-module descriptions move to '?' so three fit on a line; a narrow terminal
@@ -2448,7 +2475,20 @@ function Show-ModuleMenu {
         $wide = $true
         try { $wide = ($Host.UI.RawUI.BufferSize.Width -ge 96) } catch {}
         $perRow = if ($wide) { 3 } else { 1 }
-        foreach ($grp in $script:ModuleGroups) {
+
+        # Render from a COMPUTED list so a module can never silently vanish from the menu.
+        # $script:ModuleGroups and $script:ModuleCatalogue are two separate tables, and the loop
+        # below draws from the groups: a catalogue entry belonging to no group was simply never
+        # drawn - present in the tool, runnable via -Modules, but impossible to find or toggle in
+        # the one screen you would look for it in, with no error to say so. Anything ungrouped now
+        # lands under OTHER instead, which is loud enough to notice and fix.
+        $menuGroups = New-Object System.Collections.Generic.List[object]
+        foreach ($g in $script:ModuleGroups) { $menuGroups.Add([PSCustomObject]@{ Name=$g.Name; Ids=@($g.Ids) }) }
+        $seenIds = @($script:ModuleGroups | ForEach-Object { $_.Ids })
+        $orphans = @($script:ModuleCatalogue | Where-Object { $seenIds -notcontains $_.Id } | ForEach-Object { $_.Id })
+        if ($orphans.Count) { $menuGroups.Add([PSCustomObject]@{ Name='OTHER'; Ids=$orphans }) }
+
+        foreach ($grp in $menuGroups) {
             Write-Host ("   {0}" -f $grp.Name) -ForegroundColor DarkCyan
             $col = 0
             foreach ($id in $grp.Ids) {
@@ -2472,40 +2512,6 @@ function Show-ModuleMenu {
             }
             if ($col -ne 0) { Write-Host "" }
         }
-        Write-Host "  " -NoNewline
-        Write-Host "Select modules to run." -ForegroundColor White -NoNewline
-        Write-Host "  [" -ForegroundColor DarkGray -NoNewline
-        Write-Host " number " -ForegroundColor Yellow -NoNewline
-        Write-Host (Ex "] toggle  ^10  [") -ForegroundColor DarkGray -NoNewline
-        Write-Host " a " -ForegroundColor Yellow -NoNewline
-        Write-Host (Ex "] all  ^10  [") -ForegroundColor DarkGray -NoNewline
-        Write-Host " n " -ForegroundColor Yellow -NoNewline
-        Write-Host (Ex "] none  ^10  [") -ForegroundColor DarkGray -NoNewline
-        Write-Host " r " -ForegroundColor Green -NoNewline
-        Write-Host (Ex "] run  ^10  [") -ForegroundColor DarkGray -NoNewline
-        Write-Host " ? " -ForegroundColor Yellow -NoNewline
-        Write-Host (Ex "] help  ^10  [") -ForegroundColor DarkGray -NoNewline
-        Write-Host " q " -ForegroundColor Red -NoNewline
-        Write-Host (Ex "] quit  ^10  [ ") -ForegroundColor DarkGray -NoNewline
-        Write-Host "cleanup" -ForegroundColor Cyan -NoNewline
-        Write-Host " ] clean_files" -ForegroundColor DarkGray -NoNewline
-        Write-Host ""
-        Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  collection modules  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
-        Write-Host ""
-
-        foreach ($m in $script:ModuleCatalogue) {
-            $on = $script:SelectedModules[$m.Id]
-            $mark = if ($on) { (Ex "[^14]") } else { '[ ]' }
-            $markColor = if ($on) { 'Green' } else { 'DarkGray' }
-            $nameColor = if ($on) { 'White' } else { 'DarkGray' }
-            Write-Host "   " -NoNewline
-            Write-Host $mark -ForegroundColor $markColor -NoNewline
-            Write-Host "  " -NoNewline
-            Write-Host $m.Id -ForegroundColor Yellow -NoNewline
-            Write-Host ("  {0,-22}" -f $m.Name) -ForegroundColor $nameColor -NoNewline
-            Write-Host $m.Desc -ForegroundColor DarkGray
-        }
-
         Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00  presets  ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
         Write-Host ""
