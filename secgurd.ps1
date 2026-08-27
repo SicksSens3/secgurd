@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.4.2'
+$script:secgurdVersion = 'v2.4.3'
 
 # ---------------------------------------------
 
@@ -5066,13 +5066,94 @@ Save-Output "09_defender_status.txt" {
         TamperProtectionSource, IsTamperProtected, AntivirusSignatureLastUpdated,
         QuickScanAge, FullScanAge | Format-List
 
-    # Flag disabled core protections
+    # Is ANOTHER anti-virus product actually protecting this host? This decides whether Defender
+    # being off is routine or alarming, and it is the difference between a finding you act on and
+    # one you learn to ignore. Three independent signals, because no single one covers every SKU:
+    #
+    #   1. AMRunningMode - Defender's own account of itself. It reports Passive / SxS Passive /
+    #      EDR Block when a third-party AV owns real-time protection. Most authoritative when set.
+    #   2. Security Center (root\SecurityCenter2 AntiVirusProduct) - the registry Windows itself
+    #      uses. WORKSTATION SKUs ONLY; the namespace does not exist on Server, which is why we
+    #      cannot rely on it alone in a mixed estate.
+    #   3. A running AV/EDR service - the Server fallback, and a cross-check everywhere else.
+    #
+    # Nothing here suppresses a genuine problem: Defender off with NOTHING else running is still
+    # HIGH, and that is the case worth waking up for - an attacker who disabled Defender on a host
+    # with no other protection. Defender off because SentinelOne owns the box is INFO, stated
+    # plainly, on every host in the estate.
+    $avOther = New-Object System.Collections.Generic.List[string]
+
+    $amMode = if ($st) { [string]$st.AMRunningMode } else { '' }
+    if ($amMode -match '(?i)passive|EDR Block') {
+        $avOther.Add("Defender reports AMRunningMode='$amMode' (it steps back when another AV owns real-time protection)")
+    }
+
+    # Security Center product registry (workstations). productState is a bit-packed DWORD; the
+    # middle byte carries the on/off state - 0x10/0x11 = enabled. We decode defensively and, if the
+    # decode fails, still name the product rather than asserting anything about its state.
+    try {
+        $scAv = @(Get-CimInstance -Namespace 'root\SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop)
+        foreach ($av in $scAv) {
+            $nm = [string]$av.displayName
+            if (-not $nm) { continue }
+            if ($nm -match '(?i)windows defender|microsoft defender') { continue }   # not "another" AV
+            $stateTxt = 'state unknown'
+            try {
+                $hex = '{0:X6}' -f [int]$av.productState
+                $onByte = [Convert]::ToInt32($hex.Substring(2, 2), 16)
+                $stateTxt = if ($onByte -eq 0x10 -or $onByte -eq 0x11) { 'ENABLED' } else { 'not enabled' }
+            } catch {}
+            $avOther.Add("Security Center registers '$nm' ($stateTxt)")
+        }
+    } catch {
+        # root\SecurityCenter2 is absent on Server SKUs - expected, not an error worth reporting.
+    }
+
+    # Running AV/EDR service - covers Server, where Security Center does not exist.
+    $avSvcRx = '(?i)(sentinel|crowdstrike|csagent|cylance|carbonblack|cbdefense|sophos|savservice|' +
+               'mcafee|masvc|symantec|sepmasterservice|trendmicro|amsp|eset|ekrn|bitdefender|' +
+               'kaspersky|avp|malwarebytes|mbamservice|huntress|cybereason|elastic-endpoint|xagt)'
+    try {
+        $avSvcs = @(Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
+                    Where-Object { $_.State -eq 'Running' -and ("$($_.Name) $($_.DisplayName) $($_.PathName)" -match $avSvcRx) })
+        foreach ($s in ($avSvcs | Select-Object -First 4)) {
+            $avOther.Add("running AV/EDR service '$($s.Name)' ($($s.DisplayName))")
+        }
+    } catch {}
+
+    ""
+    Write-Section "THIRD-PARTY AV / EDR PRESENCE"
+    if ($avOther.Count) {
+        "Another AV/EDR appears to own protection on this host:"
+        foreach ($a in $avOther) { "  - $a" }
+        ""
+        "Defender being passive or disabled is therefore EXPECTED here and is reported as INFO, not"
+        "as a gap. Attacker-added Defender EXCLUSIONS and threat-detection history below are still"
+        "flagged normally - those matter regardless of which product is primary."
+    } else {
+        "No third-party AV/EDR detected via AMRunningMode, Security Center, or a running service."
+        "Defender protection gaps below are therefore reported at full severity - if Defender is off"
+        "and nothing else is running, this host may have NO active anti-virus protection."
+    }
+    $avElsewhere = ($avOther.Count -gt 0)
+
+    # Flag disabled core protections. Severity depends on whether anything else is protecting the
+    # host: 'Defender is off' is routine under SentinelOne and alarming on a bare host, and calling
+    # both HIGH trains analysts to ignore the one that matters.
     if ($st) {
         if ($st.RealTimeProtectionEnabled -eq $false) {
-            Add-Finding 'HIGH' '09' "Defender real-time protection is DISABLED" '09_defender_status.txt'
+            if ($avElsewhere) {
+                Add-Finding 'INFO' '09' "Defender real-time protection is off - expected, another AV/EDR owns protection on this host" '09_defender_status.txt'
+            } else {
+                Add-Finding 'HIGH' '09' "Defender real-time protection is DISABLED and NO other AV/EDR was detected - this host may be unprotected" '09_defender_status.txt'
+            }
         }
         if ($st.AntivirusEnabled -eq $false) {
-            Add-Finding 'MED' '09' "Defender antivirus is disabled (another AV may be active)" '09_defender_status.txt'
+            if ($avElsewhere) {
+                Add-Finding 'INFO' '09' "Defender antivirus is off - expected, another AV/EDR owns protection on this host" '09_defender_status.txt'
+            } else {
+                Add-Finding 'HIGH' '09' "Defender antivirus is DISABLED and NO other AV/EDR was detected - this host may be unprotected" '09_defender_status.txt'
+            }
         }
         if ($st.IsTamperProtected -eq $false) {
             Add-Finding 'INFO' '09' "Defender tamper protection is off" '09_defender_status.txt'
