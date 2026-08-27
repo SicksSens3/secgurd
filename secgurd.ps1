@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.6.3'
+$script:secgurdVersion = 'v2.7.0'
 
 # ---------------------------------------------
 
@@ -429,7 +429,211 @@ function Wc {
 # supports it (Write-Host's -ForegroundColor can't do arbitrary RGB), with DarkRed as the
 # 16-color fallback. Centralized here so the shade is easy to retune in one place.
 $script:BrickAnsi = '38;2;168;42;34'   # brick red, RGB (168,42,34) - darker/less neon than plain Red
-$script:BrickCon  = 'DarkRed'          # fallback ConsoleColor when ANSI/VT is unavailable
+$script:BrickCon  = 'Red'              # fallback ConsoleColor when ANSI/VT is unavailable
+
+# The rest of the severity palette, and the reason it lives here rather than at each call site.
+# This table used to be hand-written FIVE times (the pager, the browser, Add-Finding's echo twice,
+# and the recap) and the copies had drifted apart: MED rendered as ANSI tan in the browser but as
+# bright ConsoleColor Yellow in the live echo - the same severity in two visibly different yellows
+# in one session - while HIGH fell back to DarkRed in one place and Red in another. Two count rows
+# had no MED colour at all, so a scan with 12 MED findings looked exactly as quiet as one with zero.
+#
+# MED is amber, NOT yellow. Yellow is already spoken for: it is the colour of the [n] selector
+# indexes, so a yellow MED tag was indistinguishable from the number used to open it - and on a
+# 16-colour host they were literally the same ConsoleColor. DarkYellow keeps them apart there.
+$script:MedAnsi  = '38;2;214;138;42'   # amber, RGB (214,138,42) - reads orange next to both red and grey
+$script:MedCon   = 'DarkYellow'        # NOT Yellow: that is the [n] selector colour
+$script:InfoAnsi = '38;5;242'          # neutral grey - present, not shouting
+$script:InfoCon  = 'DarkGray'
+$script:OkAnsi   = '38;2;78;163;106'   # green, RGB (78,163,106) - "checked and clean", never decoration
+$script:OkCon    = 'DarkGreen'
+
+function Get-SevPalette {
+    # One severity -> colour lookup for the whole tool. Accepts any spelling the file produces:
+    # findings are stored unpadded ('MED') but 00_SUMMARY.txt writes the padded form ('MED ') and
+    # the parsers deliberately tolerate it, so normalize before matching. The old exact-match
+    # StartsWith('[MED]') test in the recap silently degraded a padded MED to dim INFO grey.
+    param([string]$Severity)
+    switch (($Severity -replace '\s', '').ToUpper()) {
+        'HIGH'  { @{ Ansi = $script:BrickAnsi; Con = $script:BrickCon } }
+        'MED'   { @{ Ansi = $script:MedAnsi;   Con = $script:MedCon } }
+        'OK'    { @{ Ansi = $script:OkAnsi;    Con = $script:OkCon } }
+        default { @{ Ansi = $script:InfoAnsi;  Con = $script:InfoCon } }
+    }
+}
+
+function Write-SevTag {
+    # The '[HIGH]' / '[MED ]' / '[INFO]' tag, padded to a fixed 4 so tags line up in a column.
+    # The recap used to emit an unpadded '[MED] ', one character short, nudging every MED row in
+    # the on-screen recap out of alignment with the HIGH and INFO rows around it.
+    param([string]$Severity, [switch]$NoBracket)
+    $s = ($Severity -replace '\s', '').ToUpper()
+    $p = Get-SevPalette $s
+    $t = if ($NoBracket) { '{0,-4}' -f $s } else { '[{0,-4}]' -f $s }
+    Wc $t $p.Ansi $p.Con
+}
+
+function Write-Sev {
+    # Arbitrary text in a severity's colour (counts, rails, group tallies).
+    param([string]$Text, [string]$Severity, [switch]$NoNewline)
+    $p = Get-SevPalette $Severity
+    Wc $Text $p.Ansi $p.Con
+    if (-not $NoNewline) { Write-Host '' }
+}
+
+function Get-WorstSev {
+    # The worst severity present in a set of findings, or 'OK' for none. Drives the group rails:
+    # one glance at the rail colour says whether a section is worth reading.
+    param($Findings)
+    $s = @($Findings | ForEach-Object { ($_.Sev -replace '\s','').ToUpper() })
+    if ($s -contains 'HIGH') { return 'HIGH' }
+    if ($s -contains 'MED')  { return 'MED' }
+    if ($s.Count -gt 0)      { return 'INFO' }
+    return 'OK'
+}
+
+function Write-SevCounts {
+    # The "4 HIGH  20 MED  4 INFO" tally, each number in its own severity colour.
+    # A ZERO count is dimmed instead of painted its alert colour - "0 HIGH" in brick red reads as
+    # an alarm at a glance, which is exactly backwards. When nothing at all was flagged the whole
+    # tally collapses to a green "clean", which is the only place green is used as a verdict.
+    param([int]$High, [int]$Med, [int]$Info, [switch]$NoNewline, [switch]$Collapse)
+    if ($Collapse -and $High -eq 0 -and $Med -eq 0 -and $Info -eq 0) {
+        Wc 'clean' $script:OkAnsi $script:OkCon
+    } else {
+        if ($High -gt 0) { Wc ("{0} HIGH" -f $High) $script:BrickAnsi $script:BrickCon }
+        else             { Wc ("{0} HIGH" -f $High) $script:InfoAnsi  $script:InfoCon }
+        if ($Med -gt 0)  { Wc ("  {0} MED" -f $Med) $script:MedAnsi   $script:MedCon }
+        else             { Wc ("  {0} MED" -f $Med) $script:InfoAnsi  $script:InfoCon }
+        Wc ("  {0} INFO" -f $Info) $script:InfoAnsi $script:InfoCon
+    }
+    if (-not $NoNewline) { Write-Host '' }
+}
+
+function Get-ConWidth {
+    # Usable console width. RawUI throws or reports nonsense on a redirected/remote host, which is
+    # the normal case here, so every failure lands on a conservative 100. Clamped low as well as
+    # high: a 40-column report is unreadable, and honouring a bogus 3000 would defeat the wrapping.
+    param([int]$Default = 100)
+    $w = $Default
+    try { $w = [int]$Host.UI.RawUI.WindowSize.Width } catch { $w = $Default }
+    if ($w -lt 60 -or $w -gt 400) { $w = $Default }
+    return $w
+}
+
+function Split-ForWidth {
+    # Break text into lines no wider than $Width, preferring spaces. A token longer than the whole
+    # width (a 200-char command line, a base64 blob) is hard-split rather than allowed to run off -
+    # truncating it would destroy evidence, which is the one thing this tool must never do.
+    param([string]$Text, [int]$Width)
+    $out = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Text) { $Text = '' }
+    if ($Width -lt 8) { $Width = 8 }
+    foreach ($para in ($Text -split "`r?`n")) {
+        $rest = $para
+        if ($rest -eq '') { $out.Add(''); continue }
+        while ($rest.Length -gt $Width) {
+            $cut = $rest.LastIndexOf(' ', [Math]::Min($Width, $rest.Length - 1))
+            if ($cut -lt [int]($Width * 0.5)) { $cut = $Width }   # no sensible space - hard split
+            $out.Add($rest.Substring(0, $cut).TrimEnd())
+            $rest = $rest.Substring($cut).TrimStart()
+        }
+        if ($rest -ne '') { $out.Add($rest) }
+    }
+    if ($out.Count -eq 0) { $out.Add('') }
+    return $out
+}
+
+function Format-RecordBlock {
+    # One record rendered as an aligned "label : value" block instead of a table row.
+    #
+    # WHY THIS EXISTS. Save-Output writes artifacts with `Out-File -Width 4096`, which means
+    # `Format-Table -Wrap` never actually wraps in the saved file - a row only breaks past 4096
+    # columns. So -Wrap is effectively inert on disk: every wide table lands as one enormous
+    # physical line, and the "wrapping" an analyst sees is their viewer soft-wrapping it at a
+    # column that has nothing to do with the data. Narrowing the record is the only real fix, and
+    # doing it in the WRITER means the .txt improves too, not just the coloured browser view.
+    #
+    # LABELS ARE CAPPED AT 19 CHARACTERS on purpose. Write-ArtifactLine only recognises a detail
+    # row via ^(\s+)([A-Za-z][\w /\.]{0,18})\s+:\s(.*)$ - indented, letter-initial, at most 19
+    # chars, space-colon-space. A longer label still reads fine as text but silently loses its
+    # colour in the browser, so keep them short and the block lights up for free.
+    param(
+        [string]$Title,
+        [string]$TitleRight = '',
+        $Fields,
+        [string]$Indent = '    ',
+        [int]$Width = 0,
+        [string]$Flag = ''
+    )
+    $out = New-Object System.Collections.Generic.List[string]
+    if ($Width -le 0) { $Width = 98 }
+
+    if ($Title) {
+        $head = $Indent + $(if ($Flag) { $Flag + ' ' } else { '' }) + $Title
+        if ($TitleRight) {
+            $pad = $Width - $head.Length - $TitleRight.Length
+            if ($pad -lt 2) { $pad = 2 }
+            $head = $head + (' ' * $pad) + $TitleRight
+        }
+        $out.Add($head)
+    }
+
+    # Accept either an [ordered] dictionary or an array of two-element pairs.
+    #
+    # Pairs are PSCustomObjects, NOT two-element arrays, and that is deliberate: filtering arrays
+    # through Where-Object flattens them. The pipeline enumerates whatever a cmdlet writes, so an
+    # array element passed through emerges as its individual strings - the label/value pairs would
+    # collapse into one flat list and $p[0] would then index a CHARACTER of the label.
+    # Empty values are dropped here rather than printed blank: an artifact full of 'update  :'
+    # with nothing after it is noise, and absence is already visible from the missing row.
+    $pairs = New-Object System.Collections.Generic.List[object]
+    if ($Fields -is [System.Collections.IDictionary]) {
+        foreach ($k in $Fields.Keys) {
+            $v = [string]$Fields[$k]
+            if ($v -ne '') { $pairs.Add([PSCustomObject]@{ L = [string]$k; V = $v }) }
+        }
+    } else {
+        foreach ($f in @($Fields)) {
+            $v = [string]$f[1]
+            if ($v -ne '') { $pairs.Add([PSCustomObject]@{ L = [string]$f[0]; V = $v }) }
+        }
+    }
+    if ($pairs.Count -eq 0) { return $out }
+
+    $lw = 0
+    foreach ($p in $pairs) { if ($p.L.Length -gt $lw) { $lw = $p.L.Length } }
+    if ($lw -gt 19) { $lw = 19 }
+
+    $vIndent = $Indent + '  ' + (' ' * $lw) + '   '
+    $vWidth  = $Width - $vIndent.Length
+    if ($vWidth -lt 24) { $vWidth = 24 }
+
+    foreach ($p in $pairs) {
+        $lab = $p.L
+        if ($lab.Length -gt $lw) { $lab = $lab.Substring(0, $lw) }
+        $wrapped = @(Split-ForWidth -Text $p.V -Width $vWidth)
+        for ($i = 0; $i -lt $wrapped.Count; $i++) {
+            # Parentheses around the -f are load-bearing: inside .Add() the commas would otherwise
+            # parse as method argument separators and the format string would get one argument.
+            if ($i -eq 0) { $out.Add(('{0}  {1} : {2}' -f $Indent, $lab.PadRight($lw), $wrapped[$i])) }
+            else          { $out.Add($vIndent + $wrapped[$i]) }
+        }
+    }
+    return $out
+}
+
+function Write-GroupRail {
+    # One rail segment: the coloured '|' that runs down the left of a group. The rail takes the
+    # group's WORST severity, so a section holding a HIGH is red for its whole height and a section
+    # with nothing flagged is green - you can find the part of the screen that matters before any
+    # of the text has been read. ASCII '|' on purpose: box-drawing characters mojibake in a remote
+    # shell running a non-UTF8 codepage, which is the shell this tool exists for.
+    param([string]$Severity, [switch]$NoNewline)
+    $p = Get-SevPalette $Severity
+    Wc '  |' $p.Ansi $p.Con
+    if (-not $NoNewline) { Write-Host '' }
+}
 function Write-Alert {
     # Write a line (or segment with -NoNewline) in the alert brick-red.
     param([string]$Text, [switch]$NoNewline)
@@ -736,6 +940,12 @@ function Get-ModuleGroupName {
     # under the same heading its module sits under in the menu. Unknown ids fall back to 'OTHER'
     # rather than being dropped - a finding must never vanish because its module was not mapped.
     param([string]$Id)
+    # '00' is deliberately NOT in $script:ModuleGroups - that table also drives the module menu,
+    # and there is no module 00 to toggle. But every 00_* file IS a real artifact, so without this
+    # case the artifacts browser filed 00_SUMMARY, 00_TIMELINE, 00_INDEX, 00_HASHES and
+    # 00_IOC_MATCHES_* under 'OTHER' - the six most important files in the folder, under the one
+    # heading an analyst is most likely to skip.
+    if ($Id -eq '00') { return 'REPORT' }
     foreach ($g in $script:ModuleGroups) { if ($g.Ids -contains $Id) { return $g.Name } }
     return 'OTHER'
 }
@@ -1871,12 +2081,12 @@ function Write-ArtifactLine {
     if ($Line -match '^(\s*)(\[(HIGH|MED\s*|INFO)\])(.*)$') {
         $pad = $matches[1]; $tag = $matches[2]; $sev = $matches[3].Trim(); $rest = $matches[4]
         Write-Host $pad -NoNewline
-        switch ($sev) {
-            'HIGH' { Wc $tag $script:BrickAnsi 'Red' }
-            'MED'  { Wc $tag '38;5;179' 'Yellow' }
-            default { Wc $tag '38;5;242' 'DarkGray' }
-        }
-        & $emit $rest '0' 'Gray'; Write-Host ''; return
+        $sp = Get-SevPalette $sev
+        Wc $tag $sp.Ansi $sp.Con
+        # HIGH and MED bodies carry their severity colour; INFO stays neutral so the eye is not
+        # dragged to the routine lines. Previously every body reset to grey regardless.
+        if ($sev -eq 'INFO') { & $emit $rest '0' 'Gray' } else { & $emit $rest $sp.Ansi $sp.Con }
+        Write-Host ''; return
     }
     # "Label : value" detail rows - dim the label so the values carry the eye
     if ($Line -match '^(\s+)([A-Za-z][\w /\.]{0,18})\s+:\s(.*)$') {
@@ -1910,15 +2120,39 @@ function Show-ArtifactPager {
         try { $h = $Host.UI.RawUI.WindowSize.Height } catch {}
         $page = [Math]::Max(8, $h - 8)
         if ($top -ge $lines.Count) { $top = [Math]::Max(0, $lines.Count - $page) }
-        $end = [Math]::Min($lines.Count, $top + $page)
+
+        # Wrap here, and budget the page in PHYSICAL rows rather than logical lines.
+        # Artifacts are written with Out-File -Width 4096, so one table row can be thousands of
+        # characters wide: the terminal soft-wraps it into dozens of screen rows, which meant a
+        # "page" of 22 lines could scroll several hundred rows past before stopping. Measuring the
+        # wrapped height makes a page actually fill one screen, and the hanging indent keeps a
+        # continuation visibly subordinate to the line it came from instead of starting at column
+        # zero looking like a new record.
+        $cw   = (Get-ConWidth) - 8
+        $segs = New-Object System.Collections.Generic.List[object]
+        $rows = 0
+        $end  = $top
+        while ($end -lt $lines.Count) {
+            $s = @(Split-ForWidth -Text $lines[$end] -Width $cw)
+            # $rows -gt 0 guarantees the first line is always taken, so a single line taller than
+            # the whole page still advances rather than pinning the pager in place forever.
+            if ($rows -gt 0 -and ($rows + $s.Count) -gt $page) { break }
+            $segs.Add($s); $rows += $s.Count; $end++
+        }
 
         Clear-Host
         Write-Host ("  $Crumb ") -ForegroundColor DarkGray -NoNewline
         Write-Host $name -ForegroundColor Cyan
         Write-Host ("  {0,-40}  lines {1}-{2} of {3}" -f $name, ($top + 1), $end, $lines.Count) -ForegroundColor DarkGray
-        Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
-        for ($i = $top; $i -lt $end; $i++) { Write-Host "  " -NoNewline; Write-ArtifactLine $lines[$i] $term }
+        Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
+        foreach ($s in $segs) {
+            for ($sj = 0; $sj -lt $s.Count; $sj++) {
+                Write-Host $(if ($sj -eq 0) { '  ' } else { '      ' }) -NoNewline
+                Write-ArtifactLine $s[$sj] $term
+            }
+        }
         Write-Host ''
+        Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
         $more = if ($end -lt $lines.Count) { '[Enter] next page   ' } else { '[Enter] back   ' }
         Write-Host ("   $more[/text] search   [t] top   [b] back   [q] exit browser") -ForegroundColor DarkGray
         Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
@@ -1954,7 +2188,12 @@ function Show-ResultsBrowser {
     # secgurd_* folder is used. 'b' walks up one level, 'q' leaves from anywhere.
     param([string]$ScanPath = '')
     $root = if ($ScanPath) { Split-Path -Parent $ScanPath } else { $env:TEMP }
-    $scans = Get-SecgurdScans -Root $root
+    # @() is load-bearing. Get-SecgurdScans returns a List[object] and `return $out` UNROLLS it
+    # into the pipeline, so with EXACTLY ONE scan $scans binds to a bare PSCustomObject - the one
+    # scalar type PowerShell does not give an automatic .Count, which then reads $null. That made
+    # the header print "SCANS ON THIS HOST ()" and, worse, made `-le $scans.Count` compare against
+    # 0, so the only scan on the host could not be selected.
+    $scans = @(Get-SecgurdScans -Root $root)
     if ($scans.Count -eq 0) {
         Write-Host ''
         Write-Host '  No secgurd scan folders found to browse.' -ForegroundColor DarkGray
@@ -1964,18 +2203,19 @@ function Show-ResultsBrowser {
     if (-not $cur) { $cur = $scans[0] }
 
     while ($true) {
-        $findings = Read-ScanFindings -ScanPath $cur.Path
+        # Same unrolling trap as $scans above - and here it bit harder: with exactly one finding,
+        # `[int]$p -le $findings.Count` became `1 -le 0`, so the single finding could not be opened.
+        $findings = @(Read-ScanFindings -ScanPath $cur.Path)
         $arts = @(Get-ChildItem -LiteralPath $cur.Path -Filter '*.txt' -File -ErrorAction SilentlyContinue |
                   Sort-Object Name)
         Clear-Host
         Write-Host '  results' -ForegroundColor DarkGray
         Write-Host '  RESULTS' -ForegroundColor White -NoNewline
         Write-Host ("  {0} - {1} - {2} files" -f $cur.Name, $cur.When.ToString('yyyy-MM-dd HH:mm'), $arts.Count) -ForegroundColor DarkGray
-        Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
+        Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
         Write-Host '   [1]  ' -ForegroundColor Yellow -NoNewline
         Write-Host ('{0,-22}' -f 'Findings') -ForegroundColor White -NoNewline
-        Wc ("{0} HIGH" -f $cur.High) $script:BrickAnsi 'Red'
-        Write-Host ("  {0} MED  {1} INFO" -f $cur.Med, $cur.Info) -ForegroundColor DarkGray
+        Write-SevCounts -High $cur.High -Med $cur.Med -Info $cur.Info
         Write-Host '   [2]  ' -ForegroundColor Yellow -NoNewline
         Write-Host ('{0,-22}' -f 'Artifacts') -ForegroundColor White -NoNewline
         Write-Host ("{0} written" -f $arts.Count) -ForegroundColor DarkGray
@@ -1983,6 +2223,7 @@ function Show-ResultsBrowser {
         Write-Host ('{0,-22}' -f 'Switch scan') -ForegroundColor White -NoNewline
         Write-Host ("{0} on this host" -f $scans.Count) -ForegroundColor DarkGray
         Write-Host ''
+        Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
         Write-Host '   [q] back to secgurd menu' -ForegroundColor DarkGray
         Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
         $c = (Read-Host).Trim().ToLower()
@@ -1996,31 +2237,78 @@ function Show-ResultsBrowser {
                 Write-Host ("  FINDINGS  {0}" -f $findings.Count) -ForegroundColor White
                 Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
                 if ($findings.Count -eq 0) { Write-Host '  (none auto-flagged in this scan)' -ForegroundColor DarkGray }
-                $n = 0; $lastG = ''
+                # Group properly rather than watching for a change in the previous row's group.
+                # Read-ScanFindings returns findings in 00_SUMMARY.txt order and does NOT sort by
+                # group, so the old '-ne $lastG' test reprinted a heading every time a group
+                # reappeared further down - and a per-group tally beside it would then have shown
+                # the full group total twice, reading as double counting.
+                #
+                # $ordered is what the [n] indexes address. Display order and selection order MUST
+                # be the same list: the moment the screen is regrouped, indexing back into the
+                # unsorted $findings opens a different artifact than the one on the row you typed.
+                # Rank is stamped on each finding ONCE, up front, rather than computed by a
+                # scriptblock invoked from inside Sort-Object's expression. Same result, far fewer
+                # moving parts - and no dependence on how a nested scriptblock resolves a variable
+                # from the enclosing function scope, which is exactly the kind of thing that works
+                # on a dev box and behaves differently under a constrained remote shell.
+                $sevOrder = @{ 'HIGH' = 0; 'MED' = 1; 'INFO' = 2 }
                 foreach ($f in $findings) {
-                    if ($f.Group -ne $lastG -and $f.Group) {
-                        Write-Host ''
-                        Write-Host ("  {0}" -f $f.Group) -ForegroundColor DarkCyan
-                        $lastG = $f.Group
+                    $k = ($f.Sev -replace '\s','').ToUpper()
+                    $r = if ($sevOrder.ContainsKey($k)) { $sevOrder[$k] } else { 3 }
+                    $f | Add-Member -NotePropertyName Rank -NotePropertyValue $r -Force
+                }
+                # Lowest Rank in a group = its worst severity, so groups holding a HIGH float up.
+                $groups = @($findings | Group-Object Group |
+                            Sort-Object @{E={ ($_.Group | Measure-Object Rank -Minimum).Minimum }}, Name)
+                $ordered = New-Object System.Collections.Generic.List[object]
+                $wrapAt = (Get-ConWidth) - 22   # rail + index + tag + a space
+                $n = 0
+                foreach ($g in $groups) {
+                    $mem   = @($g.Group | Sort-Object Rank)
+                    $worst = Get-WorstSev $mem
+                    $hi = @($mem | Where-Object { $_.Rank -eq 0 }).Count
+                    $me = @($mem | Where-Object { $_.Rank -eq 1 }).Count
+
+                    Write-Host ''
+                    Write-GroupRail $worst -NoNewline
+                    Write-Host ('  ' + ('{0,-32}' -f $g.Name)) -ForegroundColor DarkCyan -NoNewline
+                    Write-SevCounts -High $hi -Med $me -Info ($mem.Count - $hi - $me)
+                    Write-GroupRail $worst
+
+                    foreach ($f in $mem) {
+                        $n++
+                        $ordered.Add($f)
+                        # Wrap the body ourselves instead of letting the terminal do it. A soft-wrap
+                        # would put the continuation at column 0, outside the rail, breaking the one
+                        # visual cue the group has - and long findings are exactly the common case.
+                        # @() for the same reason as $scans/$findings above: Split-ForWidth returns
+                        # a List and `return` unrolls it, so a body that fits on ONE line would come
+                        # back as a bare string - and $body[0] on a string is its first CHARACTER.
+                        # Every finding short enough not to wrap would have rendered as one letter.
+                        $body = @(Split-ForWidth -Text $f.Body -Width $wrapAt)
+                        for ($bi = 0; $bi -lt $body.Count; $bi++) {
+                            Write-GroupRail $worst -NoNewline
+                            if ($bi -eq 0) {
+                                Write-Host (" [{0}] " -f $n) -ForegroundColor Yellow -NoNewline
+                                Write-SevTag $f.Sev
+                                Write-Host (' ' + $body[$bi]) -ForegroundColor Gray
+                            } else {
+                                Write-Host ('        ' + $body[$bi]) -ForegroundColor Gray
+                            }
+                        }
+                        Write-GroupRail $worst -NoNewline
+                        Write-Host ('        ' + $f.Artifact) -ForegroundColor Cyan
                     }
-                    $n++
-                    Write-Host ("   [{0}] " -f $n) -ForegroundColor Yellow -NoNewline
-                    switch ($f.Sev) {
-                        'HIGH' { Wc '[HIGH]' $script:BrickAnsi 'Red' }
-                        'MED'  { Wc '[MED ]' '38;5;179' 'Yellow' }
-                        default { Wc '[INFO]' '38;5;242' 'DarkGray' }
-                    }
-                    Write-Host (' ' + $f.Body) -ForegroundColor Gray
-                    Write-Host ('             ' + $f.Artifact) -ForegroundColor Cyan
                 }
                 Write-Host ''
+                Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
                 Write-Host '   [number] open artifact   [b] back   [q] exit browser' -ForegroundColor DarkGray
                 Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
                 $p = (Read-Host).Trim().ToLower()
                 if ($p -eq 'q') { return }
                 if ($p -in @('b','')) { break }
-                if ($p -match '^\d+$' -and [int]$p -ge 1 -and [int]$p -le $findings.Count) {
-                    $sel = $findings[[int]$p - 1]
+                if ($p -match '^\d+$' -and [int]$p -ge 1 -and [int]$p -le $ordered.Count) {
+                    $sel = $ordered[[int]$p - 1]
                     $r = Show-ArtifactPager -Path (Join-Path $cur.Path $sel.Artifact) -Crumb 'results > findings >'
                     if ($r -eq 'quit') { return }
                 }
@@ -2034,28 +2322,66 @@ function Show-ResultsBrowser {
                 Write-Host '  results > ' -ForegroundColor DarkGray -NoNewline
                 Write-Host 'artifacts' -ForegroundColor White
                 Write-Host ("  ARTIFACTS  {0} written" -f $arts.Count) -ForegroundColor White
-                Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
-                $i = 0; $lastG = ''
-                foreach ($a in $arts) {
-                    $mod = if ($a.Name -match '^(\d{2})_') { $matches[1] } else { '' }
-                    $g = if ($mod) { Get-ModuleGroupName $mod } else { 'SUMMARY' }
-                    if ($g -ne $lastG) { Write-Host ("  {0}" -f $g) -ForegroundColor DarkCyan; $lastG = $g }
-                    $i++
-                    $fc = @($findings | Where-Object { $_.Artifact -eq $a.Name }).Count
-                    Write-Host ("   [{0,2}] " -f $i) -ForegroundColor Yellow -NoNewline
-                    Write-Host ('{0,-34}' -f $a.Name) -ForegroundColor White -NoNewline
-                    Write-Host ('{0,7:N0} KB' -f ($a.Length / 1KB)) -ForegroundColor DarkGray -NoNewline
-                    if ($fc -gt 0) { Wc ("   * {0} finding(s)" -f $fc) $script:BrickAnsi 'Red' }
+                Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
+                # Same rail treatment as the findings screen. The two screens used to draw group
+                # headings differently - findings got a leading blank line, artifacts did not -
+                # which is a large part of why the browser felt loose.
+                $decorated = @($arts | ForEach-Object {
+                    $mod = if ($_.Name -match '^(\d{2})_') { $matches[1] } else { '' }
+                    [PSCustomObject]@{
+                        File = $_
+                        Grp  = if ($mod) { Get-ModuleGroupName $mod } else { 'OTHER' }
+                    }
+                })
+                # Group order follows the menu, with REPORT pinned first - it holds the summary you
+                # almost always want before anything else.
+                $grpOrder = @('REPORT') + @($script:ModuleGroups | ForEach-Object { $_.Name }) + @('OTHER')
+                $aGroups = @($decorated | Group-Object Grp | Sort-Object @{E={
+                    $ix = [Array]::IndexOf($grpOrder, $_.Name)
+                    if ($ix -lt 0) { $grpOrder.Count } else { $ix }
+                }})
+                $ordArts = New-Object System.Collections.Generic.List[object]
+                $i = 0
+                foreach ($ag in $aGroups) {
+                    $files = @($ag.Group | Sort-Object { $_.File.Name })
+                    $gf = @($findings | Where-Object { $fn = $_.Artifact; @($files | Where-Object { $_.File.Name -eq $fn }).Count -gt 0 })
+                    $gWorst = Get-WorstSev $gf
+                    $gHi = @($gf | Where-Object { ($_.Sev -replace '\s','').ToUpper() -eq 'HIGH' }).Count
+                    $gMe = @($gf | Where-Object { ($_.Sev -replace '\s','').ToUpper() -eq 'MED'  }).Count
+
                     Write-Host ''
+                    Write-GroupRail $gWorst -NoNewline
+                    Write-Host ('  ' + ('{0,-30}' -f $ag.Name)) -ForegroundColor DarkCyan -NoNewline
+                    Write-Host ('{0,3} files   ' -f $files.Count) -ForegroundColor DarkGray -NoNewline
+                    Write-SevCounts -High $gHi -Med $gMe -Info ($gf.Count - $gHi - $gMe) -Collapse
+                    Write-GroupRail $gWorst
+
+                    foreach ($d in $files) {
+                        $a = $d.File
+                        $i++
+                        $ordArts.Add($a)
+                        $mine = @($findings | Where-Object { $_.Artifact -eq $a.Name })
+                        Write-GroupRail $gWorst -NoNewline
+                        Write-Host (" [{0,2}] " -f $i) -ForegroundColor Yellow -NoNewline
+                        Write-Host ('{0,-32}' -f $a.Name) -ForegroundColor White -NoNewline
+                        Write-Host ('{0,7:N0} KB' -f ($a.Length / 1KB)) -ForegroundColor DarkGray -NoNewline
+                        # The count used to be painted brick red no matter what was in it, so an
+                        # artifact holding nothing but INFO notes advertised itself in the alert
+                        # colour. Colour it by the WORST severity it actually contains.
+                        if ($mine.Count -gt 0) {
+                            Write-Sev ("   * {0}" -f $mine.Count) (Get-WorstSev $mine)
+                        } else { Write-Host '' }
+                    }
                 }
                 Write-Host ''
+                Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
                 Write-Host '   [number] open   [b] back   [q] exit browser' -ForegroundColor DarkGray
                 Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
                 $p = (Read-Host).Trim().ToLower()
                 if ($p -eq 'q') { return }
                 if ($p -in @('b','')) { break }
-                if ($p -match '^\d+$' -and [int]$p -ge 1 -and [int]$p -le $arts.Count) {
-                    $r = Show-ArtifactPager -Path $arts[[int]$p - 1].FullName -Crumb 'results > artifacts >'
+                if ($p -match '^\d+$' -and [int]$p -ge 1 -and [int]$p -le $ordArts.Count) {
+                    $r = Show-ArtifactPager -Path $ordArts[[int]$p - 1].FullName -Crumb 'results > artifacts >'
                     if ($r -eq 'quit') { return }
                 }
             }
@@ -2067,7 +2393,7 @@ function Show-ResultsBrowser {
             Write-Host '  results > ' -ForegroundColor DarkGray -NoNewline
             Write-Host 'switch scan' -ForegroundColor White
             Write-Host ("  SCANS ON THIS HOST  ({0})" -f $scans.Count) -ForegroundColor White
-            Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
+            Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
             $i = 0
             foreach ($s in $scans) {
                 $i++
@@ -2075,12 +2401,12 @@ function Show-ResultsBrowser {
                 Write-Host ("{0}  " -f $s.When.ToString('yyyy-MM-dd HH:mm')) -ForegroundColor White -NoNewline
                 if (-not $s.HasSummary) { Write-Host '(no summary - artifacts cleaned up)' -ForegroundColor DarkGray }
                 else {
-                    Wc ("{0} HIGH" -f $s.High) $script:BrickAnsi 'Red'
-                    Write-Host ("  {0} MED  {1} INFO" -f $s.Med, $s.Info) -ForegroundColor DarkGray -NoNewline
+                    Write-SevCounts -High $s.High -Med $s.Med -Info $s.Info -NoNewline
                     if ($s.Path -eq $cur.Path) { Write-Host '   <- current' -ForegroundColor Green } else { Write-Host '' }
                 }
             }
             Write-Host ''
+            Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
             Write-Host '   [number] switch   [b] back   [q] exit browser' -ForegroundColor DarkGray
             Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
             $p = (Read-Host).Trim().ToLower()
@@ -3025,8 +3351,11 @@ function Add-Finding {
     # Print one segment in the severity colour (HIGH = brick-red, MED = yellow, else gray).
     $writeSev = {
         param($t)
-        if ($Severity -eq 'HIGH') { Write-Alert $t -NoNewline }
-        else { Write-Host $t -ForegroundColor $(if ($Severity -eq 'MED') { 'Yellow' } else { 'DarkGray' }) -NoNewline }
+        # Route every severity through the shared palette. MED used to skip Wc entirely and print
+        # bright ConsoleColor Yellow even when ANSI was available, so the same finding was yellow on
+        # the live scan screen and amber in the results browser.
+        $sp = Get-SevPalette $Severity
+        Wc $t $sp.Ansi $sp.Con
     }
 
     # Dim " -> <file>" pointer so the analyst can jump straight to the artifact this finding lives in
@@ -3037,14 +3366,14 @@ function Add-Finding {
         # it easy to pick out exactly which URL - and where in the line - the finding is about.
         $idx  = $Message.IndexOf($HighlightUrl)
         & $writeSev $Message.Substring(0, $idx)
-        Wc $HighlightUrl '38;2;170;130;230' 'Magenta'   # #aa82e6 purple / mauve (NoNewline)
+        Wc $HighlightUrl $script:MauveAnsi 'Magenta'   # single-point-of-retune, not a re-typed literal
         & $writeSev $Message.Substring($idx + $HighlightUrl.Length)
     }
     elseif ($Severity -eq 'HIGH') {
         # brick-red alert (true-color when supported, DarkRed fallback)
         Write-Alert $Message -NoNewline
     } else {
-        $color = if ($Severity -eq 'MED') { 'Yellow' } else { 'DarkGray' }
+        $color = (Get-SevPalette $Severity).Con
         Write-Host $Message -ForegroundColor $color -NoNewline
     }
     if ($ptr) { Write-Host $ptr -ForegroundColor DarkGray -NoNewline }
@@ -3088,13 +3417,14 @@ function Write-FindingRecap {
     # colours (consistent across every finding); a finding with no artifact is simply all-severity.
     # Each finding LEADS with its source {file:...} artifact (cyan) so it's obvious which file to open.
     param([string]$Line)
-    $mauve = '38;2;170;130;230'   # #aa82e6 - matches the live URL highlight in Add-Finding
+    $mauve = $script:MauveAnsi    # the variable, not a re-typed copy of its value
     $fileC = '38;2;90;180;210'    # cyan - the source-artifact filename the finding leads with
 
     $sev = 'INFO'; $rest = $Line
-    if     ($Line.StartsWith('[HIGH]')) { $sev = 'HIGH'; $rest = $Line.Substring(6).TrimStart() }
-    elseif ($Line.StartsWith('[MED]'))  { $sev = 'MED';  $rest = $Line.Substring(5).TrimStart() }
-    elseif ($Line.StartsWith('[INFO]')) { $sev = 'INFO'; $rest = $Line.Substring(6).TrimStart() }
+    # Tolerate the padded form. 00_SUMMARY.txt writes '[MED ]' and every other parser in this file
+    # uses a 'MED\s*' regex to cope - this one used an exact StartsWith('[MED]') and fell through to
+    # the INFO default, so a padded MED finding rendered in dim grey with no error anywhere.
+    if ($Line -match '^\[(HIGH|MED\s*|INFO)\]\s*(.*)$') { $sev = $matches[1].Trim(); $rest = $matches[2] }
 
     # Peel a trailing {file:...} pointer so it can dim on its own.
     $fileTag = ''
@@ -3106,11 +3436,11 @@ function Write-FindingRecap {
         param($t)
         if ([string]::IsNullOrEmpty($t)) { return }
         if ($sev -eq 'HIGH') { Write-Alert $t -NoNewline }
-        else { Write-Host $t -ForegroundColor $(if ($sev -eq 'MED') { 'Yellow' } else { 'DarkGray' }) -NoNewline }
+        else { $sp = Get-SevPalette $sev; Wc $t $sp.Ansi $sp.Con }
     }
 
     Write-Host "    " -NoNewline
-    & $sevSeg "[$sev] "
+    & $sevSeg ('[{0,-4}] ' -f $sev)
 
     # Lead with the source artifact (cyan) so the recap says exactly which file to open, dropping the
     # bare (module) tag - the filename already carries the module number and is unambiguous. Artifact-
@@ -4772,9 +5102,21 @@ Save-Output "04_ps_event_log.txt" {
     }
 
     Write-Section "POWERSHELL OPERATIONAL EVENTS (last 200)"
-    Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents 200 -ErrorAction SilentlyContinue |
-        Select-Object TimeCreated, Id, LevelDisplayName, Message |
-        Format-Table -AutoSize -Wrap
+    # Record blocks, not a table. Message here is the COMPLETE operational event including the full
+    # script-block text, so a single table row ran to several thousand characters - by a wide margin
+    # the worst row in the collection. Split-ForWidth keeps the message's own newlines, so pasted
+    # script text stays readable as script text instead of being flattened into one ribbon.
+    $psOps = @(Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents 200 -ErrorAction SilentlyContinue |
+               Select-Object TimeCreated, Id, LevelDisplayName, Message)
+    if ($psOps.Count) {
+        foreach ($e in $psOps) {
+            $when = if ($e.TimeCreated) { $e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+            Format-RecordBlock -Title ("{0}  id {1}" -f $when, $e.Id) -TitleRight ([string]$e.LevelDisplayName) `
+                -Fields ([ordered]@{ 'message' = [string]$e.Message }) -Indent '  ' -Width 98
+            ""
+        }
+        "Total events: $($psOps.Count)"
+    } else { "(no PowerShell operational events)" }
 }
 #endregion 04_ps_event_log.txt
 
@@ -4966,11 +5308,27 @@ Save-Output "06_processes.txt" {
     $cmdLineByPid = @{}
     Get-CimInstance Win32_Process | ForEach-Object { $cmdLineByPid[[int]$_.ProcessId] = $_.CommandLine }
 
-    Get-Process | Select-Object Id, Name, CPU, WorkingSet,
+    # A compact title line carries the scannable numbers; the two unbounded values (image path
+    # and command line) drop underneath as their own wrapped fields. Two values that can each run
+    # past 200 characters in ONE table row is what made this artifact unreadable.
+    $procRows = @(Get-Process | Select-Object Id, Name, CPU, WorkingSet,
         @{N='Path';E={$_.Path}},
         @{N='StartTime';E={$_.StartTime}},
         @{N='CommandLine';E={$cmdLineByPid[[int]$_.Id]}} |
-        Sort-Object CPU -Descending | Format-Table -AutoSize -Wrap
+        Sort-Object CPU -Descending)
+    foreach ($pr in $procRows) {
+        $cpu = if ($null -ne $pr.CPU) { '{0,8:N2}' -f $pr.CPU } else { '        ' }
+        $ws  = '{0,8:N0} KB' -f ($pr.WorkingSet / 1KB)
+        $st  = if ($pr.StartTime) { $pr.StartTime.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+        $f = [ordered]@{}
+        if ($pr.Path)        { $f['path']    = [string]$pr.Path }
+        if ($pr.CommandLine) { $f['cmdline'] = [string]$pr.CommandLine }
+        if ($st)             { $f['started'] = $st }
+        Format-RecordBlock -Title ("{0,6}  {1}" -f $pr.Id, $pr.Name) -TitleRight ("cpu{0}  {1}" -f $cpu, $ws) `
+            -Fields $f -Indent '  ' -Width 98
+    }
+    ""
+    "Total processes: $($procRows.Count)"
 
     Write-Section "PROCESSES WITH NO IMAGE PATH (suspicious)"
     Get-Process | Where-Object { -not $_.Path } |
@@ -5014,7 +5372,18 @@ Save-Output "06_process_tree.txt" {
         }
         if ($resolveOwners) { $row.Owner = $ownerByPid[[int]$proc.ProcessId] }
         [PSCustomObject]$row
-    } | Sort-Object PPID, PID | Format-Table -AutoSize -Wrap
+    } | Sort-Object PPID, PID | ForEach-Object {
+        # The parent/child relationship IS this artifact's purpose, and an unbounded command line
+        # in the same row destroyed it - the columns that matter were pushed off to the right by a
+        # value that could be 1500 characters. Keep the relationship on the title line and let the
+        # command line wrap beneath it.
+        $f = [ordered]@{}
+        if ($_.CommandLine) { $f['cmdline'] = [string]$_.CommandLine }
+        if ($_.PSObject.Properties['Owner'] -and $_.Owner) { $f['owner'] = [string]$_.Owner }
+        Format-RecordBlock -Title ("{0,6} {1}" -f $_.PID, $_.Name) `
+            -TitleRight ("parent {0} ({1})" -f $_.ParentName, $_.PPID) `
+            -Fields $f -Indent '  ' -Width 98
+    }
 
     if (-not $resolveOwners) {
         "`n(Process owners omitted for speed. Re-run with -WithOwners to include them.)"
@@ -6366,7 +6735,13 @@ Save-Output "10_browser_history.txt" {
             $lines.Add((Write-Section "FLAGGED URLS (heuristic - verify before acting)"))
             if ($flagged.Count) {
                 $firstFlag = $true
-                foreach ($f in ($flagged | Sort-Object Severity, @{E={$_.LastVisit}; Descending=$true}, URL)) {
+                # Sort-Object Severity is ALPHABETICAL, and H < I < M - so every INFO URL outranked
+                # every MED one. This is the same defect the comments elsewhere in this file describe
+                # as fixed via explicit rank maps; this site was missed. Rank it explicitly.
+                $urlRank = @{ 'HIGH' = 0; 'MED' = 1; 'INFO' = 2 }
+                foreach ($f in ($flagged | Sort-Object @{E={ $k = ($_.Severity -replace '\s','').ToUpper()
+                                                             if ($urlRank.ContainsKey($k)) { $urlRank[$k] } else { 3 } }},
+                                          @{E={$_.LastVisit}; Descending=$true}, URL)) {
                     if (-not $firstFlag) { $lines.Add('') }   # blank line between each flagged entry
                     $lines.Add(("[{0,-4}] {1}" -f $f.Severity, $f.Reason))
                     $lines.Add(("        last visit: {0}" -f $f.LastVisitStr))
@@ -6560,6 +6935,9 @@ Save-Output "10_browser_extensions.txt" {
                     User=$user; Browser=$er.Browser; Profile=$profileName
                     Name=$name; Version=$version; Id=$extId
                     UpdateUrl=$updateUrl; Permissions=($allPerms -join ', ')
+                    # Carried so the renderer can mark the flagged ones inline instead of making
+                    # the analyst cross-reference the findings list against 47 extensions by eye.
+                    Risky=($risky -join ', '); Broad=[bool]@($broad).Count
                 })
 
                 if ($broad.Count -and @($risky | Where-Object { $_ -match '(?i)webRequest|cookies|debugger|nativeMessaging' }).Count) {
@@ -6572,7 +6950,32 @@ Save-Output "10_browser_extensions.txt" {
         }
     }
     if ($rows.Count) {
-        $rows | Sort-Object User, Browser, Profile, Name | Format-Table -AutoSize -Wrap
+        # Per-record blocks, not a table. Eight columns of which three are unbounded (a 32-char
+        # opaque id, a ~50-char update URL that is near-identical on every row, and a permission
+        # list routinely over 100 chars) made a ~250-char row that no width can hold. Nothing is
+        # dropped - the same fields are all still here, just stacked and wrapped so each stays
+        # inside its own field instead of running into the next extension's.
+        $w = 98
+        foreach ($grp in ($rows | Group-Object User, Browser, Profile |
+                          Sort-Object { $_.Group[0].User }, { $_.Group[0].Browser }, { $_.Group[0].Profile })) {
+            $g0 = $grp.Group[0]
+            ""
+            ("  {0} / {1} / {2}" -f $g0.User, $g0.Browser, $g0.Profile)
+            ("  " + ('.' * ($w - 2)))
+            foreach ($r in ($grp.Group | Sort-Object Name)) {
+                $ver  = if ($r.Version) { "v$($r.Version)" } else { '' }
+                # A leading '!' marks an extension that earned a finding, so the block that needs
+                # reading is visible while scrolling rather than only in the summary.
+                $flag = if ($r.Broad -and $r.Risky) { '!' } else { '' }
+                $fields = [ordered]@{
+                    'id'     = $r.Id
+                    'update' = if ($r.UpdateUrl) { Defang $r.UpdateUrl } else { '(none - possibly sideloaded)' }
+                    'perms'  = if ($r.Permissions) { $r.Permissions } else { '(none declared)' }
+                }
+                if ($r.Broad -and $r.Risky) { $fields['flag'] = "broad host access + sensitive APIs ($($r.Risky))" }
+                Format-RecordBlock -Title $r.Name -TitleRight $ver -Fields $fields -Indent '    ' -Width $w -Flag $flag
+            }
+        }
         ""
         "Total extensions: $($rows.Count)"
     } else {
@@ -7437,7 +7840,9 @@ if ($script:Findings.Count -gt 0) {
     $recap = foreach ($f in $script:Findings) {
         $sv = 'INFO'; $md = ''
         if ($f -match '^\[(HIGH|MED|INFO)\]\s+\((\w+)\)') { $sv = $matches[1]; $md = $matches[2] }
-        [PSCustomObject]@{ Raw=$f; Rank=$sevRankR[$sv]; Group=(Get-ModuleGroupName $md) }
+        # Sev is carried, not just Rank: the detail block below each headline needs the severity
+        # to colour its values, and deriving it back from Rank would be a second source of truth.
+        [PSCustomObject]@{ Raw=$f; Sev=$sv; Rank=$sevRankR[$sv]; Group=(Get-ModuleGroupName $md) }
     }
     $recapGroups = $recap | Group-Object Group |
         Sort-Object @{E={ ($_.Group | Measure-Object -Property Rank -Minimum).Minimum }}, Name
@@ -7446,7 +7851,18 @@ if ($script:Findings.Count -gt 0) {
         Write-Host ("   $($rg.Name)  ({0})" -f $rg.Count) -ForegroundColor DarkCyan
         foreach ($it in ($rg.Group | Sort-Object Rank, Raw)) {
             Write-FindingRecap $it.Raw
-            foreach ($dl in (Format-FindingDetail $script:FindingDetails[$it.Raw])) { Write-Host $dl -ForegroundColor DarkGray }
+            # The detail block is the EVIDENCE for the headline above it - relay, instance id,
+            # install time, the pasted command. Printing it unconditionally in DarkGray put that
+            # evidence in the quietest colour on screen directly beneath a brick-red HIGH title.
+            # Dim the label column, but let the values carry the finding's own severity.
+            $dp = Get-SevPalette $it.Sev
+            foreach ($dl in (Format-FindingDetail $script:FindingDetails[$it.Raw])) {
+                if ($dl -match '^(\s+)([A-Za-z][\w /\.]{0,18})(\s+:\s)(.*)$') {
+                    Wc ($matches[1] + $matches[2] + $matches[3]) $script:InfoAnsi $script:InfoCon
+                    Wc $matches[4] $dp.Ansi $dp.Con
+                    Write-Host ''
+                } else { Write-Host $dl -ForegroundColor DarkGray }
+            }
         }
     }
     Write-Host ""

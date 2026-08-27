@@ -246,6 +246,58 @@ The end of a run is a **menu, not a dead end** — `[v]` browse results, `[m]` b
 
 Two details make this work in the shell it was written for. **Interactivity is judged the same way the module menu judges it** — `[Environment]::UserInteractive` *alone* is false under SYSTEM, which is exactly what a remote-shell session is, so gating on it by itself hid this menu in the entire environment it exists for. The check now refuses only when stdin is redirected **and** the session is non-interactive: a genuinely input-less pipeline that would deadlock on `Read-Host`. And **`[m]` finds its own source** — a dotted `.ps1` knows its path, the compressed paste stages a copy in `%TEMP%`, and a purely in-memory run (`iex`, where `$PSCommandPath` is `$null`) recovers the running scriptblock's own text and re-invokes *that*, in memory. Writing a copy of secgurd to disk just to re-run it would add EDR surface and leave a file behind to clean up. The recovered text is sanity-gated on length and content first; if it doesn't look like secgurd it is dropped and `[m]` is simply not offered.
 
+
+### Reading results: colour, sections and record blocks
+
+**Severity has one palette, defined once.** HIGH is brick red, **MED is amber** (`38;2;214;138;42`),
+INFO is neutral grey, and a verdict of *clean* is green. The table used to be hand-written in five
+places and the copies had drifted: MED rendered as tan in the results browser but as bright
+`Yellow` during the live scan - the same severity in two colours in one session - and two count
+rows had no MED colour at all, so a scan with 12 MED findings looked exactly as quiet as one with
+zero. MED's 16-colour fallback is **`DarkYellow`, not `Yellow`**, because `Yellow` is already the
+`[n]` selector colour and the selector sits directly beside the tag: on a 16-colour host they were
+literally indistinguishable.
+
+**Findings and artifacts are sectioned by a severity rail.** Each of the six groups is drawn with a
+coloured `|` running down its left edge, taking the colour of the **worst finding in that group** -
+red where a HIGH lives, amber for MED-only, green where nothing was flagged - with per-group tallies
+on the heading. You can find the section that matters by colour before any of the text has been
+read. It is ASCII `|`, never a box-drawing character: those mojibake in a remote shell running a
+non-UTF8 codepage, which is the shell this tool exists for. Colour is never the *only* signal - the
+literal `[HIGH]` / `[MED ]` / `[INFO]` tag and the numeric tally stay in the text, so stripping
+colour entirely still leaves a readable screen.
+
+**Wide artifacts are record blocks, not table rows.** `Format-Table -Wrap` turns out to be inert in
+the saved files: `Save-Output` writes with `Out-File -Width 4096`, so a row only wraps past 4096
+columns - every wide table landed on disk as one enormous physical line and what looked like
+wrapping was the viewer doing it at an arbitrary column. The worst offenders now emit one aligned
+`label : value` block per record, wrapped with a hanging indent so a long value stays inside its own
+field:
+
+```
+  Donna / Edge / Profile 2
+  ..............................................................
+    Google Docs Offline                                  v1.101.1
+      id      : ghbmnnjooekpmoecnnnilnnbdlolhkhi
+      update  : hxxps://clients2.google.com/service/update2/crx
+      perms   : alarms, storage, unlimitedStorage, offscreen,
+                https://docs.google.com/*, https://drive.google.com/*
+```
+
+Because the change is in the **writer**, the `.txt` on disk improves as well as the coloured browser
+view - and `Write-ArtifactLine` already colourises `label : value` rows, so the browser lights these
+up for free. Converted so far: `10_browser_extensions.txt` (eight columns, of which a 32-char id, a
+~50-char update URL and a 100+ char permission list made a ~250-char row), `04_ps_event_log.txt`
+(the full script-block text in a single cell), `06_processes.txt` (image path *and* command line
+both unbounded in one row) and `06_process_tree.txt` (where an unbounded command line was pushing
+the parent/child columns that are the artifact's whole purpose off to the right). Labels are capped
+at 19 characters, because that is the longest one `Write-ArtifactLine` will recognise and colour.
+
+**The pager wraps and pages by screen rows.** A 4096-character line used to soft-wrap into dozens of
+rows, so a "page" of 22 lines could scroll hundreds of rows past before stopping. Page height is now
+measured in wrapped rows, and continuations carry a hanging indent so they stay visibly subordinate
+to their own line instead of starting at column zero looking like a new record.
+
 ---
 
 ## IOC hash matching
