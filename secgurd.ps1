@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.5.1'
+$script:secgurdVersion = 'v2.5.2'
 
 # ---------------------------------------------
 
@@ -3164,6 +3164,7 @@ Write-Host ""
 
 # ---------------------------------------------
 
+#region 01_system_info.txt
 Save-Output "01_system_info.txt" {
     Write-Section "SYSTEM INFORMATION"
     Get-ComputerInfo | Select-Object CsName, OsName, OsVersion, OsBuildNumber,
@@ -3171,11 +3172,14 @@ Save-Output "01_system_info.txt" {
         CsNumberOfLogicalProcessors, CsTotalPhysicalMemory,
         TimeZone, LogonServer
 }
+#endregion 01_system_info.txt
 
+#region 01_env_variables.txt
 Save-Output "01_env_variables.txt" {
     Write-Section "ENVIRONMENT VARIABLES"
     Get-ChildItem Env: | Sort-Object Name
 }
+#endregion 01_env_variables.txt
 
 # ---------------------------------------------
 
@@ -3183,6 +3187,7 @@ Save-Output "01_env_variables.txt" {
 
 # ---------------------------------------------
 
+#region 02_local_users.txt
 Save-Output "02_local_users.txt" {
     Write-Section "LOCAL USERS"
     $localUsers = Get-LocalUser
@@ -3250,7 +3255,9 @@ Save-Output "02_local_users.txt" {
         }
     }
 }
+#endregion 02_local_users.txt
 
+#region 02_logged_on_users.txt
 Save-Output "02_logged_on_users.txt" {
     Write-Section "CURRENTLY LOGGED ON USERS (quser)"
     quser 2>&1
@@ -3258,7 +3265,9 @@ Save-Output "02_logged_on_users.txt" {
     Write-Section "WHOAMI /ALL"
     whoami /all 2>&1
 }
+#endregion 02_logged_on_users.txt
 
+#region 02_logon_history.txt
 Save-Output "02_logon_history.txt" {
     Write-Section "LOGON EVENTS (4624/4625/4634 - last 200)"
     Get-WinEvent -FilterHashtable @{
@@ -3277,7 +3286,9 @@ Save-Output "02_logon_history.txt" {
     } |
     Format-Table -AutoSize -Wrap
 }
+#endregion 02_logon_history.txt
 
+#region 02_rdp_remote_access.txt
 Save-Output "02_rdp_remote_access.txt" {
     # Remote-access / lateral-movement artifacts: who connected via RDP, where this host
     # connected OUT to, and whether RDP is exposed. Logon type 10 = RemoteInteractive (RDP).
@@ -3400,6 +3411,7 @@ Save-Output "02_rdp_remote_access.txt" {
     } | Format-Table -AutoSize -Wrap
     if (-not $bmFound) { "(no RDP bitmap cache files found)" }
 }
+#endregion 02_rdp_remote_access.txt
 
 # ---------------------------------------------
 
@@ -3414,6 +3426,7 @@ if ($script:SelectedModules['03']) {
     Write-Host ("  [DF] section 03 artifacts defanged - build $script:secgurdVersion") -ForegroundColor Cyan
 }
 
+#region 03_persistence_registry.txt
 Save-Output "03_persistence_registry.txt" {
     $runKeys = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
@@ -3476,7 +3489,9 @@ Save-Output "03_persistence_registry.txt" {
         }
     }
 }
+#endregion 03_persistence_registry.txt
 
+#region 03_runmru_clickfix.txt
 Save-Output "03_runmru_clickfix.txt" {
     Write-Section "RUN DIALOG HISTORY - RunMRU (ClickFix / paste-and-run triage)"
     "The Win+R Run dialog records each command a user typed into HKCU\...\Explorer\RunMRU. 'ClickFix'"
@@ -3586,7 +3601,9 @@ Save-Output "03_runmru_clickfix.txt" {
         "(no RunMRU / Run-dialog history found in any user hive)"
     }
 }
+#endregion 03_runmru_clickfix.txt
 
+#region 03_scheduled_tasks.txt
 Save-Output "03_scheduled_tasks.txt" {
     # Enumerate tasks ONCE and reuse - Get-ScheduledTask is comparatively expensive and was
     # previously called three times (once per section), tripling the enumeration cost.
@@ -3646,7 +3663,9 @@ Save-Output "03_scheduled_tasks.txt" {
     }
     if ($suspectTasks) { $suspectTasks | Format-Table -AutoSize -Wrap } else { "(none found)" }
 }
+#endregion 03_scheduled_tasks.txt
 
+#region 03_services.txt
 Save-Output "03_services.txt" {
     Write-Section "ALL SERVICES"
     Get-Service | Select-Object Name, DisplayName, Status, StartType |
@@ -3760,7 +3779,9 @@ Save-Output "03_services.txt" {
     }
     if ($suspectSvc) { $suspectSvc | Format-Table -AutoSize -Wrap } else { "(none found)" }
 }
+#endregion 03_services.txt
 
+#region 03_startup_items.txt
 Save-Output "03_startup_items.txt" {
     Write-Section "STARTUP FOLDER - ALL USERS"
     $paths = @(
@@ -3774,6 +3795,7 @@ Save-Output "03_startup_items.txt" {
         } else { "  (not found)" }
     }
 }
+#endregion 03_startup_items.txt
 
 # Known-benign WMI event-subscription names (allowlist). A __FilterToConsumerBinding is a classic
 # fileless-persistence technique, so secgurd flags them - but a few ship with a healthy Windows box
@@ -3793,6 +3815,7 @@ $script:WmiBenignNames = @(
     # 'HealthService.*'
 )
 
+#region 03_wmi_persistence.txt
 Save-Output "03_wmi_persistence.txt" {
     Write-Section "WMI EVENT SUBSCRIPTIONS"
 
@@ -3856,7 +3879,9 @@ Save-Output "03_wmi_persistence.txt" {
         }
     }
 }
+#endregion 03_wmi_persistence.txt
 
+#region 03_com_hijacking_check.txt
 Save-Output "03_com_hijacking_check.txt" {
     Write-Section "HKCU COM HIJACKS (CLSIDs shadowing HKLM\CLSID - actual hijack signal)"
     # Real COM hijack: an HKCU CLSID entry that ALSO exists under HKLM\CLSID
@@ -3891,7 +3916,9 @@ Save-Output "03_com_hijacking_check.txt" {
         }
     } else { "  (no HKCU CLSID hive)" }
 }
+#endregion 03_com_hijacking_check.txt
 
+#region 03_dll_search_order.txt
 Save-Output "03_dll_search_order.txt" {
     Write-Section "SAFEDLLSEARCHMODE"
     Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' |
@@ -3901,7 +3928,9 @@ Save-Output "03_dll_search_order.txt" {
     Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' |
         Select-Object CWDIllegalInDllSearch | Format-List
 }
+#endregion 03_dll_search_order.txt
 
+#region 03_advanced_persistence.txt
 Save-Output "03_advanced_persistence.txt" {
     # High-signal persistence vectors beyond run keys / tasks / services.
 
@@ -3999,6 +4028,7 @@ Save-Output "03_advanced_persistence.txt" {
     Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -ErrorAction SilentlyContinue |
         Select-Object 'Security Packages', 'Authentication Packages', 'Notification Packages' | Format-List
 }
+#endregion 03_advanced_persistence.txt
 
 function Get-ScRelayHost {
     # Pull the relay/C2 host out of a ScreenConnect user.config or service ImagePath. This is the
@@ -4032,6 +4062,7 @@ function Get-ScCustomLabels {
     return ($vals -join ' / ')
 }
 
+#region 03_remote_access_tools.txt
 Save-Output "03_remote_access_tools.txt" {
     # Hunt for remote-access / RMM tools (ScreenConnect, AnyDesk, TeamViewer, Atera, Splashtop,
     # etc.). Attackers drop these as a stealthy backdoor - they are signed, legitimate software,
@@ -4213,7 +4244,9 @@ Save-Output "03_remote_access_tools.txt" {
     }
     if (-not $scFound) { "(no ScreenConnect client instance folders found)" }
 }
+#endregion 03_remote_access_tools.txt
 
+#region 03_bits_jobs.txt
 Save-Output "03_bits_jobs.txt" {
     # BITS (Background Intelligent Transfer Service) jobs. Windows uses BITS for updates, but it's
     # abused (MITRE T1197) for BOTH stealthy downloads and persistence: a job can carry a
@@ -4300,6 +4333,7 @@ Save-Output "03_bits_jobs.txt" {
         Select-Object TimeCreated, Id, @{N='Detail';E={ Defang (($_.Message -replace '\s+',' ').Trim()) }} |
         Format-Table -AutoSize -Wrap
 }
+#endregion 03_bits_jobs.txt
 
 # ---------------------------------------------
 
@@ -4307,6 +4341,7 @@ Save-Output "03_bits_jobs.txt" {
 
 # ---------------------------------------------
 
+#region 04_ps_history.txt
 Save-Output "04_ps_history.txt" {
     Write-Section "POWERSHELL HISTORY (ALL USERS)"
     # PowerShell history routinely contains secrets typed on the command line (passwords, API
@@ -4330,7 +4365,9 @@ Save-Output "04_ps_history.txt" {
         Add-Finding 'MED' '04' "PowerShell history has $secretHits line(s) that look like secrets (passwords/keys/tokens) - 04_ps_history.txt is sensitive, handle the output accordingly" '04_ps_history.txt'
     }
 }
+#endregion 04_ps_history.txt
 
+#region 04_ps_transcripts.txt
 Save-Output "04_ps_transcripts.txt" {
     Write-Section "POWERSHELL TRANSCRIPT FILES"
     # Transcripts are always named 'PowerShell_transcript.<host>.<rand>.<timestamp>.txt'.
@@ -4354,7 +4391,9 @@ Save-Output "04_ps_transcripts.txt" {
     }
     if (-not $found) { "  (no transcript files found)" }
 }
+#endregion 04_ps_transcripts.txt
 
+#region 04_ps_logging_config.txt
 Save-Output "04_ps_logging_config.txt" {
     Write-Section "POWERSHELL LOGGING CONFIGURATION"
     $keys = @(
@@ -4369,7 +4408,9 @@ Save-Output "04_ps_logging_config.txt" {
         else { "  (not configured)" }
     }
 }
+#endregion 04_ps_logging_config.txt
 
+#region 04_ps_event_log.txt
 Save-Output "04_ps_event_log.txt" {
     Write-Section "POWERSHELL SCRIPT BLOCK LOGS (Event 4104 - last 500)"
     $sb4104 = Get-WinEvent -FilterHashtable @{
@@ -4398,6 +4439,7 @@ Save-Output "04_ps_event_log.txt" {
         Select-Object TimeCreated, Id, LevelDisplayName, Message |
         Format-Table -AutoSize -Wrap
 }
+#endregion 04_ps_event_log.txt
 
 # ---------------------------------------------
 
@@ -4405,6 +4447,7 @@ Save-Output "04_ps_event_log.txt" {
 
 # ---------------------------------------------
 
+#region 05_network_connections.txt
 Save-Output "05_network_connections.txt" {
     Write-Section "ACTIVE NETWORK CONNECTIONS"
     netstat -anob 2>&1
@@ -4422,13 +4465,17 @@ Save-Output "05_network_connections.txt" {
         }
     } | Sort-Object State | Format-Table -AutoSize -Wrap
 }
+#endregion 05_network_connections.txt
 
+#region 05_dns_cache.txt
 Save-Output "05_dns_cache.txt" {
     Write-Section "DNS CLIENT CACHE"
     Get-DnsClientCache | Select-Object Entry, RecordName, RecordType, Status, DataLength, Data |
         Format-Table -AutoSize -Wrap
 }
+#endregion 05_dns_cache.txt
 
+#region 05_intel_host_matches.txt
 Save-Output "05_intel_host_matches.txt" {
     Write-Section "THREAT-INTEL HOST MATCHES (DNS cache + active connections vs loaded lists)"
     "Cross-references this machine's DNS client cache against the loaded threat-intel lists - the"
@@ -4506,7 +4553,9 @@ Save-Output "05_intel_host_matches.txt" {
         ""
     }
 }
+#endregion 05_intel_host_matches.txt
 
+#region 05_arp_hosts.txt
 Save-Output "05_arp_hosts.txt" {
     Write-Section "ARP TABLE"
     Get-NetNeighbor | Format-Table -AutoSize -Wrap
@@ -4514,7 +4563,9 @@ Save-Output "05_arp_hosts.txt" {
     Write-Section "HOSTS FILE"
     Get-Content "$env:SystemRoot\System32\drivers\etc\hosts"
 }
+#endregion 05_arp_hosts.txt
 
+#region 05_network_shares.txt
 Save-Output "05_network_shares.txt" {
     Write-Section "NETWORK SHARES"
     Get-SmbShare | Format-Table -AutoSize -Wrap
@@ -4523,7 +4574,9 @@ Save-Output "05_network_shares.txt" {
     Get-SmbMapping -ErrorAction SilentlyContinue | Format-Table -AutoSize -Wrap
     net use 2>&1
 }
+#endregion 05_network_shares.txt
 
+#region 05_firewall_rules.txt
 Save-Output "05_firewall_rules.txt" {
     Write-Section "FIREWALL PROFILE STATUS"
     Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction | Format-Table -AutoSize -Wrap
@@ -4560,6 +4613,7 @@ Save-Output "05_firewall_rules.txt" {
     } | Format-Table -AutoSize -Wrap
     Write-Progress -Activity "Firewall rules" -Completed
 }
+#endregion 05_firewall_rules.txt
 
 # ---------------------------------------------
 
@@ -4567,6 +4621,7 @@ Save-Output "05_firewall_rules.txt" {
 
 # ---------------------------------------------
 
+#region 06_processes.txt
 Save-Output "06_processes.txt" {
     Write-Section "RUNNING PROCESSES"
     # Pull Win32_Process once into a hashtable instead of querying per-process
@@ -4584,7 +4639,9 @@ Save-Output "06_processes.txt" {
     Get-Process | Where-Object { -not $_.Path } |
         Select-Object Id, Name, CPU, WorkingSet | Format-Table -AutoSize -Wrap
 }
+#endregion 06_processes.txt
 
+#region 06_process_tree.txt
 Save-Output "06_process_tree.txt" {
     Write-Section "PROCESS PARENT-CHILD TREE"
     # The high-value triage data is the parent/child tree + command lines, which come from a
@@ -4702,7 +4759,9 @@ Save-Output "06_process_tree.txt" {
     }
     if ($heurHits -eq 0) { "(no masquerade / drop-path / suspicious-command-line processes detected)" }
 }
+#endregion 06_process_tree.txt
 
+#region 06_loaded_dlls.txt
 Save-Output "06_loaded_dlls.txt" {
     Write-Section "LOADED DLLs FROM UNUSUAL LOCATIONS"
     # Get-AuthenticodeSignature does a full trust-chain verification per file and can stall
@@ -4762,6 +4821,7 @@ Save-Output "06_loaded_dlls.txt" {
         }
     }
 }
+#endregion 06_loaded_dlls.txt
 
 # ---------------------------------------------
 
@@ -4769,6 +4829,7 @@ Save-Output "06_loaded_dlls.txt" {
 
 # ---------------------------------------------
 
+#region 07_recently_modified_system32.txt
 Save-Output "07_recently_modified_system32.txt" {
     Write-Section "RECENTLY MODIFIED FILES IN SYSTEM32 (within $($script:DaysBack) days)"
     Get-ChildItem "$env:SystemRoot\System32" -File -ErrorAction SilentlyContinue |
@@ -4776,7 +4837,9 @@ Save-Output "07_recently_modified_system32.txt" {
         Select-Object Name, LastWriteTime, Length, FullName |
         Sort-Object LastWriteTime -Descending | Format-Table -AutoSize -Wrap
 }
+#endregion 07_recently_modified_system32.txt
 
+#region 07_temp_executables.txt
 Save-Output "07_temp_executables.txt" {
     Write-Section "EXECUTABLES IN TEMP DIRECTORIES"
     $tempPaths = @($env:TEMP, $env:TMP, 'C:\Windows\Temp', 'C:\Users\Public')
@@ -4787,7 +4850,9 @@ Save-Output "07_temp_executables.txt" {
             Sort-Object LastWriteTime -Descending | Format-Table -AutoSize -Wrap
     }
 }
+#endregion 07_temp_executables.txt
 
+#region 07_downloads_desktop.txt
 Save-Output "07_downloads_desktop.txt" {
     Write-Section "RECENT FILES IN DOWNLOADS & DESKTOP (ALL USERS)"
     $targets = @('Downloads','Desktop','Documents')
@@ -4808,7 +4873,9 @@ Save-Output "07_downloads_desktop.txt" {
         }
     }
 }
+#endregion 07_downloads_desktop.txt
 
+#region 07_alternate_data_streams.txt
 Save-Output "07_alternate_data_streams.txt" {
     Write-Section "ALTERNATE DATA STREAMS (suspicious - user content folders)"
     # Scope to Desktop/Downloads/Documents only   full -Recurse on C:\Users takes 5-30 min.
@@ -4837,7 +4904,9 @@ Save-Output "07_alternate_data_streams.txt" {
     if ($results) { $results | Format-Table -AutoSize -Wrap }
     else { "  (no suspicious alternate data streams found in user content folders)" }
 }
+#endregion 07_alternate_data_streams.txt
 
+#region 07_download_origins.txt
 Save-Output "07_download_origins.txt" {
     Write-Section "DOWNLOAD ORIGINS (Zone.Identifier ReferrerUrl / HostUrl)"
     "When a file is downloaded, Windows records where it came from in a Zone.Identifier alternate"
@@ -4885,7 +4954,9 @@ Save-Output "07_download_origins.txt" {
         "(no Zone.Identifier download-origin data found in user content folders)"
     }
 }
+#endregion 07_download_origins.txt
 
+#region 07_recycle_bin.txt
 Save-Output "07_recycle_bin.txt" {
     Write-Section "RECYCLE BIN CONTENTS (deleted-but-recoverable, per user SID)"
     "A normal delete only moves the file into C:\`$Recycle.Bin\<SID>\ and renames it: the `$I file"
@@ -4924,6 +4995,7 @@ Save-Output "07_recycle_bin.txt" {
     }
     if (-not $any) { "(Recycle Bin is empty for all users, or not accessible)" }
 }
+#endregion 07_recycle_bin.txt
 
 # ---------------------------------------------
 
@@ -4931,6 +5003,7 @@ Save-Output "07_recycle_bin.txt" {
 
 # ---------------------------------------------
 
+#region 08_security_events.txt
 Save-Output "08_security_events.txt" {
     $eventIds = @{
         4720 = 'User account created'
@@ -4956,7 +5029,9 @@ Save-Output "08_security_events.txt" {
             Select-Object TimeCreated, Id, Message | Format-List
     }
 }
+#endregion 08_security_events.txt
 
+#region 08_cleared_logs.txt
 Save-Output "08_cleared_logs.txt" {
     Write-Section "EVENT LOG CLEAR HISTORY"
     $sec1102 = Get-WinEvent -LogName Security -FilterXPath "*[System[EventID=1102]]" -MaxEvents 100 -ErrorAction SilentlyContinue
@@ -4970,7 +5045,9 @@ Save-Output "08_cleared_logs.txt" {
     $sec1102 | Select-Object TimeCreated, Message | Format-List
     $sys104  | Select-Object TimeCreated, Message | Format-List
 }
+#endregion 08_cleared_logs.txt
 
+#region 08_event_log_status.txt
 Save-Output "08_event_log_status.txt" {
     Write-Section "EVENT LOG STATUS (size & last written)"
     Get-EventLog -List | Select-Object Log, MaximumKilobytes, Entries, OverflowAction, MinimumRetentionDays |
@@ -4984,6 +5061,7 @@ Save-Output "08_event_log_status.txt" {
         }
     } | Format-Table -AutoSize -Wrap
 }
+#endregion 08_event_log_status.txt
 
 # ---------------------------------------------
 
@@ -4991,6 +5069,7 @@ Save-Output "08_event_log_status.txt" {
 
 # ---------------------------------------------
 
+#region 09_installed_software.txt
 Save-Output "09_installed_software.txt" {
     Write-Section "INSTALLED SOFTWARE (Add/Remove Programs)"
     $regPaths = @(
@@ -5004,7 +5083,9 @@ Save-Output "09_installed_software.txt" {
         Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, InstallLocation |
         Sort-Object InstallDate -Descending | Format-Table -AutoSize -Wrap
 }
+#endregion 09_installed_software.txt
 
+#region 09_appdata_app_installs.txt
 Save-Output "09_appdata_app_installs.txt" {
     Write-Section "PER-USER APP INSTALLS UNDER AppData (all users)"
     "Apps installed into a user's AppData need no admin rights and often skip Add/Remove Programs,"
@@ -5095,7 +5176,9 @@ Save-Output "09_appdata_app_installs.txt" {
         "(no per-user AppData application folders with executables found)"
     }
 }
+#endregion 09_appdata_app_installs.txt
 
+#region 09_user_hive_software.txt
 Save-Output "09_user_hive_software.txt" {
     Write-Section "PER-USER SOFTWARE REGISTRATION (all user hives, incl. logged-off)"
     "PUPs / adware often register directly under HKCU\Software\<Name> (carrying an UninstallString"
@@ -5199,12 +5282,16 @@ Save-Output "09_user_hive_software.txt" {
         "(no per-user self-registered software / AppData installs found)"
     }
 }
+#endregion 09_user_hive_software.txt
 
+#region 09_patches.txt
 Save-Output "09_patches.txt" {
     Write-Section "INSTALLED HOTFIXES / PATCHES"
     Get-HotFix | Sort-Object InstalledOn -Descending | Format-Table -AutoSize -Wrap
 }
+#endregion 09_patches.txt
 
+#region 09_defender_status.txt
 Save-Output "09_defender_status.txt" {
     # Microsoft Defender posture. Answers two key triage questions:
     #   1) Did AV already detect something? (threat history)
@@ -5355,6 +5442,7 @@ Save-Output "09_defender_status.txt" {
         "(no detections recorded, or history cleared)"
     }
 }
+#endregion 09_defender_status.txt
 
 # ---------------------------------------------
 
@@ -5362,6 +5450,7 @@ Save-Output "09_defender_status.txt" {
 
 # ---------------------------------------------
 
+#region 10_browser_artifacts.txt
 Save-Output "10_browser_artifacts.txt" {
     Write-Section "BROWSER HISTORY FILE LOCATIONS"
     $profiles = @{
@@ -5377,6 +5466,7 @@ Save-Output "10_browser_artifacts.txt" {
         } else { "  (not found)" }
     }
 }
+#endregion 10_browser_artifacts.txt
 
 # ---------------------------------------------
 #  BROWSER HISTORY TIMESTAMPS (dependency-free SQLite record decoding)
@@ -5772,6 +5862,7 @@ function Test-SuspiciousUrl {
     return $null
 }
 
+#region 10_browser_history.txt
 Save-Output "10_browser_history.txt" {
     Write-Section "BROWSER HISTORY - URL EXTRACTION & ANALYSIS (per user)"
     "Dependency-free: URLs are read directly from each browser's history database (Chrome/Edge"
@@ -6028,7 +6119,9 @@ Save-Output "10_browser_history.txt" {
         Add-Finding 'INFO' '10' "Browser history: $grandFlagged potentially-suspicious URL(s) across $($usersSeen.Keys.Count) user(s) - review 10_browser_history\<user>\" '10_browser_history.txt'
     }
 }
+#endregion 10_browser_history.txt
 
+#region 10_squat_watchlist.txt
 Save-Output "10_squat_watchlist.txt" {
     Write-Section "SQUAT-DOMAIN WATCHLIST (openSquat) - MATCHES"
     "Cross-references browser-history hosts and download-origin hosts (module 03 BITS + module 07"
@@ -6078,7 +6171,9 @@ Save-Output "10_squat_watchlist.txt" {
         ""
     }
 }
+#endregion 10_squat_watchlist.txt
 
+#region 10_browser_extensions.txt
 Save-Output "10_browser_extensions.txt" {
     Write-Section "BROWSER EXTENSIONS (Chromium: Chrome/Edge/Brave, per user/profile)"
     "Malicious or sideloaded extensions are a real cred-theft / session-hijack / persistence"
@@ -6278,7 +6373,9 @@ Save-Output "10_browser_extensions.txt" {
         "(no Chromium notification data recorded, or no profiles present)"
     }
 }
+#endregion 10_browser_extensions.txt
 
+#region 10_credential_files.txt
 Save-Output "10_credential_files.txt" {
     Write-Section "CREDENTIAL/CONFIG FILES OF INTEREST"
     $targets = @(
@@ -6302,6 +6399,7 @@ Save-Output "10_credential_files.txt" {
         }
     }
 }
+#endregion 10_credential_files.txt
 
 # ---------------------------------------------
 
@@ -6309,6 +6407,7 @@ Save-Output "10_credential_files.txt" {
 
 # ---------------------------------------------
 
+#region 11_lolbin_usage.txt
 Save-Output "11_lolbin_usage.txt" {
     Write-Section "LOLBIN PROCESS EVENTS (Event 4688, last 500)"
     $lolbins = @('certutil','mshta','wscript','cscript','regsvr32','rundll32',
@@ -6352,6 +6451,7 @@ Save-Output "11_lolbin_usage.txt" {
     }
     $lolHits | Format-Table -AutoSize -Wrap
 }
+#endregion 11_lolbin_usage.txt
 
 # ---------------------------------------------
 
@@ -6359,6 +6459,7 @@ Save-Output "11_lolbin_usage.txt" {
 
 # ---------------------------------------------
 
+#region 12_amcache_shimcache.txt
 Save-Output "12_amcache_shimcache.txt" {
     Write-Section "AMCACHE.HVE LOCATION"
     $amcache = "$env:SystemRoot\AppCompat\Programs\Amcache.hve"
@@ -6378,6 +6479,7 @@ Save-Output "12_amcache_shimcache.txt" {
         "  Key: $shimKey"
     } else { "  ShimCache key not found." }
 }
+#endregion 12_amcache_shimcache.txt
 
 # ---------------------------------------------
 
@@ -6385,6 +6487,7 @@ Save-Output "12_amcache_shimcache.txt" {
 
 # ---------------------------------------------
 
+#region 13_prefetch.txt
 Save-Output "13_prefetch.txt" {
     Write-Section "PREFETCH FILES (execution evidence)"
     $prefetchDir = "$env:SystemRoot\Prefetch"
@@ -6397,6 +6500,7 @@ Save-Output "13_prefetch.txt" {
         "Prefetch directory not found (may be disabled or Server OS)"
     }
 }
+#endregion 13_prefetch.txt
 
 # ---------------------------------------------
 
@@ -6404,6 +6508,7 @@ Save-Output "13_prefetch.txt" {
 
 # ---------------------------------------------
 
+#region 14_named_pipes.txt
 Save-Output "14_named_pipes.txt" {
     Write-Section "NAMED PIPES (suspicious names worth investigating)"
     try {
@@ -6422,6 +6527,7 @@ Save-Output "14_named_pipes.txt" {
         }
     }
 }
+#endregion 14_named_pipes.txt
 
 # ---------------------------------------------
 
