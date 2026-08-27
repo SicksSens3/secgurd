@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.5.0'
+$script:secgurdVersion = 'v2.5.1'
 
 # ---------------------------------------------
 
@@ -581,7 +581,7 @@ function Show-Help {
     Write-Host "    cleanup               Remove ALL secgurd artifacts from TEMP (type-to-confirm)" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  REMOTE ONE-LINER" -ForegroundColor White
-    Write-Host "    iex (irm https://raw.githubusercontent.com/<you>/secgurd/main/secgurd.ps1)" -ForegroundColor Gray
+    Write-Host "    iex (irm https://raw.githubusercontent.com/SicksSens3/secgurd/main/secgurd.ps1)" -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -985,8 +985,84 @@ function Compress-Source {
     # names, so the post-compression saving would be negligible anyway. On ANY tokenizer error, or if
     # a pass can't be proven safe, the input is returned unchanged: a correct big paste beats a
     # broken small one.
-    param([string]$Text)
+    param([string]$Text, [switch]$ForPaste)
     if (-not $Text) { return $Text }
+
+    # Pass 0 (-ForPaste only): drop functions that cannot be reached from a PASTED run. The paste
+    # was carrying its own generator - Show-S1Compressed and this very function - which is pure
+    # weight inside the payload they produce. The dependency LOADING ui goes with them: the IOC,
+    # malicious-URL and squat lists ride along inside the paste, so there is nothing there to load
+    # from disk or paste in by hand.
+    #
+    # The interactive MENU deliberately STAYS. The paste stub invokes secgurd without -Auto, so an
+    # analyst lands on the menu and picks modules - stripping it would break the paste outright.
+    # Every caller of a dropped function is guarded with Get-Command, so a slimmed build degrades by
+    # hiding that option rather than erroring. And like every other pass here this one fails safe:
+    # the result is re-parsed, and anything that does not come back clean is discarded.
+    if ($ForPaste) {
+        # ConvertFrom-IOCText / ConvertFrom-MalUrlText are deliberately NOT here. They look like
+        # dependency-menu helpers but the on-disk list LOADERS call them too, and a pasted run does
+        # exactly that - the stub stages the IOC/URL/squat lists into %TEMP% and passes their paths
+        # in. Dropping them would have silently disabled IOC matching in every pasted run: the
+        # loader is wrapped in try/catch, so there would be no error, just no detections.
+        $dropFns = @('Show-S1Compressed','Compress-Source','Invoke-DependenciesMenu',
+                     'Invoke-IOCDependency','Invoke-MalUrlDependency','Invoke-SquatDependency')
+        try {
+            $pErr = $null; $pTok = $null
+            $pAst = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$pTok, [ref]$pErr)
+            if (-not ($pErr -and $pErr.Count)) {
+                $spans = @()
+                foreach ($fn in $pAst.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+                    if ($dropFns -contains $fn.Name) {
+                        $spans += ,@($fn.Extent.StartOffset, $fn.Extent.EndOffset)
+                    }
+                }
+                # Safety net for future edits: never drop a function that is still CALLED
+                # somewhere. The Get-Command guards at the call sites name these functions as
+                # ARGUMENTS, not commands, so they do not trip this - only a real invocation does.
+                $calledNames = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+                foreach ($cmd in $pAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                    $cn = $cmd.GetCommandName()
+                    if ($cn) { [void]$calledNames.Add($cn) }
+                }
+                $spans = @($spans | Where-Object { $true })
+                $keptBack = @()
+                $filtered = @()
+                foreach ($fn in $pAst.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+                    if ($dropFns -notcontains $fn.Name) { continue }
+                    # A function that calls only itself (or nothing) is safe to remove; one that is
+                    # invoked from code we are KEEPING is not.
+                    $externallyCalled = $false
+                    if ($calledNames.Contains($fn.Name)) {
+                        foreach ($cmd in $pAst.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                            if ($cmd.GetCommandName() -ne $fn.Name) { continue }
+                            $inDropped = $false
+                            foreach ($other in $pAst.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+                                if ($dropFns -notcontains $other.Name) { continue }
+                                if ($cmd.Extent.StartOffset -ge $other.Extent.StartOffset -and
+                                    $cmd.Extent.EndOffset   -le $other.Extent.EndOffset) { $inDropped = $true; break }
+                            }
+                            if (-not $inDropped) { $externallyCalled = $true; break }
+                        }
+                    }
+                    if ($externallyCalled) { $keptBack += $fn.Name }
+                    else { $filtered += ,@($fn.Extent.StartOffset, $fn.Extent.EndOffset) }
+                }
+                $spans = $filtered
+                if ($spans.Count) {
+                    $sb0 = New-Object System.Text.StringBuilder($Text)
+                    foreach ($sp in ($spans | Sort-Object { $_[0] } -Descending)) {
+                        [void]$sb0.Remove($sp[0], $sp[1] - $sp[0])
+                    }
+                    $cand = $sb0.ToString()
+                    $cErr = $null; $cTok = $null
+                    [void][System.Management.Automation.Language.Parser]::ParseInput($cand, [ref]$cTok, [ref]$cErr)
+                    if (-not ($cErr -and $cErr.Count)) { $Text = $cand }
+                }
+            }
+        } catch {}
+    }
+
 
     $errs = $null
     $toks = $null
@@ -1085,7 +1161,7 @@ function Show-S1Compressed {
         # Compact the source before packing (strip comments/indentation/blanks, alias cmdlets) so the
         # paste comes out smaller. Compress-Source fails safe (returns source unchanged on any error).
         $origLen = $src.Length
-        try { $src = Compress-Source $src } catch {}
+        try { $src = Compress-Source $src -ForPaste } catch {}
         $newLen = $src.Length
         [void]$container.AppendLine($MK + 'secgurd.ps1' + $END)
         [void]$container.Append($src)
@@ -1820,9 +1896,11 @@ function Show-ModuleMenu {
         Write-Host "   " -NoNewline
         Write-Host $depMark -ForegroundColor $depClr -NoNewline
         Write-Host "  " -NoNewline
+        if (Get-Command Invoke-DependenciesMenu -ErrorAction SilentlyContinue) {
         Write-Host ("{0,-4}" -f 'd') -ForegroundColor Yellow -NoNewline
         Write-Host ("{0,-36}" -f 'Dependencies (IOC/URL/squat lists)') -ForegroundColor White -NoNewline
         Write-Host $depNote -ForegroundColor DarkGray
+        }
 
         $fOn   = [bool]$script:FindFilter
         $fMark = if ($fOn) { (Ex "[^14]") } else { '[ ]' }
@@ -1845,9 +1923,11 @@ function Show-ModuleMenu {
         Write-Host "   " -NoNewline
         Write-Host (Ex "[^17]") -ForegroundColor DarkCyan -NoNewline
         Write-Host "  " -NoNewline
+        if (Get-Command Show-S1Compressed -ErrorAction SilentlyContinue) {
         Write-Host ("{0,-4}" -f 'p') -ForegroundColor Yellow -NoNewline
         Write-Host ("{0,-36}" -f 'Pastable version for remote shells') -ForegroundColor White -NoNewline
         Write-Host "(copy/paste for S1 shell)" -ForegroundColor DarkGray
+        }
 
         Write-Host ""
         Write-Host (Ex "     ^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00^00") -ForegroundColor DarkGray
@@ -1907,7 +1987,12 @@ function Show-ModuleMenu {
         }
 
         if ($cmd -eq 'd' -or $cmd -eq 'deps' -or $cmd -eq 'dep' -or $cmd -eq 'dependencies') {
-            $pendingMsg = Invoke-DependenciesMenu
+            $depsFn = Get-Command Invoke-DependenciesMenu -ErrorAction SilentlyContinue
+            if ($depsFn) {
+                $pendingMsg = & $depsFn
+            } else {
+                $pendingMsg = 'Dependency lists are already bundled in this pasted build - nothing to load.'
+            }
             Clear-Host; Show-secgurdBannerCompact
             continue
         }
@@ -1963,14 +2048,21 @@ function Show-ModuleMenu {
             Write-Host "^ needs internet on the target; always runs the newest version" -ForegroundColor DarkGray
             Write-Host "  > " -ForegroundColor DarkGray -NoNewline
             $sMode = (Read-Host).Trim()
-            if ($sMode -eq '2') {
-                Show-S1Compressed -Mode lists
-            } elseif ($sMode -eq '3') {
-                Show-S1Compressed -Mode script
-            } elseif ($sMode -eq '4') {
+            # Invoked through the resolved command object, not by name. That keeps the paste-build
+            # stripper honest: its safety net refuses to drop any function that is CALLED from code
+            # it is keeping, and a literal call here would have looked like exactly that even though
+            # the guard above already handles the stripped case.
+            $s1Gen = Get-Command Show-S1Compressed -ErrorAction SilentlyContinue
+            if ($sMode -eq '4') {
                 Show-WebLauncher
+            } elseif (-not $s1Gen) {
+                Write-Host "  The paste generator is not present in this build (it is stripped from pasted payloads)." -ForegroundColor Yellow
+            } elseif ($sMode -eq '2') {
+                & $s1Gen -Mode lists
+            } elseif ($sMode -eq '3') {
+                & $s1Gen -Mode script
             } else {
-                Show-S1Compressed -Mode all
+                & $s1Gen -Mode all
             }
             Write-Host "  Press Enter to return to the menu..." -ForegroundColor DarkGray
             Read-Host | Out-Null
@@ -2446,7 +2538,9 @@ if ($squatFile) {
 if ($MakeS1Paste) {
     # Generate the compressed (gzip+Base64) "everything" paste - script + community IOC/URL lists.
     # For the smaller script-only / lists-only variants, use the interactive 'p' menu.
-    Show-S1Compressed -Mode all
+    $s1GenTop = Get-Command Show-S1Compressed -ErrorAction SilentlyContinue
+    if ($s1GenTop) { & $s1GenTop -Mode all }
+    else { Write-Host '  -MakeS1Paste is unavailable in a pasted build (the generator is stripped from the payload).' -ForegroundColor Yellow }
     return
 }
 
