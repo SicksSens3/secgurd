@@ -238,6 +238,14 @@ Launching without `-Auto` brings up a menu. **All modules start OFF** — you ch
 
 > On entry the logo appears on its own splash screen — the Sigurd inscription, a one-line operator stamp (endpoint · user · privilege · version), blood dripping off the sword tip, and a `Press ENTER to HUNT` prompt. A keypress clears it and drops into the menu, which shows the same banner statically. The drip animates only on a local interactive console wide and tall enough to hold the whole splash unscrolled (so the sword tip stays put under it) — on remote/redirected/ISE hosts or a small window it silently falls back to the static splash, so it never affects input.
 
+### When a scan finishes
+
+The end of a run is a **menu, not a dead end** — `[v]` browse results, `[m]` back to the module menu, `[o]` open the output folder, `Enter` to exit. It **loops**, so looking at two things doesn't drop you out at the first one.
+
+`[m]` **re-runs secgurd** rather than resuming. The collectors execute as inline script body, so there is no earlier point to jump back to — "back to the menu" can only mean starting again. It carries your original switches across (above all the dependency paths, since a relaunch without them would silently scan with **no IOC / URL / squat matching at all**) but deliberately drops `-Auto`, `-Modules` and `-OutputPath`, so you land on the menu and pick a new set into a **fresh timestamped folder**. Merging into the finished one would overwrite `00_SUMMARY.txt` with only the second run's findings and quietly lose the first; the scan picker in `[v]` lists both runs, so keeping them separate costs nothing.
+
+Two details make this work in the shell it was written for. **Interactivity is judged the same way the module menu judges it** — `[Environment]::UserInteractive` *alone* is false under SYSTEM, which is exactly what a remote-shell session is, so gating on it by itself hid this menu in the entire environment it exists for. The check now refuses only when stdin is redirected **and** the session is non-interactive: a genuinely input-less pipeline that would deadlock on `Read-Host`. And **`[m]` finds its own source** — a dotted `.ps1` knows its path, the compressed paste stages a copy in `%TEMP%`, and a purely in-memory run (`iex`, where `$PSCommandPath` is `$null`) recovers the running scriptblock's own text and re-invokes *that*, in memory. Writing a copy of secgurd to disk just to re-run it would add EDR surface and leave a file behind to clean up. The recovered text is sanity-gated on length and content first; if it doesn't look like secgurd it is dropped and `[m]` is simply not offered.
+
 ---
 
 ## IOC hash matching

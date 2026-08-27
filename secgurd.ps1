@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.6.2'
+$script:secgurdVersion = 'v2.6.3'
 
 # ---------------------------------------------
 
@@ -7513,23 +7513,48 @@ Write-Host ""
 # 00_SUMMARY with just the second run's findings and silently lose the first, which is exactly the
 # kind of quiet data loss this tool exists to avoid. The results browser's scan picker lists both,
 # so keeping them separate costs nothing.
-if (-not $Auto -and [Environment]::UserInteractive) {
-    # Where could a relaunch come from? A dotted .ps1 knows its own path. A pasted / in-memory run
-    # does not ($PSCommandPath is null when the stub does [ScriptBlock]::Create), but that stub
-    # stages the script in %TEMP% first - so check there before deciding we cannot offer [m].
+# Interactivity is tested the same way Show-ModuleMenu and Invoke-Cleanup test it, and for the same
+# reason: [Environment]::UserInteractive ALONE is false under SYSTEM / service contexts, which is
+# exactly what the SentinelOne remote shell is. Gating on it by itself silently skipped this whole
+# menu in the whole environment it was written for. Refuse only when stdin is redirected AND we are
+# non-interactive - i.e. a genuinely input-less pipeline that would deadlock on Read-Host.
+$postCanRead = $true
+try { if ([Console]::IsInputRedirected -and -not [Environment]::UserInteractive) { $postCanRead = $false } } catch {}
+if (-not $Auto -and $postCanRead) {
+    # How can we re-run without the analyst pasting the whole script back into the shell? Three
+    # ways, in order:
+    #   1. A dotted .ps1 knows its own path.
+    #   2. The compressed paste stages a copy in %TEMP% - use that if it is there.
+    #   3. Neither exists for a purely in-memory run ($PSCommandPath is null when the stub does
+    #      [ScriptBlock]::Create), so recover OUR OWN SOURCE from the running scriptblock and
+    #      re-invoke that. This is the case that matters most: from a remote-shell paste there is
+    #      no file anywhere, and without it [m] would be hidden exactly when it is wanted.
+    #
+    # Re-invoking the recovered text IN MEMORY is deliberate - writing a copy of secgurd to disk
+    # just to re-run it would add an EDR surface and leave a file behind to clean up.
     $selfPath = $null
+    $selfText = $null
     if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) { $selfPath = $PSCommandPath }
     else {
         $tmpSelf = Join-Path $env:TEMP 'secgurd.ps1'
         if (Test-Path -LiteralPath $tmpSelf) { $selfPath = $tmpSelf }
+        else {
+            try { $selfText = [string]$MyInvocation.MyCommand.ScriptBlock } catch {}
+            if (-not $selfText) { try { $selfText = [string]$MyInvocation.MyCommand.Definition } catch {} }
+            # Sanity-gate it: a path or a stub would be short, our source is hundreds of KB. If this
+            # does not look like secgurd, drop it rather than re-invoking something unknown - [m] is
+            # then simply not offered, which is the current behaviour anyway.
+            if ($selfText -and ($selfText.Length -lt 20000 -or $selfText -notmatch 'secgurdVersion')) { $selfText = $null }
+        }
     }
+    $canRerun = [bool]($selfPath -or $selfText)
 
     while ($true) {
         Write-Host ""
         Write-Host "   [v] " -ForegroundColor Yellow -NoNewline
         Write-Host ("{0,-28}" -f 'browse results') -ForegroundColor White -NoNewline
         Write-Host "findings, artifacts, earlier scans" -ForegroundColor DarkGray
-        if ($selfPath) {
+        if ($canRerun) {
             Write-Host "   [m] " -ForegroundColor Yellow -NoNewline
             Write-Host ("{0,-28}" -f 'back to the module menu') -ForegroundColor White -NoNewline
             Write-Host "forgot a module? runs a NEW scan" -ForegroundColor DarkGray
@@ -7546,7 +7571,7 @@ if (-not $Auto -and [Environment]::UserInteractive) {
         if ($post -eq '' -or $post -eq 'q') { break }
         if ($post -eq 'v') { Show-ResultsBrowser -ScanPath $OutputPath; continue }
         if ($post -eq 'o') { try { Invoke-Item $OutputPath } catch {} ; continue }
-        if ($post -eq 'm' -and $selfPath) {
+        if ($post -eq 'm' -and $canRerun) {
             # Carry the caller's original switches across - above all the dependency paths, since a
             # pasted run keeps its lists in %TEMP% and a relaunch without them would silently scan
             # with no IOC / URL / squat matching at all. -Auto, -Modules and -OutputPath are dropped
@@ -7561,7 +7586,10 @@ if (-not $Auto -and [Environment]::UserInteractive) {
             Write-Host "  Relaunching - this starts a NEW scan in a new output folder." -ForegroundColor DarkGray
             Write-Host "  The previous run stays where it is; [v] lists both." -ForegroundColor DarkGray
             Write-Host ""
-            try { & $selfPath @again } catch {
+            try {
+                if ($selfPath) { & $selfPath @again }
+                else { & ([ScriptBlock]::Create($selfText)) @again }
+            } catch {
                 Write-Host "  Relaunch failed: $($_.Exception.Message)" -ForegroundColor Yellow
                 Write-Host "  Re-run secgurd manually to pick a different module set." -ForegroundColor DarkGray
             }
