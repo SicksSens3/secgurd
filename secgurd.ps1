@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.6.1'
+$script:secgurdVersion = 'v2.6.2'
 
 # ---------------------------------------------
 
@@ -7504,17 +7504,70 @@ Write-Host ""
 
 # Optionally open the output folder when done (interactive desktop only; the 'o' menu toggle).
 
-# Offer the results browser right where people currently go hunting for files. Skipped for -Auto
-# (headless by definition) and when there is no console to read a key from.
+# Post-scan menu. It LOOPS, so browsing results returns here instead of dropping you out - the old
+# single prompt made [v] a one-shot, and anyone who wanted to look at two things had to re-run.
+#
+# [m] RE-RUNS secgurd rather than resuming. The 53 collectors execute as inline script body, so
+# there is no earlier point to jump back to - "go back to the menu" can only mean starting again.
+# It writes a FRESH timestamped folder on purpose: merging into the finished one would overwrite
+# 00_SUMMARY with just the second run's findings and silently lose the first, which is exactly the
+# kind of quiet data loss this tool exists to avoid. The results browser's scan picker lists both,
+# so keeping them separate costs nothing.
 if (-not $Auto -and [Environment]::UserInteractive) {
-    Write-Host ""
-    Write-Host "   [v] " -ForegroundColor Yellow -NoNewline
-    Write-Host "browse results here" -ForegroundColor White -NoNewline
-    Write-Host "    [Enter] exit" -ForegroundColor DarkGray
-    Write-Host "  > " -ForegroundColor DarkGray -NoNewline
-    try {
-        if ((Read-Host).Trim().ToLower() -eq 'v') { Show-ResultsBrowser -ScanPath $OutputPath }
-    } catch {}
+    # Where could a relaunch come from? A dotted .ps1 knows its own path. A pasted / in-memory run
+    # does not ($PSCommandPath is null when the stub does [ScriptBlock]::Create), but that stub
+    # stages the script in %TEMP% first - so check there before deciding we cannot offer [m].
+    $selfPath = $null
+    if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) { $selfPath = $PSCommandPath }
+    else {
+        $tmpSelf = Join-Path $env:TEMP 'secgurd.ps1'
+        if (Test-Path -LiteralPath $tmpSelf) { $selfPath = $tmpSelf }
+    }
+
+    while ($true) {
+        Write-Host ""
+        Write-Host "   [v] " -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-28}" -f 'browse results') -ForegroundColor White -NoNewline
+        Write-Host "findings, artifacts, earlier scans" -ForegroundColor DarkGray
+        if ($selfPath) {
+            Write-Host "   [m] " -ForegroundColor Yellow -NoNewline
+            Write-Host ("{0,-28}" -f 'back to the module menu') -ForegroundColor White -NoNewline
+            Write-Host "forgot a module? runs a NEW scan" -ForegroundColor DarkGray
+        }
+        Write-Host "   [o] " -ForegroundColor Yellow -NoNewline
+        Write-Host ("{0,-28}" -f 'open the output folder') -ForegroundColor White -NoNewline
+        Write-Host "in Explorer" -ForegroundColor DarkGray
+        Write-Host "   [Enter] exit" -ForegroundColor DarkGray
+        Write-Host "  > " -ForegroundColor DarkGray -NoNewline
+
+        $post = ''
+        try { $post = (Read-Host).Trim().ToLower() } catch { break }
+
+        if ($post -eq '' -or $post -eq 'q') { break }
+        if ($post -eq 'v') { Show-ResultsBrowser -ScanPath $OutputPath; continue }
+        if ($post -eq 'o') { try { Invoke-Item $OutputPath } catch {} ; continue }
+        if ($post -eq 'm' -and $selfPath) {
+            # Carry the caller's original switches across - above all the dependency paths, since a
+            # pasted run keeps its lists in %TEMP% and a relaunch without them would silently scan
+            # with no IOC / URL / squat matching at all. -Auto, -Modules and -OutputPath are dropped
+            # deliberately: the whole point is to land back on the menu and pick a new set, into a
+            # new folder.
+            $skip = @('Auto','Modules','OutputPath','MakeS1Paste','Cleanup','Help')
+            $again = @{}
+            foreach ($k in $PSBoundParameters.Keys) {
+                if ($skip -notcontains $k) { $again[$k] = $PSBoundParameters[$k] }
+            }
+            Write-Host ""
+            Write-Host "  Relaunching - this starts a NEW scan in a new output folder." -ForegroundColor DarkGray
+            Write-Host "  The previous run stays where it is; [v] lists both." -ForegroundColor DarkGray
+            Write-Host ""
+            try { & $selfPath @again } catch {
+                Write-Host "  Relaunch failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                Write-Host "  Re-run secgurd manually to pick a different module set." -ForegroundColor DarkGray
+            }
+            return
+        }
+    }
 }
 
 if ([Environment]::UserInteractive -and $script:OpenFolderWhenDone) {
