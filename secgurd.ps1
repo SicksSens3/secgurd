@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.6.0'
+$script:secgurdVersion = 'v2.6.1'
 
 # ---------------------------------------------
 
@@ -1006,8 +1006,11 @@ function Compress-Source {
         # exactly that - the stub stages the IOC/URL/squat lists into %TEMP% and passes their paths
         # in. Dropping them would have silently disabled IOC matching in every pasted run: the
         # loader is wrapped in try/catch, so there would be no error, just no detections.
+        # The launcher goes too: it GENERATES a way to fetch secgurd, which is meaningless
+        # inside a payload that has already been fetched.
         $dropFns = @('Show-S1Compressed','Compress-Source','Invoke-DependenciesMenu',
-                     'Invoke-IOCDependency','Invoke-MalUrlDependency','Invoke-SquatDependency')
+                     'Invoke-IOCDependency','Invoke-MalUrlDependency','Invoke-SquatDependency',
+                     'Show-WebLauncher')
         try {
             $pErr = $null; $pTok = $null
             $pAst = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$pTok, [ref]$pErr)
