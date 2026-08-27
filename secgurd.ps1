@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.7.2'
+$script:secgurdVersion = 'v2.7.3'
 
 # ---------------------------------------------
 
@@ -2536,24 +2536,35 @@ function Show-ModuleMenu {
         try { $wide = ($Host.UI.RawUI.BufferSize.Width -ge 96) } catch {}
         $perRow = if ($wide) { 3 } else { 1 }
 
-        # Render from a COMPUTED list so a module can never silently vanish from the menu.
-        # $script:ModuleGroups and $script:ModuleCatalogue are two separate tables, and the loop
-        # below draws from the groups: a catalogue entry belonging to no group was simply never
-        # drawn - present in the tool, runnable via -Modules, but impossible to find or toggle in
-        # the one screen you would look for it in, with no error to say so. Anything ungrouped now
-        # lands under OTHER instead, which is loud enough to notice and fix.
-        $menuGroups = New-Object System.Collections.Generic.List[object]
-        foreach ($g in $script:ModuleGroups) { $menuGroups.Add([PSCustomObject]@{ Name=$g.Name; Ids=@($g.Ids) }) }
-        $seenIds = @($script:ModuleGroups | ForEach-Object { $_.Ids })
-        $orphans = @($script:ModuleCatalogue | Where-Object { $seenIds -notcontains $_.Id } | ForEach-Object { $_.Id })
-        if ($orphans.Count) { $menuGroups.Add([PSCustomObject]@{ Name='OTHER'; Ids=$orphans }) }
+        # Drive the menu from the CATALOGUE, not from the group table.
+        #
+        # The catalogue is the single source of truth for which modules exist; the group table only
+        # decides headings and order. The old loop had that backwards - it walked the groups and
+        # looked each id back up in the catalogue, with a `continue` when the lookup missed. Any
+        # disagreement between the two tables therefore DELETED a module from the menu silently:
+        # no error, no empty row, just a module that exists in the tool, runs fine via -Modules,
+        # and cannot be found or toggled in the one screen you would look for it in. A heading with
+        # nothing under it was the only symptom.
+        #
+        # Inverted, that whole failure mode is gone. Every catalogue entry is guaranteed exactly one
+        # row, and the worst a wrong group mapping can now do is file it under OTHER, where it is
+        # visible and obviously wrong instead of absent and silent.
+        $order = @()
+        foreach ($g in $script:ModuleGroups) { $order += $g.Name }
+        $order += 'OTHER'
+        $bucket = @{}
+        foreach ($m in $script:ModuleCatalogue) {
+            $gn = Get-ModuleGroupName $m.Id
+            if ($order -notcontains $gn) { $gn = 'OTHER' }
+            if (-not $bucket.ContainsKey($gn)) { $bucket[$gn] = New-Object System.Collections.Generic.List[object] }
+            $bucket[$gn].Add($m)
+        }
 
-        foreach ($grp in $menuGroups) {
-            Write-Host ("   {0}" -f $grp.Name) -ForegroundColor DarkCyan
+        foreach ($gn in $order) {
+            if (-not $bucket.ContainsKey($gn)) { continue }
+            Write-Host ("   {0}" -f $gn) -ForegroundColor DarkCyan
             $col = 0
-            foreach ($id in $grp.Ids) {
-                $m = $script:ModuleCatalogue | Where-Object { $_.Id -eq $id } | Select-Object -First 1
-                if (-not $m) { continue }
+            foreach ($m in $bucket[$gn]) {
                 if ($col -eq 0) { Write-Host "    " -NoNewline }
                 $on = $script:SelectedModules[$m.Id]
                 $mark = if ($on) { (Ex "[^14]") } else { '[ ]' }
