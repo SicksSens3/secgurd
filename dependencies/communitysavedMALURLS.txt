@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-08-28 18:55:20 UTC
+# Updated: 2026-08-29 12:46:57 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://69cnc.duckdns.org/bins/putita.m68k,malware_download
@@ -20,14 +20,12 @@ http://yakult-hk.com/DDOS.zip,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
 https://airtickts.com/,malware_download
 https://alphapicaficagency.com/stego_k4m79w60vz.png,malware_download
-https://alphasaling.site/stego_95t70lfg5l.png,malware_download
 https://balanced-red-emhnkdfj-dp7g2kvqxx8n.edgeone.dev/,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/spx/ficeo.zip,malware_download
 https://coconutoficial.com.br/img/stego_anepqnd5rj.png,malware_download
 https://coolairesgroup.com/img_051638.png,malware_download
 https://del.sou.pp.ua/install.sh,malware_download
 https://deliverymailreport.co.za/img_043051.png,malware_download
-https://dipre.com.tr/25/stego_i7rkf2ladi.png,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
 https://download.tfyxzai.com/donwnload/prortonvpn_x64.zip,malware_download
 https://drive.google.com/uc?export=download&id=1pxZ86u3QanfKU3WPmIdLZ9Bf6lWvnKjB,malware_download
@@ -36,7 +34,7 @@ https://easyaround.st/img_020822.png,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/inve%20new.png?alt=media&token=15e2a054-9211-4b2f-987c-c1225adf4faa,malware_download
 https://flicargo.com/.well-known/New/stego_rabit.png,malware_download
 https://gaiadeqi.com/stego_cdyg6hf6tx.png,malware_download
-https://goxlrutility.net/goxlr-software.zip,malware_download
+https://gd.ozzhlb.net/bin/stego_pefqx5myie.png,malware_download
 https://grantexx.com/Pred.inf,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://impectorinternational.com/kaka/stego_jwfhjrnszg.png,malware_download
@@ -44,26 +42,21 @@ https://iptoasn.com/data/ip2asn-v4.tsv.gz,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/Images/stego_jxdqj7fw9j.png,malware_download
-https://lavos.life/bothways/stego_tm92fbepbu.png,malware_download
 https://munihuacho.gob.pe//sifyWeb/MSI_PRO.png,malware_download
 https://nw.almfwb.com/almfwb.zip,malware_download
 https://pic.li/images/MSI_PRO_Last.jpeg,malware_download
 https://plain-wnam-prod-public.komododecks.com/202608/05/kk9ihQ9ebT47mHmrYHEr/image.png,malware_download
 https://profitable-pink-0y9btnew-dpk6vqe6eheo.edgeone.dev/,malware_download
 https://quick-load.vercel.app/api/settings/bootstraplinux,malware_download
-https://res.cloudinary.com/vgwbivoj/image/upload/v1787883780/img_222244.jpg,malware_download
 https://ryanborn.net/BAND/MSI_PRO.png,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
 https://sh.classera.com/Naew8m,malware_download
 https://signageinsignia.co.za/kizzy/1.jpg,malware_download
-https://sixmexicos.com/25/stego_vz9rn9sxq3.png,malware_download
 https://somostask.co/Candy.png,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
-https://tokidsa.com/Invoice/Inv.rar,malware_download
-https://universalmobility.pro/Striker.png,malware_download
 https://www-connect-secure-wellcfargo.sekolahkejarpaket.com/wellsfargo_new_obf_08.07.26.zip,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
 https://www.hqsblog.com/wordpress/wp-content/plugins/zxzxzx/stego_p0ci0zln28.png,malware_download
