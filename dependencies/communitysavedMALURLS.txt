@@ -3,18 +3,24 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-09-01 11:54:15 UTC
+# Updated: 2026-09-02 11:35:22 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://archivoscrosoft.com/newrem.png,malware_download
 http://bserail.com/cabin/Diocle.emz,malware_download
+http://delii.icu/ppc64le,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
 http://mrsweaterltd.com/o85pdfv8yi.png,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
+http://pingu.business/main_sh4,malware_download
+http://pingu.ltd/ppc64,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
+http://trusting-golick.93-152-221-234.plesk.page/i686,malware_download
+http://www.93-152-221-234.plesk.page/arm64,malware_download
+http://www.pingu.surf/main_mips,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://198348.gl/collect,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
@@ -30,13 +36,12 @@ https://del.sou.pp.ua/install.sh,malware_download
 https://deliverymailreport.co.za/img_043051.png,malware_download
 https://download-sougou.com.cn/donwnload/sougouExpiorerr_Setup_x64_25537.zip,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
+https://download.tfyxzai.com/donwnload/prortonvpn_x64.zip,malware_download
 https://drive.google.com/uc?export=download&id=1mVI9h_rV6mptfRqbC3cDNiyfurIAq2tQ,malware_download
 https://duct-master.com/00/newMSI_PRO.png,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/inve%20new.png?alt=media&token=15e2a054-9211-4b2f-987c-c1225adf4faa,malware_download
-https://gaiadeqi.com/fires.png,malware_download
-https://gd.ozzhlb.net/bin/stego_pefqx5myie.png,malware_download
+https://gaiadeqi.com/stego_cdyg6hf6tx.png,malware_download
 https://grantexx.com/Pred.inf,malware_download
-https://hindustancargologistic.com/stego_fd28mpphmh.png,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://impectorinternational.com/kaka/stego_jwfhjrnszg.png,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
@@ -48,12 +53,12 @@ https://plain-wnam-prod-public.komododecks.com/202608/05/kk9ihQ9ebT47mHmrYHEr/im
 https://profitable-pink-0y9btnew-dpk6vqe6eheo.edgeone.dev/,malware_download
 https://quick-load.vercel.app/api/settings/bootstraplinux,malware_download
 https://rabbitfuns.su/encrypted/1.zip,malware_download
+https://res.cloudinary.com/dqeusemd/image/upload/v1788331463/img_084254.jpg,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
 https://sh.classera.com/Naew8m,malware_download
 https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
 https://signageinsignia.co.za/kizzy/1.jpg,malware_download
-https://somostask.co/Candy.png,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
