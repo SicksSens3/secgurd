@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.7.3'
+$script:secgurdVersion = 'v2.8.0'
 
 # ---------------------------------------------
 
@@ -274,6 +274,141 @@ $script:TrustedPathRx = '(?i)\\(Windows Defender|Windows Defender Advanced Threa
     '(?i)\\Packages\\Microsoft\.|' +
     '(?i)\\Microsoft\\EdgeUpdate\\|' +
     '(?i)\\Microsoft\\EdgeWebView\\'
+
+
+# ---------------------------------------------------------------------------------------------
+#  Profile-root installs - the writable location every other heuristic here used to look past.
+# ---------------------------------------------------------------------------------------------
+# Every "writable path" test in this tool asks the same question: is this under Temp, AppData,
+# Users\Public or ProgramData? An installer-style PUP needs none of them. It drops straight into
+# the PROFILE ROOT - %USERPROFILE%\<Vendor>\ - which needs no admin rights either, and was on no
+# list. Wave Browser is the textbook case: it installs to
+#     C:\Users\<u>\Wavesor Software\WaveBrowser\wavebrowser.exe
+# and persists with a task under  \Wavesor Software_<SID>\WaveBrowser-StartAtLogin. Its task
+# action, its uninstall entry and its install folder therefore ALL scored clean - not AppData,
+# not Temp, so never examined - and the per-user PUP walk never saw the folder either, because
+# that walk only descends AppData\{Local,Roaming,LocalLow}. Windows' own sanctioned per-user
+# install target is %LOCALAPPDATA%\Programs, so a vendor directory at the profile root is signal.
+#
+# ProfileInstallRx matches "a path at least one directory inside a user profile". The folders that
+# legitimately live there are named ONCE below and drive both the path test and the directory-name
+# test, so the two forms of the exemption cannot drift apart.
+$script:ProfileOkFolders = @(
+    # created by Windows itself (including the legacy compatibility junctions)
+    'AppData', 'Desktop', 'Documents', 'Downloads', 'Music', 'Pictures', 'Videos', 'Favorites',
+    'Links', 'Contacts', 'Searches', 'Saved Games', '3D Objects', 'Application Data', 'Cookies',
+    'Local Settings', 'Start Menu', 'Templates', 'NetHood', 'PrintHood', 'Recent', 'SendTo',
+    'My Documents',
+    # sync clients (OneDrive is also matched with a suffix - "OneDrive - <Tenant>")
+    'OneDrive', 'Dropbox', 'Box', 'Box Sync', 'iCloudDrive', 'Google Drive',
+    # developer toolchains that genuinely do install at the profile root
+    'scoop', 'go', 'node_modules', 'anaconda3', 'miniconda3', 'miniforge3', 'venv', 'source', 'repos'
+)
+$script:ProfileInstallRx  = '(?i)\\Users\\[^\\]+\\[^\\]+\\'
+$script:ProfileFolderOkRx = '(?i)^\\Users\\[^\\]+\\(' +
+    (($script:ProfileOkFolders | ForEach-Object { [regex]::Escape($_) }) -join '|') +
+    '|OneDrive[^\\]*|\.[^\\]+)\\$'
+
+function Test-ProfileFolderNormal {
+    # Name-only form of the exemption above, for walking a profile root's directory entries.
+    param([string]$Name)
+    if (-not $Name) { return $true }
+    if ($Name.StartsWith('.')) { return $true }          # .cargo, .dotnet, .nvm, .vscode, ...
+    if ($Name -match '(?i)^OneDrive') { return $true }    # "OneDrive - <Tenant>"
+    return ($script:ProfileOkFolders -contains $Name)     # -contains is case-insensitive
+}
+
+function Test-ProfileInstall {
+    # $true when $Text contains a path to something installed at a user's PROFILE ROOT, rather
+    # than in a folder Windows / a sync client / a toolchain put there. $Text may be a bare path
+    # or a whole command line, so EVERY profile path in it is judged - stopping at the first would
+    # let "<benign AppData path> <bad profile-root path>" exempt itself.
+    param([string]$Text)
+    if (-not $Text) { return $false }
+    foreach ($m in [regex]::Matches($Text, $script:ProfileInstallRx)) {
+        if ($m.Value -match $script:ProfileFolderOkRx) { continue }
+        if ($m.Value -match $script:TrustedPathRx)     { continue }
+        return $true
+    }
+    return $false
+}
+
+function Get-ProfileInstallPath {
+    # The offending  \Users\<u>\<Vendor>\  fragment from $Text, for a finding that must say WHERE.
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    foreach ($m in [regex]::Matches($Text, $script:ProfileInstallRx)) {
+        if ($m.Value -match $script:ProfileFolderOkRx) { continue }
+        if ($m.Value -match $script:TrustedPathRx)     { continue }
+        return $m.Value
+    }
+    return ''
+}
+
+# ---------------------------------------------------------------------------------------------
+#  Known PUP / adware / browser-hijacker families.
+# ---------------------------------------------------------------------------------------------
+# Same reasoning as the RMM table in module 03. The heuristics above catch the SHAPE of a
+# bundleware install; this table supplies the NAME, which is what turns "unknown vendor folder at
+# a profile root" into an answer an analyst can act on without pivoting to VirusTotal first. These
+# are commodity, widely-documented families, so a name match is a finding on its own. Matched
+# case-insensitively against task names / paths / actions, service and process names, install
+# folder names, and registry key names and DisplayName values.
+$script:PupFamilies = @(
+    # 'wave browser' / 'wavesor' cover the product and the publisher; the SWUpdater component
+    # deliberately is NOT its own pattern - it always sits inside a Wavesor path, so 'wavesor'
+    # already catches it, and 'swupdater' alone is generic enough to hit unrelated updaters.
+    @{ Pat = 'wavebrowser|wave browser|wavesor';    Name = 'Wave Browser (Wavesor Software)' }
+    @{ Pat = 'onelaunch';                           Name = 'OneLaunch' }
+    @{ Pat = 'webdiscover';                         Name = 'WebDiscover Browser' }
+    @{ Pat = 'chromstera|chromnius|browsairsearch'; Name = 'Chromium-clone hijacker' }
+    @{ Pat = 'mediaget';                            Name = 'MediaGet' }
+    @{ Pat = 'segurazo|santivirus';                 Name = 'Segurazo / SAntivirus' }
+    @{ Pat = 'totalav|pcprotect|scanguard';         Name = 'TotalAV / PCProtect / ScanGuard' }
+    # Single-token names only. 'driver support' as two words would also match legitimate vendor
+    # strings ("<OEM> Driver Support ..."), and this table reports HIGH without asking for context.
+    @{ Pat = 'driverfix|driverpack|driver booster|driverupdate'
+                                                    Name = 'Driver-updater PUP' }
+    @{ Pat = 'advanced systemcare|iobit';           Name = 'IObit / Advanced SystemCare' }
+    @{ Pat = 'reimage|restoro|systemhealer|outbyte'; Name = 'System-repair PUP' }
+    @{ Pat = 'mindspark|weatherblink|ask toolbar|searchprotect'
+                                                    Name = 'Toolbar / search hijacker' }
+    @{ Pat = 'opencandy|installcore|installiq|amonetize|somoto'; Name = 'Bundleware installer' }
+)
+
+function Test-PupFamily {
+    # Friendly product name for the first family $Text matches, else $null.
+    param([string]$Text)
+    if (-not $Text) { return $null }
+    foreach ($f in $script:PupFamilies) { if ($Text -match "(?i)$($f.Pat)") { return $f.Name } }
+    return $null
+}
+
+function Test-ChromiumLayout {
+    # Return the version-folder name when $Dir looks like a Chromium-based install, else ''.
+    # The tell is structural, not a name: an .exe sitting next to a folder named as a bare version
+    # (usually with an Installer\setup.exe inside it). Testing for THAT, rather than for a literal
+    # 'Application' directory, also catches clones whose installer lays itself out as
+    # <Vendor>\<Product>\{<product>.exe, 116.0.5845.111\} - which is Wave Browser's shape, and is
+    # why the existing Application\<ver> check walked past it.
+    # Bounded to $Dir and its immediate children; never a deep recurse.
+    param([string]$Dir)
+    if (-not $Dir -or -not (Test-Path -LiteralPath $Dir)) { return '' }
+    $vers = @(Get-ChildItem -LiteralPath $Dir -Directory -Force -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match '^\d+(\.\d+){1,3}$' })
+    if (-not $vers.Count) { return '' }
+    foreach ($v in $vers) {
+        if (Test-Path -LiteralPath (Join-Path $v.FullName 'Installer\setup.exe')) { return $v.Name }
+    }
+    $hasExe = [bool](Get-ChildItem -LiteralPath $Dir -Filter *.exe -File -Force -ErrorAction SilentlyContinue |
+                     Select-Object -First 1)
+    if (-not $hasExe) {
+        $hasExe = [bool](Get-ChildItem -LiteralPath $vers[0].FullName -Filter *.exe -File -Force -ErrorAction SilentlyContinue |
+                         Select-Object -First 1)
+    }
+    if ($hasExe) { return $vers[0].Name }
+    return ''
+}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -914,7 +1049,7 @@ $script:ModuleCatalogue = @(
     [PSCustomObject]@{ Id='06'; Name='Processes';            Desc='proctree, cmdlines, odd-path dlls' }
     [PSCustomObject]@{ Id='07'; Name='Filesystem';           Desc='temp exes, ads, download origins, recycle bin' }
     [PSCustomObject]@{ Id='08'; Name='Event logs';           Desc='account changes, log clearing' }
-    [PSCustomObject]@{ Id='09'; Name='Software & defender';  Desc='installed apps, patches, defender posture' }
+    [PSCustomObject]@{ Id='09'; Name='Software & defender';  Desc='installed apps, per-user + profile-root installs, pup/adware, patches, defender posture' }
     [PSCustomObject]@{ Id='10'; Name='Browser & creds';      Desc='history+url analysis, extensions, notifications, .ssh/.aws' }
     [PSCustomObject]@{ Id='11'; Name='LOLBins';              Desc='certutil, mshta, rundll32 in 4688' }
     [PSCustomObject]@{ Id='12'; Name='AmCache / ShimCache';  Desc='execution artifact locations' }
@@ -4400,18 +4535,25 @@ Save-Output "03_scheduled_tasks.txt" {
             -Fields $f -Indent '  ' -Width 98
     }
 
-    Write-Section "SUSPICIOUS TASK ACTIONS (writable path / encoded / lolbin)"
+    Write-Section "SUSPICIOUS TASK ACTIONS (writable path / profile-root install / encoded / lolbin)"
     # Flag tasks whose action runs from a writable location or uses a download/encoded pattern.
+    # 'writable-path' is the classic Temp / AppData / Public / ProgramData set. It is NOT the whole
+    # of "writable": a per-user installer can drop into the profile root instead, and a task action
+    # of C:\Users\<u>\Wavesor Software\WaveBrowser\wavebrowser.exe matched none of those four - so
+    # Wave Browser's StartAtLogin task produced no finding at all. Test-ProfileInstall closes that,
+    # as its own reason so the two stay tellable apart in the artifact.
     $suspectTasks = foreach ($t in $allTasks) {
         foreach ($act in $t.Actions) {
             $cmd = "$($act.Execute) $($act.Arguments)".Trim()
             if (-not $cmd) { continue }
-            $badLoc = ($cmd -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\') -and ($cmd -notmatch $script:TrustedPathRx)
+            $badLoc  = ($cmd -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\') -and ($cmd -notmatch $script:TrustedPathRx)
+            $profLoc = (-not $badLoc) -and (Test-ProfileInstall $cmd)
             $badCmd = $cmd -match '(?i)(-enc(odedcommand)?|frombase64string|downloadstring|downloadfile|-w(indowstyle)?\s+hidden|iex|invoke-expression|mshta|bitsadmin|certutil\s+-urlcache|regsvr32.*scrobj)'
-            if ($badLoc -or $badCmd) {
+            if ($badLoc -or $profLoc -or $badCmd) {
                 $reason = @()
-                if ($badLoc) { $reason += 'writable-path' }
-                if ($badCmd) { $reason += 'suspicious-command' }
+                if ($badLoc)  { $reason += 'writable-path' }
+                if ($profLoc) { $reason += 'profile-root-install' }
+                if ($badCmd)  { $reason += 'suspicious-command' }
                 $sev = if ($badCmd) { 'HIGH' } else { 'MED' }
                 Add-Finding $sev '03' (Ex "Scheduled task '$($t.TaskName)' action looks suspicious ($($reason -join ', '))") '03_scheduled_tasks.txt'
                 [PSCustomObject]@{
@@ -4424,6 +4566,47 @@ Save-Output "03_scheduled_tasks.txt" {
         }
     }
     if ($suspectTasks) { $suspectTasks | Format-Table -AutoSize -Wrap } else { "(none found)" }
+
+    Write-Section "PER-USER TASK FOLDERS (vendor name + user SID)"
+    # A task folder named  \<Vendor>_S-1-5-21-...\  is how a per-user installer scopes persistence
+    # to one account: no admin needed, and a copy survives in every profile the installer ran in.
+    # Legitimate software registers under \<Vendor>\ or \Microsoft\...; the SID suffix is close to
+    # exclusive to bundleware and clone-browser installers - Wave Browser's
+    # \Wavesor Software_S-1-5-21-...\WaveBrowser-StartAtLogin is the canonical shape. The SID is
+    # also the answer to "which user is infected", which a task name alone never tells you.
+    $sidFolderTasks = @($allTasks | Where-Object { $_.TaskPath -match '(?i)_S-1-5-21-\d+' })
+    if ($sidFolderTasks.Count) {
+        $sidRows = foreach ($t in ($sidFolderTasks | Sort-Object TaskPath, TaskName)) {
+            $vendor = if ($t.TaskPath -match '(?i)\\([^\\]+?)_S-1-5-21-') { $matches[1] } else { '(unknown)' }
+            $sid    = if ($t.TaskPath -match '(?i)_(S-1-5-21-[\d-]+)') { $matches[1] } else { '' }
+            # Hand Resolve-Sid the profile path as its fallback, so an unresolvable SID still names
+            # a user ('SPAGE') from ProfileList instead of degrading to the raw SID string.
+            $pip    = if ($sid) { (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid" -ErrorAction SilentlyContinue).ProfileImagePath } else { $null }
+            $acct   = if ($sid) { Resolve-Sid $sid $pip } else { '' }
+            $act    = (($t.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; ').Trim()
+            $fam    = Test-PupFamily "$vendor $($t.TaskName) $act"
+            $sev    = if ($fam) { 'HIGH' } else { 'MED' }
+            $msg    = if ($fam) { "Known PUP persistence task: $fam - '$($t.TaskName)' under \$vendor`_<SID> ($acct)" }
+                      else      { "Per-user installer task folder '\$vendor`_<SID>' ($acct) - task '$($t.TaskName)'" }
+            Add-Finding $sev '03' (Ex $msg) '03_scheduled_tasks.txt' -Detail @(
+                "Vendor|$vendor"
+                "Task|$($t.TaskName)   [$($t.State)]"
+                "Account|$(if ($acct) { $acct } else { '(SID did not resolve)' })"
+                "SID|$(if ($sid) { $sid } else { '(not parseable from path)' })"
+                "Action|$(Defang $act)"
+                "Path|$($t.TaskPath)"
+            )
+            [PSCustomObject]@{
+                Vendor  = $vendor
+                Account = $acct
+                Task    = $t.TaskName
+                State   = $t.State
+                Family  = if ($fam) { $fam } else { '' }
+                Action  = (Defang $act)
+            }
+        }
+        $sidRows | Format-Table Vendor, Account, Task, State, Family, Action -AutoSize -Wrap
+    } else { "(no task folders carrying a user SID)" }
 }
 #endregion 03_scheduled_tasks.txt
 
@@ -4529,14 +4712,23 @@ Save-Output "03_services.txt" {
         else { $p = $raw }
 
         $badLoc = ($p -match '(?i)\\(Temp|AppData|Users\\Public|ProgramData)\\') -and ($p -notmatch $script:TrustedPathRx)
+        # A service whose binary sits in a user's PROFILE ROOT is every bit as hijackable as one in
+        # AppData - that user can replace it - and it was on no writable-path list. Separate reason,
+        # HIGH like the rest: a *service* (machine-wide, SYSTEM by default) has no business running
+        # a binary out of one user's profile whatever the folder is called.
+        $profLoc = (-not $badLoc) -and (Test-ProfileInstall $p)
         # unquoted + has a space before the .exe and isn't already quoted
         $unquoted = ($raw -notmatch '^\s*"') -and ($p -match '\s') -and ($raw -match '\.exe')
-        if ($badLoc -or $unquoted) {
+        if ($badLoc -or $profLoc -or $unquoted) {
             $reason = @()
             if ($badLoc)   { $reason += 'writable-location' }
+            if ($profLoc)  { $reason += 'profile-root-install' }
             if ($unquoted) { $reason += 'unquoted-path' }
             if ($badLoc) {
                 Add-Finding 'HIGH' '03' (Ex "Service '$($svc.Name)' runs from a writable path ^17 $p") '03_services.txt'
+            }
+            if ($profLoc) {
+                Add-Finding 'HIGH' '03' (Ex "Service '$($svc.Name)' runs from a user's profile root ^17 $p") '03_services.txt'
             }
             if ($unquoted) {
                 Add-Finding 'MED' '03' (Ex "Service '$($svc.Name)' has an unquoted path with spaces (hijackable): $(Defang $raw)") '03_services.txt'
@@ -5898,13 +6090,22 @@ Save-Output "09_installed_software.txt" {
 
 #region 09_appdata_app_installs.txt
 Save-Output "09_appdata_app_installs.txt" {
-    Write-Section "PER-USER APP INSTALLS UNDER AppData (all users)"
-    "Apps installed into a user's AppData need no admin rights and often skip Add/Remove Programs,"
-    "so AppData is a favorite home for adware / PUPs / 'clone' browsers. The standard software scan"
-    "(09_installed_software) won't list them. This walks EVERY user's Local / Roaming / LocalLow,"
-    "lists folders that contain an executable, and FLAGS two high-signal PUP patterns:"
-    "   - a Chromium-style  <App>\Application\<version>\(...\Installer\setup.exe)  under a non-vendor name"
+    Write-Section "PER-USER APP INSTALLS - AppData AND PROFILE ROOT (all users)"
+    "Apps installed into a user's profile need no admin rights and often skip Add/Remove Programs,"
+    "so the profile is a favorite home for adware / PUPs / 'clone' browsers. The standard software"
+    "scan (09_installed_software) won't list them. This walks EVERY user's Local / Roaming /"
+    "LocalLow AND the PROFILE ROOT itself, lists folders that contain an executable, and FLAGS:"
+    "   - a Chromium-style layout: an .exe beside a bare-version folder (<App>\Application\<ver>\,"
+    "     or <Vendor>\<Product>\{<product>.exe, 116.0.5845.111\}) under a non-vendor name"
     "   - an updater/dock family:  <App> plus <App>Updater / <App>AutoUpdate / <App>Dock"
+    "   - a name matching a known PUP / browser-hijacker family (see 09_pup_adware.txt)"
+    ""
+    "The profile root is included because that is where an installer-style PUP actually lands, and"
+    "it was the blind spot: C:\Users\<u>\Wavesor Software\WaveBrowser\ is neither AppData nor Temp,"
+    "so Wave Browser was invisible to both this walk and every writable-path test in the tool."
+    "Windows' own per-user install target is %LOCALAPPDATA%\Programs - a vendor directory sitting"
+    "at the profile root is somebody's installer, so the folders Windows / a sync client / a dev"
+    "toolchain legitimately create there are skipped and everything else is examined."
     ""
 
     # Legit per-user vendors/folders: still listed if they hold exes, but never flagged.
@@ -5919,10 +6120,24 @@ Save-Output "09_appdata_app_installs.txt" {
     $rows = New-Object System.Collections.Generic.List[object]
     foreach ($userDir in (Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue)) {
         $user = $userDir.Name
-        foreach ($base in 'Local','Roaming','LocalLow') {
-            $root = Join-Path $userDir.FullName "AppData\$base"
+        # The three AppData roots plus the profile root. Only the profile root gets the one-level
+        # probe (Deep): a vendor folder there usually holds NO exe itself - the product sits one
+        # level down (Wavesor Software\WaveBrowser\wavebrowser.exe) - and there are only a handful
+        # of folders to descend. Doing the same inside AppData would mean a listing per child of
+        # every AppData folder on the box, for no extra signal.
+        $scanRoots = @(
+            @{ Label = 'AppData\Local';   Path = (Join-Path $userDir.FullName 'AppData\Local');    Deep = $false }
+            @{ Label = 'AppData\Roaming'; Path = (Join-Path $userDir.FullName 'AppData\Roaming');  Deep = $false }
+            @{ Label = 'AppData\LocalLow';Path = (Join-Path $userDir.FullName 'AppData\LocalLow'); Deep = $false }
+            @{ Label = '(profile root)';  Path = $userDir.FullName;                                Deep = $true  }
+        )
+        foreach ($sr in $scanRoots) {
+            $root = $sr.Path
             if (-not (Test-Path $root)) { continue }
             $dirs = @(Get-ChildItem $root -Directory -Force -ErrorAction SilentlyContinue)
+            # At the profile root, drop the folders Windows, a sync client or a dev toolchain put
+            # there; what remains is by definition something an installer created.
+            if ($sr.Deep) { $dirs = @($dirs | Where-Object { -not (Test-ProfileFolderNormal $_.Name) }) }
             if (-not $dirs) { continue }
             # Sibling names for cheap family detection (case-insensitive).
             $names = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
@@ -5931,17 +6146,13 @@ Save-Output "09_appdata_app_installs.txt" {
             foreach ($d in $dirs) {
                 $name = $d.Name
 
-                # --- Chromium-clone layout: <App>\Application\<ver>\ with an exe (+/- Installer\setup.exe).
-                #     Bounded lookups only (never a deep recurse of AppData).
-                $cloneHit = $false; $cloneVer = ''
-                $appDir = Join-Path $d.FullName 'Application'
-                if (Test-Path $appDir) {
-                    foreach ($v in (Get-ChildItem $appDir -Directory -Force -ErrorAction SilentlyContinue)) {
-                        if ($v.Name -notmatch '^\d+(\.\d+)+$') { continue }
-                        $hasExe = [bool](Get-ChildItem $v.FullName -Filter *.exe -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
-                        $hasSetup = Test-Path (Join-Path $v.FullName 'Installer\setup.exe')
-                        if ($hasExe -or $hasSetup) { $cloneHit = $true; $cloneVer = $v.Name; break }
-                    }
+                # --- Chromium-clone layout. Both shapes: the folder itself, and the classic
+                #     <App>\Application\<ver>\. Bounded lookups only (never a deep recurse).
+                $cloneVer = Test-ChromiumLayout $d.FullName
+                $cloneWhere = if ($cloneVer) { $name } else { '' }
+                if (-not $cloneVer) {
+                    $cloneVer = Test-ChromiumLayout (Join-Path $d.FullName 'Application')
+                    if ($cloneVer) { $cloneWhere = "$name\Application" }
                 }
 
                 # --- Updater / dock family (name-only; no disk hit).
@@ -5956,17 +6167,43 @@ Save-Output "09_appdata_app_installs.txt" {
 
                 # Only surface folders that are actually app installs (hold an exe or are part of a family).
                 $topExe = Get-ChildItem $d.FullName -Filter *.exe -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1
-                if (-not $cloneHit -and -not $topExe -and -not $famHit) { continue }
 
-                $isGood = $good.Contains($name)
-                $flag = ($cloneHit -or $famHit) -and -not $isGood
+                # --- Profile-root vendor folder: look one level down for the product and its
+                #     updater sibling. This is the step that finds Wave Browser - 'Wavesor
+                #     Software' holds no exe and has no 'Application' dir, so every check above it
+                #     came back clean and the folder was dropped before it was ever considered.
+                $childHit = ''
+                if ($sr.Deep -and -not $cloneVer) {
+                    $kids = @(Get-ChildItem $d.FullName -Directory -Force -ErrorAction SilentlyContinue)
+                    $kidNames = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($k in $kids) { [void]$kidNames.Add($k.Name) }
+                    foreach ($k in $kids) {
+                        $kv = Test-ChromiumLayout $k.FullName
+                        if (-not $kv) { $kv = Test-ChromiumLayout (Join-Path $k.FullName 'Application') }
+                        if ($kv) { $cloneVer = $kv; $cloneWhere = "$name\$($k.Name)"; break }
+                    }
+                    foreach ($k in $kids) {
+                        if ($k.Name -match '(?i)(updater|autoupdate|swupdater)$') { $childHit = $k.Name; break }
+                    }
+                }
+
+                if (-not $cloneVer -and -not $topExe -and -not $famHit -and -not $childHit) { continue }
+
+                # A known family name is a finding in its own right, and outranks the "known good
+                # vendor" allowlist - an allowlisted NAME cannot launder a hijacker.
+                $fam = Test-PupFamily $name
+                $isGood = (-not $fam) -and $good.Contains($name)
+                $flag = ($cloneVer -or $famHit -or $childHit -or $fam) -and -not $isGood
                 $reason = @()
-                if ($cloneHit) { $reason += "chromium-layout(Application\$cloneVer)" }
-                if ($famHit)   { $reason += 'updater/dock-family' }
+                if ($fam)       { $reason += "known-family($fam)" }
+                if ($cloneVer)  { $reason += "chromium-layout($cloneWhere\$cloneVer)" }
+                if ($famHit)    { $reason += 'updater/dock-family' }
+                if ($childHit)  { $reason += "updater-child($childHit)" }
+                if ($sr.Deep)   { $reason += 'profile-root-install' }
 
                 $rows.Add([PSCustomObject]@{
                     User    = $user
-                    Where   = "AppData\$base"
+                    Where   = $sr.Label
                     Folder  = $name
                     Flag    = if ($flag) { 'FLAG' } elseif ($isGood) { '(known)' } else { '' }
                     Signals = ($reason -join ', ')
@@ -5974,7 +6211,8 @@ Save-Output "09_appdata_app_installs.txt" {
                 })
 
                 if ($flag) {
-                    Add-Finding 'HIGH' '09' (Ex "Possible PUP/clone app in AppData: $user\$base\$name ($($reason -join ', ')) ^17 $($d.FullName)") '09_appdata_app_installs.txt'
+                    $where = if ($sr.Deep) { 'at the profile root' } else { "in $($sr.Label)" }
+                    Add-Finding 'HIGH' '09' (Ex "Possible PUP/clone app $where`: $user\$name ($($reason -join ', ')) ^17 $($d.FullName)") '09_appdata_app_installs.txt'
                 }
             }
         }
@@ -5984,7 +6222,7 @@ Save-Output "09_appdata_app_installs.txt" {
         $rows | Sort-Object @{E={ if ($_.Flag -eq 'FLAG') { 0 } else { 1 } }}, User, Where |
             Format-Table User, Where, Folder, Flag, Signals, Path -AutoSize -Wrap
     } else {
-        "(no per-user AppData application folders with executables found)"
+        "(no per-user application folders with executables found in AppData or at a profile root)"
     }
 }
 #endregion 09_appdata_app_installs.txt
@@ -6069,9 +6307,16 @@ Save-Output "09_user_hive_software.txt" {
                 $rp.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object {
                     $val = [string]$_.Value
                     $badLoc = ($val -match '(?i)\\(AppData|Temp|Users\\Public|ProgramData)\\') -and ($val -notmatch $script:TrustedPathRx)
-                    if ($badLoc) {
-                        $rows.Add([PSCustomObject]@{ Account=$h.Acct; Sev='HIGH'; Updater=''; Key="HKU\$($h.Sid)\$rkRel\$($_.Name)"; Detail=$val })
-                        Add-Finding 'HIGH' '09' (Ex "Per-user Run entry from a writable path: HKU\$($h.Sid)\$rkRel\$($_.Name) ($($h.Acct)) ^17 $val") '09_user_hive_software.txt'
+                    # A per-user installer does not need AppData - the profile root works just as
+                    # well and was on no writable-path list, so a Run value pointing at
+                    # C:\Users\<u>\<Vendor>\... produced nothing at all. MED, not HIGH: unlike
+                    # AppData\Temp, the profile root is also where a few dev toolchains live.
+                    $profLoc = (-not $badLoc) -and (Test-ProfileInstall $val)
+                    if ($badLoc -or $profLoc) {
+                        $sev = if ($badLoc) { 'HIGH' } else { 'MED' }
+                        $why = if ($badLoc) { 'a writable path' } else { "a profile-root install ($(Get-ProfileInstallPath $val))" }
+                        $rows.Add([PSCustomObject]@{ Account=$h.Acct; Sev=$sev; Updater=''; Key="HKU\$($h.Sid)\$rkRel\$($_.Name)"; Detail=$val })
+                        Add-Finding $sev '09' (Ex "Per-user Run entry from $why`: HKU\$($h.Sid)\$rkRel\$($_.Name) ($($h.Acct)) ^17 $val") '09_user_hive_software.txt'
                     }
                 }
             }
@@ -6094,6 +6339,227 @@ Save-Output "09_user_hive_software.txt" {
     }
 }
 #endregion 09_user_hive_software.txt
+
+#region 09_pup_adware.txt
+Save-Output "09_pup_adware.txt" {
+    Write-Section "KNOWN PUP / ADWARE / BROWSER-HIJACKER FAMILIES"
+    "The other module-09 collectors detect the SHAPE of a per-user install - a Chromium clone"
+    "layout, an updater sibling, a vendor folder at a profile root. This one supplies the NAME."
+    "Both matter: the shape catches tomorrow's bundler, the name closes today's ticket."
+    ""
+    "Unlike the RMM table in module 03, none of these are legitimate enterprise software, so a"
+    "match is reported without asking whether it was authorized - the tool being here IS the"
+    "finding. Every place such an install leaves a mark is checked: install folders, scheduled"
+    "tasks, services, running processes, and the registry (Add/Remove entries, self-registered"
+    "Software keys, Run values, and the StartMenuInternet registration a clone browser needs in"
+    "order to be offered as a real browser)."
+    ""
+    "Families: " + (($script:PupFamilies | ForEach-Object { $_.Name }) -join '; ')
+    ""
+
+    # One row per piece of evidence; folded into one finding per family at the end, so a single
+    # product does not emit eight near-identical HIGHs.
+    $hits = New-Object System.Collections.Generic.List[object]
+    function Add-PupHit {
+        param([string]$Family, [string]$Kind, [string]$What, [string]$Where)
+        $hits.Add([PSCustomObject]@{ Family = $Family; Kind = $Kind; What = $What; Where = $Where })
+    }
+
+    # --- 1. install folders -------------------------------------------------------------------
+    Write-Section "FAMILY MATCHES - INSTALL FOLDERS"
+    $folderRows = New-Object System.Collections.Generic.List[object]
+    foreach ($userDir in (Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue)) {
+        $roots = @(
+            @{ Label = '(profile root)';   Path = $userDir.FullName;                                Deep = $true  }
+            @{ Label = 'AppData\Local';    Path = (Join-Path $userDir.FullName 'AppData\Local');    Deep = $false }
+            @{ Label = 'AppData\Roaming';  Path = (Join-Path $userDir.FullName 'AppData\Roaming');  Deep = $false }
+            @{ Label = 'AppData\LocalLow'; Path = (Join-Path $userDir.FullName 'AppData\LocalLow'); Deep = $false }
+        )
+        foreach ($r in $roots) {
+            if (-not (Test-Path $r.Path)) { continue }
+            foreach ($d in (Get-ChildItem $r.Path -Directory -Force -ErrorAction SilentlyContinue)) {
+                if ($r.Deep -and (Test-ProfileFolderNormal $d.Name)) { continue }
+                $fam = Test-PupFamily $d.Name
+                # A vendor folder is often named for the COMPANY while only the product folder
+                # inside it carries the recognisable name (Wavesor Software\WaveBrowser). One level
+                # down, and only at the profile root, where there are a handful of folders to walk.
+                $childName = ''
+                if (-not $fam -and $r.Deep) {
+                    foreach ($k in (Get-ChildItem $d.FullName -Directory -Force -ErrorAction SilentlyContinue)) {
+                        $fam = Test-PupFamily $k.Name
+                        if ($fam) { $childName = $k.Name; break }
+                    }
+                }
+                if (-not $fam) { continue }
+                $shown = if ($childName) { "$($d.Name)\$childName" } else { $d.Name }
+                $folderRows.Add([PSCustomObject]@{
+                    Family    = $fam
+                    User      = $userDir.Name
+                    Where     = $r.Label
+                    Folder    = $shown
+                    Installed = $d.CreationTime
+                    Path      = $d.FullName
+                })
+                Add-PupHit $fam 'install folder' "$($userDir.Name)\$shown" $d.FullName
+            }
+        }
+    }
+    $machineRoots = @(
+        @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData) |
+            Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+    )
+    foreach ($mr in $machineRoots) {
+        foreach ($d in (Get-ChildItem $mr -Directory -Force -ErrorAction SilentlyContinue)) {
+            $fam = Test-PupFamily $d.Name
+            if (-not $fam) { continue }
+            $folderRows.Add([PSCustomObject]@{
+                Family = $fam; User = '(machine)'; Where = (Split-Path $mr -Leaf)
+                Folder = $d.Name; Installed = $d.CreationTime; Path = $d.FullName
+            })
+            Add-PupHit $fam 'install folder' $d.Name $d.FullName
+        }
+    }
+    if ($folderRows.Count) {
+        $folderRows | Sort-Object Family, User | Format-Table Family, User, Where, Folder, Installed, Path -AutoSize -Wrap
+    } else { "(no install folders matching a known family)" }
+
+    # --- 2. scheduled tasks -------------------------------------------------------------------
+    Write-Section "FAMILY MATCHES - SCHEDULED TASKS"
+    # The task is usually the ONLY thing that survives a half-hearted uninstall, and it is what
+    # re-downloads the product at next logon - so it is checked by name, by folder path and by
+    # action, not just by the executable it launches.
+    $taskRows = New-Object System.Collections.Generic.List[object]
+    foreach ($t in (Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+        $act = (($t.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; ').Trim()
+        $fam = Test-PupFamily "$($t.TaskName) $($t.TaskPath) $act"
+        if (-not $fam) { continue }
+        $taskRows.Add([PSCustomObject]@{
+            Family = $fam; Task = $t.TaskName; State = $t.State; Path = $t.TaskPath; Action = (Defang $act)
+        })
+        Add-PupHit $fam 'scheduled task' "$($t.TaskName) [$($t.State)]" "$($t.TaskPath)"
+    }
+    if ($taskRows.Count) {
+        $taskRows | Sort-Object Family, Task | Format-Table Family, Task, State, Path, Action -AutoSize -Wrap
+    } else { "(no scheduled tasks matching a known family)" }
+
+    # --- 3. services and running processes ----------------------------------------------------
+    Write-Section "FAMILY MATCHES - SERVICES AND RUNNING PROCESSES"
+    $liveRows = New-Object System.Collections.Generic.List[object]
+    foreach ($svc in (Get-CimInstance Win32_Service -ErrorAction SilentlyContinue)) {
+        $fam = Test-PupFamily "$($svc.Name) $($svc.DisplayName) $($svc.PathName)"
+        if (-not $fam) { continue }
+        $liveRows.Add([PSCustomObject]@{
+            Family = $fam; Kind = 'service'; Name = $svc.Name; State = $svc.State; Detail = (Defang ([string]$svc.PathName))
+        })
+        Add-PupHit $fam 'service' "$($svc.Name) [$($svc.State)]" ([string]$svc.PathName)
+    }
+    foreach ($p in (Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+        $fam = Test-PupFamily "$($p.Name) $($p.ExecutablePath) $($p.CommandLine)"
+        if (-not $fam) { continue }
+        $liveRows.Add([PSCustomObject]@{
+            Family = $fam; Kind = 'process'; Name = "$($p.Name) (pid $($p.ProcessId))"; State = 'running'
+            Detail = (Defang ([string]$p.ExecutablePath))
+        })
+        Add-PupHit $fam 'running process' "$($p.Name) (pid $($p.ProcessId))" ([string]$p.ExecutablePath)
+    }
+    if ($liveRows.Count) {
+        $liveRows | Sort-Object Family, Kind, Name | Format-Table Family, Kind, Name, State, Detail -AutoSize -Wrap
+    } else { "(no services or processes matching a known family)" }
+
+    # --- 4. registry --------------------------------------------------------------------------
+    Write-Section "FAMILY MATCHES - REGISTRY (all user hives + machine)"
+    # Walks EVERY user hive, loaded or not, for the same reason 09_user_hive_software does: a PUP
+    # in another profile is still on this box, and a current-user-only read would call the host
+    # clean. StartMenuInternet is included because a clone browser must register there to be
+    # offered as a browser at all - and that key is routinely left behind after an uninstall.
+    $regRows = New-Object System.Collections.Generic.List[object]
+    foreach ($mk in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+                    'HKLM:\SOFTWARE\Clients\StartMenuInternet') {
+        if (-not (Test-Path $mk)) { continue }
+        foreach ($k in (Get-ChildItem $mk -ErrorAction SilentlyContinue)) {
+            $vals = Get-ItemProperty $k.PSPath -ErrorAction SilentlyContinue
+            $fam = Test-PupFamily "$($k.PSChildName) $($vals.DisplayName) $($vals.InstallLocation)"
+            if (-not $fam) { continue }
+            $regRows.Add([PSCustomObject]@{
+                Family = $fam; Account = '(machine)'; Key = "$($mk -replace 'HKLM:\\','HKLM\')\$($k.PSChildName)"
+                Detail = [string]$vals.DisplayName
+            })
+            Add-PupHit $fam 'registry' "$($k.PSChildName)" "$($mk -replace 'HKLM:\\','HKLM\')\$($k.PSChildName)"
+        }
+    }
+
+    $hv = Get-AllUserHives
+    try {
+        foreach ($h in $hv.Hives) {
+            # (a) self-registered Software\<Name> keys, and (b) the browser client registration.
+            foreach ($rel in 'Software', 'Software\Clients\StartMenuInternet',
+                             'Software\Microsoft\Windows\CurrentVersion\Uninstall',
+                             'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
+                $key = "$($h.Base)\$rel"
+                if (-not (Test-Path $key)) { continue }
+                foreach ($k in (Get-ChildItem $key -ErrorAction SilentlyContinue)) {
+                    $vals = Get-ItemProperty $k.PSPath -ErrorAction SilentlyContinue
+                    $fam = Test-PupFamily "$($k.PSChildName) $($vals.DisplayName) $($vals.InstallLocation) $($vals.UninstallString)"
+                    if (-not $fam) { continue }
+                    $regRows.Add([PSCustomObject]@{
+                        Family = $fam; Account = $h.Acct; Key = "HKU\$($h.Sid)\$rel\$($k.PSChildName)"
+                        Detail = (Defang ("$($vals.DisplayName) $($vals.UninstallString)".Trim()))
+                    })
+                    Add-PupHit $fam 'registry' "$($k.PSChildName) ($($h.Acct))" "HKU\$($h.Sid)\$rel\$($k.PSChildName)"
+                }
+            }
+            # (c) Run / RunOnce values - name AND data, since the value name is often the product.
+            foreach ($rel in 'Software\Microsoft\Windows\CurrentVersion\Run',
+                             'Software\Microsoft\Windows\CurrentVersion\RunOnce') {
+                $key = "$($h.Base)\$rel"
+                if (-not (Test-Path $key)) { continue }
+                $rp = Get-ItemProperty $key -ErrorAction SilentlyContinue
+                if (-not $rp) { continue }
+                $rp.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object {
+                    $fam = Test-PupFamily "$($_.Name) $($_.Value)"
+                    if (-not $fam) { return }
+                    $regRows.Add([PSCustomObject]@{
+                        Family = $fam; Account = $h.Acct; Key = "HKU\$($h.Sid)\$rel\$($_.Name)"
+                        Detail = (Defang ([string]$_.Value))
+                    })
+                    Add-PupHit $fam 'run key' "$($_.Name) ($($h.Acct))" "HKU\$($h.Sid)\$rel\$($_.Name)"
+                }
+            }
+        }
+    } finally {
+        Dismount-UserHives $hv.Mounted
+    }
+    if ($regRows.Count) {
+        $regRows | Sort-Object Family, Account | Format-Table Family, Account, Key, Detail -AutoSize -Wrap
+    } else { "(no registry keys matching a known family)" }
+    ""
+    "Hives examined: $($hv.Hives.Count)  (offline mounted: $($hv.Mounted.Count); offline skipped: $($hv.OfflineSkipped))"
+
+    # --- 5. one finding per family ------------------------------------------------------------
+    Write-Section "SUMMARY"
+    if ($hits.Count) {
+        foreach ($g in ($hits | Group-Object Family | Sort-Object Name)) {
+            $kinds = (($g.Group.Kind | Sort-Object -Unique) -join ', ')
+            $detail = New-Object System.Collections.Generic.List[string]
+            $detail.Add("Family|$($g.Name)")
+            $detail.Add("Evidence|$($g.Count) item(s): $kinds")
+            # Format-FindingDetail does not expand ^NN glyph codes, so these stay plain text.
+            foreach ($e in ($g.Group | Sort-Object Kind, What | Select-Object -First 20)) {
+                $detail.Add("$($e.Kind)|$($e.What)   $($e.Where)")
+            }
+            if ($g.Count -gt 20) { $detail.Add("...|$($g.Count - 20) further item(s) in 09_pup_adware.txt") }
+            Add-Finding 'HIGH' '09' (Ex "Known PUP / browser hijacker present: $($g.Name) ^09 $($g.Count) artifact(s): $kinds") '09_pup_adware.txt' -Detail $detail
+            "$($g.Name) - $($g.Count) artifact(s): $kinds"
+        }
+        ""
+        "Remediation reminder: removing the install folder alone is not enough - the scheduled task"
+        "and the Run/StartMenuInternet keys listed above re-create it. Remove the persistence first."
+    } else {
+        "(no known PUP / adware / browser-hijacker family found on this host)"
+    }
+}
+#endregion 09_pup_adware.txt
 
 #region 09_patches.txt
 Save-Output "09_patches.txt" {
@@ -6706,6 +7172,11 @@ Save-Output "10_browser_history.txt" {
         @{ Name = 'Chrome';  Glob = 'C:\Users\*\AppData\Local\Google\Chrome\User Data\*\History' }
         @{ Name = 'Edge';    Glob = 'C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\History' }
         @{ Name = 'Firefox'; Glob = 'C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite' }
+        # Hijacker browsers keep a Chromium User Data tree of their own, and it is the one that
+        # matters: the point of installing Wave Browser on somebody is to route their searches
+        # through it, so its history is where the redirected traffic went. Reading only Chrome and
+        # Edge answers "what did they browse" for the browsers the PUP was trying to replace.
+        @{ Name = 'Wave Browser (PUP)'; Glob = 'C:\Users\*\AppData\Local\WaveBrowser\User Data\*\History' }
     )
 
     $detailRoot = Join-Path $OutputPath '10_browser_history'
@@ -7003,6 +7474,7 @@ Save-Output "10_browser_extensions.txt" {
         @{ Browser='Chrome'; Glob='C:\Users\*\AppData\Local\Google\Chrome\User Data\*\Extensions' }
         @{ Browser='Edge';   Glob='C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Extensions' }
         @{ Browser='Brave';  Glob='C:\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Extensions' }
+        @{ Browser='Wave Browser (PUP)'; Glob='C:\Users\*\AppData\Local\WaveBrowser\User Data\*\Extensions' }
     )
     $rows = New-Object System.Collections.Generic.List[object]
     foreach ($er in $extRoots) {
@@ -7127,6 +7599,7 @@ Save-Output "10_browser_extensions.txt" {
         @{ Browser='Chrome'; Glob='C:\Users\*\AppData\Local\Google\Chrome\User Data\*\Preferences' }
         @{ Browser='Edge';   Glob='C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\Preferences' }
         @{ Browser='Brave';  Glob='C:\Users\*\AppData\Local\BraveSoftware\Brave-Browser\User Data\*\Preferences' }
+        @{ Browser='Wave Browser (PUP)'; Glob='C:\Users\*\AppData\Local\WaveBrowser\User Data\*\Preferences' }
     )
     $notifRows = New-Object System.Collections.Generic.List[object]
     $notifSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
