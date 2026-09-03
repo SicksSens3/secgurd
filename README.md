@@ -320,6 +320,26 @@ rows, so a "page" of 22 lines could scroll hundreds of rows past before stopping
 measured in wrapped rows, and continuations carry a hanging indent so they stay visibly subordinate
 to their own line instead of starting at column zero looking like a new record.
 
+**An artifact opens as a menu of its sections, not a wall of text.** Every artifact is built from
+`Write-Section` blocks, and the browser parses them back out: opening a file shows one row per
+section — its title, how many data lines it holds, anything auto-flagged inside it (severity-coloured,
+with the same rail treatment as every other screen) and any `-Find` hit markers (mauve) — and you
+page **one section at a time**, with the section name carried in the header so you always know what
+you are inside. `[a]` still views the file end-to-end, `/text` searches the **whole** file (a term in
+a section you didn't think to open must still surface) and jumps to the first hit with the term lit,
+and a single-section file skips the menu entirely — a menu with one entry is just a speed bump. In
+the whole-file view a blank line is drawn above each section header, so the file reads as stacked
+blocks instead of one unbroken column.
+
+**More than one colour on a data line.** Section titles and table header rows render bright with
+their dash underlines dimmed (both are plain text — what makes them special is the rule line *next*
+to them, so a one-pass pre-scan stamps a structural kind on every line and the renderer stays
+line-at-a-time). A leading timestamp (ISO or US locale) renders teal, so event-log and timeline
+artifacts read as a column the eye can walk down instead of a grey wall. And `>>>term<<<` markers
+from a `-Find` run render as the matched text highlighted — the literal markers are consumed on
+screen (they stay untouched in the saved `.txt`), the same treatment the live scan already gives
+them.
+
 ---
 
 ## IOC hash matching

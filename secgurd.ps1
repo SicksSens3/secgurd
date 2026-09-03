@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.8.0'
+$script:secgurdVersion = 'v2.9.0'
 
 # ---------------------------------------------
 
@@ -2190,8 +2190,10 @@ function Write-ArtifactLine {
     # so the browser looks like the rest of secgurd rather than a separate skin: severity tags in
     # their finding colours, defanged indicators and paths in mauve (the same #aa82e6 the live URL
     # echo uses), section rules dim. $Match highlights a search term the way flagged terms already
-    # highlight on the scan screen.
-    param([string]$Line, [string]$Match = '')
+    # highlight on the scan screen. $Kind is the structural hint pre-computed by
+    # Get-ArtifactLineKinds: a section title and a table header are both plain text - what makes
+    # them special is the rule line NEXT to them, which a one-line-at-a-time renderer cannot see.
+    param([string]$Line, [string]$Match = '', [string]$Kind = '')
 
     $emit = {
         param($txt, $ansi, $fb)
@@ -2206,6 +2208,13 @@ function Write-ArtifactLine {
             }
         } else { Wc $txt $ansi $fb }
     }
+
+    # Structural kinds first - known from the line's CONTEXT, not from its own text, so they must
+    # win over every content rule below (a section title that happens to contain a drive path
+    # should still read as a title, not light up mauve).
+    if ($Kind -eq 'title')  { & $emit $Line '38;2;235;235;235' 'White'; Write-Host ''; return }
+    if ($Kind -eq 'thead')  { & $emit $Line '38;2;200;200;200' 'White'; Write-Host ''; return }
+    if ($Kind -eq 'tunder') { & $emit $Line '38;5;238' 'DarkGray'; Write-Host ''; return }
 
     if ($Line -match '^\s*={10,}\s*$' -or $Line -match '^\s*-{10,}\s*$') {
         & $emit $Line '38;5;238' 'DarkGray'; Write-Host ''; return
@@ -2223,11 +2232,39 @@ function Write-ArtifactLine {
         if ($sev -eq 'INFO') { & $emit $rest '0' 'Gray' } else { & $emit $rest $sp.Ansi $sp.Con }
         Write-Host ''; return
     }
+    # -Find hit markers: render the matched text highlighted and consume the literal >>> <<< on
+    # screen - the same treatment Write-FilteredHit gives them during the scan, and the same
+    # highlight the pager's own /search uses, since both mean "this is the term you are hunting".
+    # The markers stay in the saved .txt untouched; only the view eats them.
+    if ($Line.IndexOf('>>>') -ge 0 -and $Line.IndexOf('<<<') -gt 0) {
+        $rest = $Line
+        while ($true) {
+            $s = $rest.IndexOf('>>>')
+            if ($s -lt 0) { & $emit $rest '0' 'Gray'; break }
+            $e = $rest.IndexOf('<<<', $s + 3)
+            if ($e -lt 0) { & $emit $rest '0' 'Gray'; break }
+            if ($s -gt 0) { & $emit $rest.Substring(0, $s) '0' 'Gray' }
+            Wc $rest.Substring($s + 3, $e - ($s + 3)) '30;43' 'Yellow'
+            $rest = $rest.Substring($e + 3)
+        }
+        Write-Host ''; return
+    }
     # "Label : value" detail rows - dim the label so the values carry the eye
     if ($Line -match '^(\s+)([A-Za-z][\w /\.]{0,18})\s+:\s(.*)$') {
         Write-Host $matches[1] -NoNewline
         Wc ("{0} : " -f $matches[2]) '38;5;242' 'DarkGray'
         & $emit $matches[3] $script:MauveAnsi 'Magenta'; Write-Host ''; return
+    }
+    # A leading timestamp (ISO or US locale, both appear in the artifacts) renders teal so
+    # event-log and timeline rows stop reading as one grey wall - the timestamp is the column the
+    # eye walks down in exactly those files.
+    if ($Line -match '^(\s*)(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?|\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)(.*)$') {
+        Write-Host $matches[1] -NoNewline
+        Wc $matches[2] '38;2;90;180;210' 'Cyan'
+        $rest = $matches[3]
+        if ($rest -match 'hxxps?://|fxp://|[A-Za-z]:\\') { & $emit $rest $script:MauveAnsi 'Magenta' }
+        else { & $emit $rest '0' 'Gray' }
+        Write-Host ''; return
     }
     # defanged indicator or a drive path anywhere on the line
     if ($Line -match 'hxxps?://|fxp://|[A-Za-z]:\\' -or $Line -match [regex]::Escape([string][char]0x00B7)) {
@@ -2236,25 +2273,101 @@ function Write-ArtifactLine {
     & $emit $Line '0' 'Gray'; Write-Host ''
 }
 
-function Show-ArtifactPager {
-    # Paged, coloured view of one artifact. Page size follows the window height so it fills the
-    # screen without scrolling past. '/text' searches within the file, 't' jumps to the top,
-    # 'b' returns to whatever opened it and 'q' leaves the browser.
-    # Returns 'quit' when the user asked to leave the browser entirely, else 'back'.
-    param([string]$Path, [string]$Crumb, [int]$StartLine = 0)
-    if (-not (Test-Path -LiteralPath $Path)) {
-        Write-Host "  (artifact not found: $Path)" -ForegroundColor DarkGray
-        Write-Host "  Press Enter..." -ForegroundColor DarkGray; Read-Host | Out-Null; return 'back'
+function Get-ArtifactLineKinds {
+    # Pre-compute a structural hint for every line of an artifact, because the things worth
+    # colouring differently cannot be recognised one line at a time: a section title is plain text
+    # between two '===' rules, and a Format-Table header is plain text that happens to sit directly
+    # above its '---- --' underline. One pass here keeps Write-ArtifactLine a per-line renderer.
+    # Kinds: 'secstart' (the opening '===' of a Write-Section header - where the pager adds
+    # breathing room), 'title' (the section name), 'rule' (the closing '==='), 'thead' / 'tunder'
+    # (a table header row and its dashes). Everything else stays ''.
+    param([string[]]$Lines)
+    if ($Lines.Count -eq 0) { return @() }
+    $k = @('') * $Lines.Count
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match '^\s*={10,}\s*$') {
+            if (($i + 2) -lt $Lines.Count -and $Lines[$i + 2] -match '^\s*={10,}\s*$' -and
+                $Lines[$i + 1].Trim() -ne '' -and $Lines[$i + 1] -notmatch '^\s*[=-]{3,}\s*$') {
+                $k[$i] = 'secstart'; $k[$i + 1] = 'title'; $k[$i + 2] = 'rule'
+                $i += 2
+            }
+            continue
+        }
+        # At least two dash runs, so a full-width '-----' separator (already handled as a rule)
+        # never claims the line above it as a table header.
+        if ($Lines[$i] -match '^\s*-+(\s+-+)+\s*$' -and $i -gt 0 -and $k[$i - 1] -eq '' -and $Lines[$i - 1].Trim() -ne '') {
+            $k[$i] = 'tunder'; $k[$i - 1] = 'thead'
+        }
     }
-    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
-    $name  = Split-Path $Path -Leaf
-    $top   = [Math]::Max(0, $StartLine)
-    $term  = ''
+    return $k
+}
+
+function Get-ArtifactSections {
+    # Parse an artifact back into the Write-Section blocks it was built from (the '===' / title /
+    # '===' triple every collector writes). Per section: where it starts and ends, how many
+    # substantive data lines it holds (blank lines, separator rules and "(none found)"
+    # placeholders do not count - the same rules Test-OutputHasData applies when deciding whether
+    # a file is worth writing at all), how many severity-tagged lines sit inside it, and how many
+    # '>>>' -Find hit markers landed in it. Content before the first header becomes a
+    # '(file header)' pseudo-section so nothing in the file is unreachable from the section menu.
+    param([string[]]$Lines)
+    $secs  = New-Object System.Collections.Generic.List[object]
+    $marks = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt ($Lines.Count - 2); $i++) {
+        if ($Lines[$i] -match '^\s*={10,}\s*$' -and $Lines[$i + 2] -match '^\s*={10,}\s*$' -and
+            $Lines[$i + 1].Trim() -ne '' -and $Lines[$i + 1] -notmatch '^\s*[=-]{3,}\s*$') {
+            $marks.Add([PSCustomObject]@{ At = $i; Title = $Lines[$i + 1].Trim() })
+            $i += 2
+        }
+    }
+    if ($marks.Count -eq 0) { return $secs }
+
+    $bounds = New-Object System.Collections.Generic.List[object]
+    if ($marks[0].At -gt 0) {
+        # Skip = how many leading lines are the header itself and so never count as data.
+        $bounds.Add([PSCustomObject]@{ Title = '(file header)'; Start = 0; End = $marks[0].At; Skip = 0 })
+    }
+    for ($m = 0; $m -lt $marks.Count; $m++) {
+        $end = if (($m + 1) -lt $marks.Count) { $marks[$m + 1].At } else { $Lines.Count }
+        $bounds.Add([PSCustomObject]@{ Title = $marks[$m].Title; Start = $marks[$m].At; End = $end; Skip = 3 })
+    }
+    foreach ($b in $bounds) {
+        $data = 0; $hi = 0; $me = 0; $inf = 0; $hits = 0
+        for ($j = $b.Start + $b.Skip; $j -lt $b.End; $j++) {
+            $t = $Lines[$j].Trim()
+            if     ($t -match '^\[HIGH\]')   { $hi++ }
+            elseif ($t -match '^\[MED\s*\]') { $me++ }
+            elseif ($t -match '^\[INFO\]')   { $inf++ }
+            if ($Lines[$j].IndexOf('>>>') -ge 0) { $hits++ }
+            if ($t -eq '') { continue }
+            if ($t -match '^[-=]{3,}$') { continue }
+            if ($t -match '^\(.*\)$') { continue }
+            $data++
+        }
+        $secs.Add([PSCustomObject]@{ Title = $b.Title; Start = $b.Start; End = $b.End
+                                     Data = $data; Hi = $hi; Me = $me; Inf = $inf; Hits = $hits })
+    }
+    # A pseudo-header with nothing substantive in it would be a dead menu entry - drop it.
+    if ($secs.Count -gt 0 -and $secs[0].Title -eq '(file header)' -and $secs[0].Data -eq 0) { $secs.RemoveAt(0) }
+    return $secs
+}
+
+function Show-ArtifactPage {
+    # The pager engine: a paged, coloured view of one run of lines - a whole artifact, or a single
+    # section of one (Show-ArtifactPager decides which and hands the lines in). Page size follows
+    # the window height so it fills the screen without scrolling past. '/text' searches within
+    # what is on view, 't' jumps to the top, a bare number jumps to that line, 'b' returns to
+    # whatever opened it and 'q' leaves the browser.
+    # Returns 'quit' when the user asked to leave the browser entirely, else 'back'.
+    param([string[]]$Lines, [string[]]$Kinds = @(), [string]$Name, [string]$Crumb,
+          [int]$StartLine = 0, [string]$Term = '', [string]$Scope = '')
+    $top  = [Math]::Max(0, $StartLine)
+    $term = $Term
     while ($true) {
         $h = 30
         try { $h = $Host.UI.RawUI.WindowSize.Height } catch {}
         $page = [Math]::Max(8, $h - 8)
-        if ($top -ge $lines.Count) { $top = [Math]::Max(0, $lines.Count - $page) }
+        if ($top -ge $Lines.Count) { $top = [Math]::Max(0, $Lines.Count - $page) }
 
         # Wrap here, and budget the page in PHYSICAL rows rather than logical lines.
         # Artifacts are written with Out-File -Width 4096, so one table row can be thousands of
@@ -2265,35 +2378,47 @@ function Show-ArtifactPager {
         # zero looking like a new record.
         $cw   = (Get-ConWidth) - 8
         $segs = New-Object System.Collections.Generic.List[object]
+        $idxs = New-Object System.Collections.Generic.List[int]
         $rows = 0
         $end  = $top
-        while ($end -lt $lines.Count) {
-            $s = @(Split-ForWidth -Text $lines[$end] -Width $cw)
+        while ($end -lt $Lines.Count) {
+            $s = @(Split-ForWidth -Text $Lines[$end] -Width $cw)
+            # A section start costs one extra physical row - the blank line drawn above it so
+            # sections read as blocks. Budget it, or the page overruns the screen by one row per
+            # section header it happens to contain.
+            $extra = if ($Kinds.Count -gt $end -and $Kinds[$end] -eq 'secstart' -and $rows -gt 0) { 1 } else { 0 }
             # $rows -gt 0 guarantees the first line is always taken, so a single line taller than
             # the whole page still advances rather than pinning the pager in place forever.
-            if ($rows -gt 0 -and ($rows + $s.Count) -gt $page) { break }
-            $segs.Add($s); $rows += $s.Count; $end++
+            if ($rows -gt 0 -and ($rows + $s.Count + $extra) -gt $page) { break }
+            $segs.Add($s); $idxs.Add($end); $rows += $s.Count + $extra; $end++
         }
 
         Clear-Host
         Write-Host ("  $Crumb ") -ForegroundColor DarkGray -NoNewline
-        Write-Host $name -ForegroundColor Cyan
-        Write-Host ("  {0,-40}  lines {1}-{2} of {3}" -f $name, ($top + 1), $end, $lines.Count) -ForegroundColor DarkGray
+        Write-Host $Name -ForegroundColor Cyan
+        $scopeTxt = if ($Scope) { $Scope + '  -  ' } else { '' }
+        Write-Host ("  {0}lines {1}-{2} of {3}" -f $scopeTxt, ($top + 1), $end, $Lines.Count) -ForegroundColor DarkGray
         Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
-        foreach ($s in $segs) {
+        for ($si = 0; $si -lt $segs.Count; $si++) {
+            $s    = $segs[$si]
+            $li   = $idxs[$si]
+            $kind = if ($Kinds.Count -gt $li) { $Kinds[$li] } else { '' }
+            # Breathing room above each section header (except at the very top of the page), so a
+            # whole-file view reads as stacked blocks instead of one unbroken column of text.
+            if ($kind -eq 'secstart' -and $si -gt 0) { Write-Host '' }
             for ($sj = 0; $sj -lt $s.Count; $sj++) {
                 Write-Host $(if ($sj -eq 0) { '  ' } else { '      ' }) -NoNewline
-                Write-ArtifactLine $s[$sj] $term
+                Write-ArtifactLine $s[$sj] $term -Kind $kind
             }
         }
         Write-Host ''
         Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
-        $more = if ($end -lt $lines.Count) { '[Enter] next page   ' } else { '[Enter] back   ' }
+        $more = if ($end -lt $Lines.Count) { '[Enter] next page   ' } else { '[Enter] back   ' }
         Write-Host ("   $more[/text] search   [t] top   [b] back   [q] exit browser") -ForegroundColor DarkGray
         Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
         $k = (Read-Host).Trim()
 
-        if ($k -eq '')      { if ($end -lt $lines.Count) { $top = $end; continue } else { return 'back' } }
+        if ($k -eq '')      { if ($end -lt $Lines.Count) { $top = $end; continue } else { return 'back' } }
         if ($k -eq 'q')     { return 'quit' }
         if ($k -eq 'b')     { return 'back' }
         if ($k -eq 't')     { $top = 0; $term = ''; continue }
@@ -2301,8 +2426,8 @@ function Show-ArtifactPager {
             $term = $k.Substring(1).Trim()
             if (-not $term) { continue }
             $hits = @()
-            for ($i = 0; $i -lt $lines.Count; $i++) {
-                if ($lines[$i].IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += $i }
+            for ($i = 0; $i -lt $Lines.Count; $i++) {
+                if ($Lines[$i].IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += $i }
             }
             if ($hits.Count -eq 0) {
                 Write-Host "  no match for '$term'" -ForegroundColor DarkGray
@@ -2315,6 +2440,95 @@ function Show-ArtifactPager {
             continue
         }
         if ($k -match '^\d+$') { $top = [Math]::Max(0, [int]$k - 3); continue }
+    }
+}
+
+function Show-ArtifactPager {
+    # Open one artifact. Every artifact is built from Write-Section blocks, so instead of dropping
+    # the analyst straight into thousands of raw lines, this shows the file's SECTIONS first -
+    # title, how much data each holds, what is flagged inside - and pages ONE section at a time.
+    # That is the difference between "here is 06_processes.txt, all of it" and "06_processes.txt
+    # holds a tree, a full listing and a heuristics section - which do you want?". 'a' still views
+    # the file end-to-end for when you genuinely want everything, and a single-section file skips
+    # the menu entirely: a menu with one entry is just a speed bump. Navigation stays Read-Host
+    # only, like every other browser screen, for the same S1-remote-shell reason.
+    # Returns 'quit' when the user asked to leave the browser entirely, else 'back'.
+    param([string]$Path, [string]$Crumb, [int]$StartLine = 0)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        Write-Host "  (artifact not found: $Path)" -ForegroundColor DarkGray
+        Write-Host "  Press Enter..." -ForegroundColor DarkGray; Read-Host | Out-Null; return 'back'
+    }
+    $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    $name  = Split-Path $Path -Leaf
+    $kinds = @(Get-ArtifactLineKinds -Lines $lines)
+    $secs  = @(Get-ArtifactSections -Lines $lines)
+
+    # Nothing to menu (one section or none), or a caller asked for a specific line: whole file.
+    if ($secs.Count -lt 2 -or $StartLine -gt 0) {
+        return (Show-ArtifactPage -Lines $lines -Kinds $kinds -Name $name -Crumb $Crumb -StartLine $StartLine)
+    }
+
+    while ($true) {
+        Clear-Host
+        Write-Host ("  $Crumb ") -ForegroundColor DarkGray -NoNewline
+        Write-Host $name -ForegroundColor Cyan
+        Write-Host ("  SECTIONS  {0}" -f $secs.Count) -ForegroundColor White -NoNewline
+        Write-Host ("   {0:N0} lines in file" -f $lines.Count) -ForegroundColor DarkGray
+        Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
+        $i = 0
+        foreach ($s in $secs) {
+            $i++
+            # Rail coloured by the worst severity tag INSIDE the section. No tags = the dim rail,
+            # NOT the green OK one: green means "checked and clean", and a section of raw data
+            # that simply has no auto-flags in it has not been cleared, just not flagged.
+            $worst = if ($s.Hi -gt 0) { 'HIGH' } elseif ($s.Me -gt 0) { 'MED' } elseif ($s.Inf -gt 0) { 'INFO' } else { '' }
+            if ($worst) { Write-GroupRail $worst -NoNewline } else { Wc '  |' $script:InfoAnsi $script:InfoCon }
+            Write-Host (" [{0,2}] " -f $i) -ForegroundColor Yellow -NoNewline
+            $t = $s.Title
+            if ($t.Length -gt 38) { $t = $t.Substring(0, 35) + '...' }
+            Write-Host ('{0,-38}' -f $t) -ForegroundColor White -NoNewline
+            Wc ('{0,6:N0} lines' -f $s.Data) $script:InfoAnsi $script:InfoCon
+            if ($worst)        { Write-Sev ('   {0} flagged' -f ($s.Hi + $s.Me + $s.Inf)) $worst -NoNewline }
+            if ($s.Hits -gt 0) { Wc ('   {0} find hit(s)' -f $s.Hits) $script:MauveAnsi 'Magenta' }
+            Write-Host ''
+        }
+        Write-Host ''
+        Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
+        Write-Host '   [number] open section   [a] whole file   [/text] search   [b] back   [q] exit browser' -ForegroundColor DarkGray
+        Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
+        $c = (Read-Host).Trim()
+        if ($c -eq 'q') { return 'quit' }
+        if ($c -eq 'b' -or $c -eq '') { return 'back' }
+        if ($c -eq 'a') {
+            if ((Show-ArtifactPage -Lines $lines -Kinds $kinds -Name $name -Crumb $Crumb) -eq 'quit') { return 'quit' }
+            continue
+        }
+        if ($c.StartsWith('/')) {
+            # Search spans the WHOLE file - a term sitting in a section you did not think to open
+            # must still surface. Jump into the full view at the first hit with the term lit.
+            $term = $c.Substring(1).Trim()
+            if (-not $term) { continue }
+            $first = -1
+            for ($li = 0; $li -lt $lines.Count; $li++) {
+                if ($lines[$li].IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $first = $li; break }
+            }
+            if ($first -lt 0) {
+                Write-Host "  no match for '$term'" -ForegroundColor DarkGray
+                Write-Host '  Press Enter...' -ForegroundColor DarkGray; Read-Host | Out-Null
+            } else {
+                $r = Show-ArtifactPage -Lines $lines -Kinds $kinds -Name $name -Crumb $Crumb `
+                                       -StartLine ([Math]::Max(0, $first - 2)) -Term $term
+                if ($r -eq 'quit') { return 'quit' }
+            }
+            continue
+        }
+        if ($c -match '^\d+$' -and [int]$c -ge 1 -and [int]$c -le $secs.Count) {
+            $s = $secs[[int]$c - 1]
+            $slice  = @($lines[$s.Start..($s.End - 1)])
+            $kslice = @($kinds[$s.Start..($s.End - 1)])
+            $r = Show-ArtifactPage -Lines $slice -Kinds $kslice -Name $name -Crumb $Crumb -Scope ('section: ' + $s.Title)
+            if ($r -eq 'quit') { return 'quit' }
+        }
     }
 }
 
