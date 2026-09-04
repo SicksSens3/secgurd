@@ -17,6 +17,7 @@ com-microsoft-onedrive.com
 com-onedrive.live
 contacts-microsoft.com
 corp-microsoft.com
+crocobet-microsoft.com
 d0cusign.info
 djsharepoint.com
 djsharepoint.net
@@ -31,6 +32,7 @@ docusignaccess.com
 docusignaturef.vu
 docusignedhere.com
 docusignhere.com
+docusignne.icu
 docusignnetwork.net
 docusignsecureweb.org
 docusiign.cam
@@ -52,6 +54,7 @@ hostedoutlook.co.uk
 houtlooktegels.nl
 how-to-send-a-fax-via-email-outlook.com
 icefishoutlookcenter.shop
+inbox-outlook.com
 inkchaindocusign.icu
 invite-office365.co
 krbrightoutlook.net
@@ -97,6 +100,7 @@ microsoftarena.net
 microsoftazurein.com
 microsoftbi.pl
 microsoftbillings.org
+microsoftbob.fun
 microsoftcareershub.com
 microsoftcloudpartnerassociation.org
 microsoftco.org
@@ -199,6 +203,7 @@ recsa20sharepoint.blog
 reeloutlookuk.com
 refreshingoutlooksc8.cloud
 rtsoutlook.com
+secure-portal-microsoft.com
 service-center-microsoft.ru
 servis-center-microsoft.ru
 setup-outlook3.web.id
@@ -215,6 +220,7 @@ sharepointonline.com.de
 sharkpoint.uk
 shmicapalmermontanash001outlook.org
 skgeodesy-sharepoint.sk
+sms-outlook.com
 staging-outlook.online
 stateoutlooksurvey.org
 supersportsoffice365.com
