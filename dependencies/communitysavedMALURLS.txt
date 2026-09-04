@@ -3,17 +3,16 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-09-03 11:31:54 UTC
+# Updated: 2026-09-04 11:34:02 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://archivoscrosoft.com/newrem.png,malware_download
-http://brightroseax.blog/riscv64,malware_download
+http://b2b.jewmailer.net/arm7,malware_download
 http://bserail.com/cabin/Diocle.emz,malware_download
-http://emeraldstonegc.blog/flutter.m68k,malware_download
+http://emeraldstonegc.blog/flutter.x86_64,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
-http://mail.brightroseax.blog/s390x,malware_download
-http://mail.emeraldstonegc.blog/flutter.ppc,malware_download
+http://mail.brightroseax.blog/mips64,malware_download
 http://mrsweaterltd.com/o85pdfv8yi.png,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://pingu.business/main_sh4,malware_download
@@ -33,13 +32,13 @@ https://alphapicaficagency.com/stego_88zloq9er8.png,malware_download
 https://alphasaling.site/stego_95t70lfg5l.png,malware_download
 https://awarenessexhibition.com/img_092444.png,malware_download
 https://balanced-red-emhnkdfj-dp7g2kvqxx8n.edgeone.dev/,malware_download
+https://baolongwes.oss-ap-southeast-1.aliyuncs.com/blaoso/alOffic.zip,malware_download
+https://bvaco.com/images/optimized_MSI.png,malware_download
 https://coconutoficial.com.br/img/stego_anepqnd5rj.png,malware_download
 https://coolairesgroup.com/img_170820.png,malware_download
 https://del.sou.pp.ua/install.sh,malware_download
 https://deliverymailreport.co.za/img_043051.png,malware_download
-https://download-sougou.com.cn/donwnload/sougouExpiorerr_Setup_x64_25537.zip,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
-https://download.tfyxzai.com/donwnload/prortonvpn_x64.zip,malware_download
 https://dreemix.com/daemonx,malware_download
 https://drive.google.com/uc?export=download&id=1mVI9h_rV6mptfRqbC3cDNiyfurIAq2tQ,malware_download
 https://duct-master.com/00/newMSI_PRO.png,malware_download
@@ -62,12 +61,12 @@ https://rabbitfuns.su/encrypted/1.zip,malware_download
 https://rusa-inion24-novst.vercel.app/?download=1,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
-https://sh.classera.com/Naew8m,malware_download
 https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
 https://signageinsignia.co.za/kizzy/1.jpg,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
+https://tuiskr.com/,malware_download
 https://wordtax.ink/down/setup.aac,malware_download
 https://www-connect-secure-wellcfargo.sekolahkejarpaket.com/wellsfargo_new_obf_08.07.26.zip,malware_download
 https://www.controliumbt.com/.well-known/acme-challenge/images/thisweekisnlessedwithriches.png,malware_download
