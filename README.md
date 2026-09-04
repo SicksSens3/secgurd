@@ -331,6 +331,17 @@ and a single-section file skips the menu entirely — a menu with one entry is j
 the whole-file view a blank line is drawn above each section header, so the file reads as stacked
 blocks instead of one unbroken column.
 
+**Search and filter are two different tools, and the pager has both.** About half the artifacts are a
+*single* section — prefetch, security events, DNS cache, installed software, the whole `07_*` family —
+so no section menu can save you from a 3,000-line listing, and paging alone doesn't survive one either.
+`/text` **searches**: everything stays on screen, the view jumps to the first hit, and `[n]` / `[p]`
+then walk hit to hit with the term highlighted and a `hit 3 of 17` counter — for *where is this, in
+context*. `\text` **filters**: the view collapses to only the lines containing the text (section titles
+stay for orientation), the same shape a `-Find` run gives the saved file but applied *after* the fact —
+fifty pages become the dozen lines that matter, `\` alone clears it. A search composes with an active
+filter (it walks the filtered view, not the hidden lines), and both are available from the section menu
+as well as inside the pager. Line numbers always refer to the current view.
+
 **More than one colour on a data line.** Section titles and table header rows render bright with
 their dash underlines dimmed (both are plain text — what makes them special is the rule line *next*
 to them, so a one-pass pre-scan stamps a structural kind on every line and the renderer stays

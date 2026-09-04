@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.9.0'
+$script:secgurdVersion = 'v2.10.0'
 
 # ---------------------------------------------
 
@@ -2355,19 +2355,55 @@ function Get-ArtifactSections {
 function Show-ArtifactPage {
     # The pager engine: a paged, coloured view of one run of lines - a whole artifact, or a single
     # section of one (Show-ArtifactPager decides which and hands the lines in). Page size follows
-    # the window height so it fills the screen without scrolling past. '/text' searches within
-    # what is on view, 't' jumps to the top, a bare number jumps to that line, 'b' returns to
+    # the window height so it fills the screen without scrolling past.
+    # Paging alone does not survive a 3,000-line single-section listing (27 of the artifacts are
+    # exactly that - one Write-Section, so no section menu ever shows for them), so there are two
+    # ways to cut the view down, and they are different tools:
+    #   /text - SEARCH: keeps everything on screen, jumps to the first hit, and [n]/[p] then walk
+    #           hit to hit with the term lit. For "where is this, in context".
+    #   \text - FILTER: collapses the view to ONLY the lines containing the text (section titles
+    #           stay for orientation) - the same shape -Find gives the saved file, applied after
+    #           the fact. Fifty pages become the dozen lines that matter. '\' alone clears it.
+    # 't' jumps to the top, a bare number jumps to that line of the current view, 'b' returns to
     # whatever opened it and 'q' leaves the browser.
     # Returns 'quit' when the user asked to leave the browser entirely, else 'back'.
     param([string[]]$Lines, [string[]]$Kinds = @(), [string]$Name, [string]$Crumb,
-          [int]$StartLine = 0, [string]$Term = '', [string]$Scope = '')
-    $top  = [Math]::Max(0, $StartLine)
-    $term = $Term
+          [int]$StartLine = 0, [string]$Term = '', [string]$Scope = '', [string]$Filter = '')
+    $top    = [Math]::Max(0, $StartLine)   # a position in the current VIEW, not the raw file
+    $term   = $Term
+    $filter = $Filter
+    $view   = $null    # original-line indices currently on show; $null = no filter, everything
+    $vCount = $Lines.Count
+    $hits   = @()      # view positions containing $term
+    $hitAt  = -1       # which hit [n]/[p] last landed on
+    $dirty  = $true    # view/hits need rebuilding (the filter changed)
     while ($true) {
+        if ($dirty) {
+            # One pass, only when the filter changes - never per page.
+            if ($filter) {
+                $ix = New-Object System.Collections.Generic.List[int]
+                for ($i = 0; $i -lt $Lines.Count; $i++) {
+                    if ($Lines[$i].IndexOf($filter, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                        ($Kinds.Count -gt $i -and $Kinds[$i] -eq 'title')) { $ix.Add($i) }
+                }
+                $view = $ix
+            } else { $view = $null }
+            $vCount = if ($null -ne $view) { $view.Count } else { $Lines.Count }
+            $hits = @()
+            if ($term) {
+                for ($vp = 0; $vp -lt $vCount; $vp++) {
+                    $oi = if ($null -ne $view) { $view[$vp] } else { $vp }
+                    if ($Lines[$oi].IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += $vp }
+                }
+            }
+            if ($hitAt -ge $hits.Count) { $hitAt = -1 }
+            $dirty = $false
+        }
+
         $h = 30
         try { $h = $Host.UI.RawUI.WindowSize.Height } catch {}
-        $page = [Math]::Max(8, $h - 8)
-        if ($top -ge $Lines.Count) { $top = [Math]::Max(0, $Lines.Count - $page) }
+        $page = [Math]::Max(8, $h - 9)
+        if ($top -ge $vCount) { $top = [Math]::Max(0, $vCount - $page) }
 
         # Wrap here, and budget the page in PHYSICAL rows rather than logical lines.
         # Artifacts are written with Out-File -Width 4096, so one table row can be thousands of
@@ -2381,12 +2417,15 @@ function Show-ArtifactPage {
         $idxs = New-Object System.Collections.Generic.List[int]
         $rows = 0
         $end  = $top
-        while ($end -lt $Lines.Count) {
-            $s = @(Split-ForWidth -Text $Lines[$end] -Width $cw)
-            # A section start costs one extra physical row - the blank line drawn above it so
-            # sections read as blocks. Budget it, or the page overruns the screen by one row per
-            # section header it happens to contain.
-            $extra = if ($Kinds.Count -gt $end -and $Kinds[$end] -eq 'secstart' -and $rows -gt 0) { 1 } else { 0 }
+        while ($end -lt $vCount) {
+            $oi = if ($null -ne $view) { $view[$end] } else { $end }
+            $s = @(Split-ForWidth -Text $Lines[$oi] -Width $cw)
+            $kind = if ($Kinds.Count -gt $oi) { $Kinds[$oi] } else { '' }
+            # A section start - or, in a filtered view, a kept title - costs one extra physical
+            # row: the blank line drawn above it so sections read as blocks. Budget it, or the
+            # page overruns the screen by one row per section header it happens to contain.
+            $spaced = ($kind -eq 'secstart' -or ($filter -and $kind -eq 'title'))
+            $extra  = if ($spaced -and $rows -gt 0) { 1 } else { 0 }
             # $rows -gt 0 guarantees the first line is always taken, so a single line taller than
             # the whole page still advances rather than pinning the pager in place forever.
             if ($rows -gt 0 -and ($rows + $s.Count + $extra) -gt $page) { break }
@@ -2397,42 +2436,73 @@ function Show-ArtifactPage {
         Write-Host ("  $Crumb ") -ForegroundColor DarkGray -NoNewline
         Write-Host $Name -ForegroundColor Cyan
         $scopeTxt = if ($Scope) { $Scope + '  -  ' } else { '' }
-        Write-Host ("  {0}lines {1}-{2} of {3}" -f $scopeTxt, ($top + 1), $end, $Lines.Count) -ForegroundColor DarkGray
+        if ($filter) {
+            Write-Host ("  {0}\{1}: {2} of {3} lines match  -  showing {4}-{5}" -f $scopeTxt, $filter, $vCount, $Lines.Count, ($top + 1), $end) -ForegroundColor DarkGray
+        } else {
+            Write-Host ("  {0}lines {1}-{2} of {3}" -f $scopeTxt, ($top + 1), $end, $vCount) -ForegroundColor DarkGray
+        }
         Write-Host ("  " + ('=' * 62)) -ForegroundColor DarkGray
         for ($si = 0; $si -lt $segs.Count; $si++) {
             $s    = $segs[$si]
-            $li   = $idxs[$si]
-            $kind = if ($Kinds.Count -gt $li) { $Kinds[$li] } else { '' }
+            $vp   = $idxs[$si]
+            $oi   = if ($null -ne $view) { $view[$vp] } else { $vp }
+            $kind = if ($Kinds.Count -gt $oi) { $Kinds[$oi] } else { '' }
             # Breathing room above each section header (except at the very top of the page), so a
             # whole-file view reads as stacked blocks instead of one unbroken column of text.
-            if ($kind -eq 'secstart' -and $si -gt 0) { Write-Host '' }
+            if (($kind -eq 'secstart' -or ($filter -and $kind -eq 'title')) -and $si -gt 0) { Write-Host '' }
             for ($sj = 0; $sj -lt $s.Count; $sj++) {
                 Write-Host $(if ($sj -eq 0) { '  ' } else { '      ' }) -NoNewline
-                Write-ArtifactLine $s[$sj] $term -Kind $kind
+                # With no explicit search term, light the filter text instead - in a filtered view
+                # the thing being hunted should still be visible at a glance on every line.
+                Write-ArtifactLine $s[$sj] $(if ($term) { $term } else { $filter }) -Kind $kind
             }
         }
         Write-Host ''
         Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
-        $more = if ($end -lt $Lines.Count) { '[Enter] next page   ' } else { '[Enter] back   ' }
-        Write-Host ("   $more[/text] search   [t] top   [b] back   [q] exit browser") -ForegroundColor DarkGray
+        $more = if ($end -lt $vCount) { '[Enter] next page   ' } else { '[Enter] back   ' }
+        Write-Host ("   $more[/text] search   [\text] only matches   [t] top   [b] back   [q] exit browser") -ForegroundColor DarkGray
+        if ($term -and $hits.Count -gt 0) {
+            $at = if ($hitAt -ge 0) { "hit {0} of {1}" -f ($hitAt + 1), $hits.Count } else { "{0} hit(s)" -f $hits.Count }
+            Write-Host ("   [n] next hit   [p] prev hit   '{0}': {1}" -f $term, $at) -ForegroundColor DarkGray
+        } elseif ($filter) {
+            Write-Host '   [\] clear filter' -ForegroundColor DarkGray
+        }
         Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
         $k = (Read-Host).Trim()
 
-        if ($k -eq '')      { if ($end -lt $Lines.Count) { $top = $end; continue } else { return 'back' } }
+        if ($k -eq '')      { if ($end -lt $vCount) { $top = $end; continue } else { return 'back' } }
         if ($k -eq 'q')     { return 'quit' }
         if ($k -eq 'b')     { return 'back' }
-        if ($k -eq 't')     { $top = 0; $term = ''; continue }
+        if ($k -eq 't')     { $top = 0; continue }
+        if (($k -eq 'n' -or $k -eq 'p') -and $hits.Count -gt 0) {
+            $hitAt = if ($k -eq 'n') { ($hitAt + 1) % $hits.Count } else { ($hitAt - 1 + $hits.Count) % $hits.Count }
+            $top = [Math]::Max(0, $hits[$hitAt] - 2)
+            continue
+        }
+        if ($k.StartsWith('\')) {
+            # Set or clear the filter. $top resets because a position in the old view means
+            # nothing in the new one.
+            $filter = $k.Substring(1).Trim()
+            $top = 0; $hitAt = -1; $dirty = $true
+            continue
+        }
         if ($k.StartsWith('/')) {
             $term = $k.Substring(1).Trim()
-            if (-not $term) { continue }
+            $hitAt = -1
+            if (-not $term) { $hits = @(); continue }
+            # Hits are found here rather than deferred to the rebuild, so "no match" can be said
+            # in place - and they are positions in the CURRENT view, so a search composes with an
+            # active filter instead of jumping to lines the filter has hidden.
             $hits = @()
-            for ($i = 0; $i -lt $Lines.Count; $i++) {
-                if ($Lines[$i].IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += $i }
+            for ($vp = 0; $vp -lt $vCount; $vp++) {
+                $oi = if ($null -ne $view) { $view[$vp] } else { $vp }
+                if ($Lines[$oi].IndexOf($term, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $hits += $vp }
             }
             if ($hits.Count -eq 0) {
                 Write-Host "  no match for '$term'" -ForegroundColor DarkGray
                 Write-Host '  Press Enter...' -ForegroundColor DarkGray; Read-Host | Out-Null; $term = ''
             } else {
+                $hitAt = 0
                 $top = [Math]::Max(0, $hits[0] - 2)
                 Write-Host ("  {0} match(es) - jumped to line {1}" -f $hits.Count, ($hits[0] + 1)) -ForegroundColor Yellow
                 Start-Sleep -Milliseconds 450
@@ -2494,13 +2564,23 @@ function Show-ArtifactPager {
         }
         Write-Host ''
         Write-Host ("  " + ('-' * 62)) -ForegroundColor DarkGray
-        Write-Host '   [number] open section   [a] whole file   [/text] search   [b] back   [q] exit browser' -ForegroundColor DarkGray
+        Write-Host '   [number] open section   [a] whole file   [b] back   [q] exit browser' -ForegroundColor DarkGray
+        Write-Host '   [/text] search whole file   [\text] show only matching lines' -ForegroundColor DarkGray
         Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
         $c = (Read-Host).Trim()
         if ($c -eq 'q') { return 'quit' }
         if ($c -eq 'b' -or $c -eq '') { return 'back' }
         if ($c -eq 'a') {
             if ((Show-ArtifactPage -Lines $lines -Kinds $kinds -Name $name -Crumb $Crumb) -eq 'quit') { return 'quit' }
+            continue
+        }
+        if ($c.StartsWith('\')) {
+            # Filter the WHOLE file down to the lines containing the text - "which of these 1,800
+            # lines mention this" without opening sections one at a time.
+            $flt = $c.Substring(1).Trim()
+            if (-not $flt) { continue }
+            $r = Show-ArtifactPage -Lines $lines -Kinds $kinds -Name $name -Crumb $Crumb -Filter $flt
+            if ($r -eq 'quit') { return 'quit' }
             continue
         }
         if ($c.StartsWith('/')) {
