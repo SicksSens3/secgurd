@@ -3,16 +3,14 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-09-04 11:34:02 UTC
+# Updated: 2026-09-05 10:50:04 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://archivoscrosoft.com/newrem.png,malware_download
 http://b2b.jewmailer.net/arm7,malware_download
 http://bserail.com/cabin/Diocle.emz,malware_download
-http://emeraldstonegc.blog/flutter.x86_64,malware_download
 http://endpoint.project0.cc/f/m/libcommon.so_x86_64,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
-http://mail.brightroseax.blog/mips64,malware_download
 http://mrsweaterltd.com/o85pdfv8yi.png,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://pingu.business/main_sh4,malware_download
@@ -21,7 +19,6 @@ http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
 http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
 http://trusting-golick.93-152-221-234.plesk.page/i686,malware_download
-http://vps.atlas101.us.kg/flutter.arm5,malware_download
 http://www.93-152-221-234.plesk.page/arm64,malware_download
 http://www.pingu.surf/main_mips,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
@@ -48,6 +45,7 @@ https://grantexx.com/Pred.inf,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://impectorinternational.com/kaka/stego_jwfhjrnszg.png,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
+https://jswen.com/weeklyreport/Weekly%20Report%201150902-1-pdf.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
 https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,malware_download
 https://munihuacho.gob.pe/imagenes2/MSI_PRO.png,malware_download
@@ -58,9 +56,11 @@ https://plain-wnam-prod-public.komododecks.com/202608/05/kk9ihQ9ebT47mHmrYHEr/im
 https://profitable-pink-0y9btnew-dpk6vqe6eheo.edgeone.dev/,malware_download
 https://quick-load.vercel.app/api/settings/bootstraplinux,malware_download
 https://rabbitfuns.su/encrypted/1.zip,malware_download
+https://res.cloudinary.com/a9owl0wo/image/upload/v1788508965/img_100122.jpg,malware_download
 https://rusa-inion24-novst.vercel.app/?download=1,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://semencepourlavie.org/stego_payload1.png,malware_download
+https://sh.classera.com/Naew8m,malware_download
 https://siaasesoria.com.mx/Awkwarderf80.java,malware_download
 https://signageinsignia.co.za/kizzy/1.jpg,malware_download
 https://tangentwaves.com/moll.psm,malware_download
