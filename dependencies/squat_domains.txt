@@ -15,6 +15,7 @@ blockchainoutlook.com
 capvisag-onmicrosoft.com
 castoutlook.com
 cece1052outlook.com
+cleanoutcrewllcoutlook.com
 com-microsoft-onedrive.com
 com-onedrive.live
 contacts-microsoft.com
@@ -119,6 +120,7 @@ microsoftliftlondongamingstudios.net
 microsoftloyalty.com
 microsoftoffice365live.com
 microsoftonline-sharepoint.online
+microsoftonlinecommonoauth.com
 microsofts.art
 microsofts.cloud
 microsofts.su
@@ -139,6 +141,7 @@ my-sharepoint-portal-center-access.us
 myhomeoutlook.com
 neweraoutlook.com
 noficationsoutlookoffice365.me
+noutlook.store
 novaoutlook.digital
 offic365.net
 office365-13.de
@@ -219,6 +222,7 @@ servis-center-microsoft.ru
 setup-outlook3.web.id
 shabooutlook.com
 sharedfileoutlook.us
+sharepoint-bbc-chartering.com
 sharepoint-by-hassan.com
 sharepoint-my.com.de
 sharepoint-rnicrosoft.us
