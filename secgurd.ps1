@@ -193,7 +193,7 @@ function Defang {
     return $s
 }
 
-$script:secgurdVersion = 'v2.10.0'
+$script:secgurdVersion = 'v2.10.1'
 
 # ---------------------------------------------
 
@@ -2920,21 +2920,22 @@ function Show-ModuleMenu {
     # piped straight into powershell with a redirected/closed stdin), which would deadlock on
     # Read-Host - detected by attempting a non-blocking check below.
 
-    $canRead = $true
-    try {
-        # If stdin is redirected AND not a console, Read-Host can't get input -> would hang.
-        if ([Console]::IsInputRedirected -and -not [Environment]::UserInteractive) {
-            $canRead = $false
-        }
-    } catch {
-        # [Console] may be unavailable in some hosts; assume we can read and let the menu try.
-        $canRead = $true
-    }
+    # $stdinDead is TRUE when stdin looks like a genuinely closed / piped input with no console
+    # behind it. Crucially this same combo is ALSO true for the S1 remote shell (redirected stdin,
+    # SYSTEM, UserInteractive=false) where Read-Host works perfectly - the two are indistinguishable
+    # from these flags alone. So it must NOT decide whether to draw the menu.
+    #
+    # It used to: the whole menu lived behind `if (-not $canRead)`, i.e. it rendered ONLY when this
+    # combo was true. That hid the menu in the one place it should always appear - a real interactive
+    # console, where IsInputRedirected is false - so `iex (irm ...)` (and any plain console run)
+    # printed the banner and fell straight through to `return`, collecting nothing. We now ALWAYS
+    # draw the menu (a console and the S1 shell both drive Read-Host fine) and use $stdinDead only as
+    # a hint for the end-of-stream fallback at the prompt, so a genuinely piped run still selects
+    # everything and scans instead of doing nothing. -Auto / -Modules never reach this function.
+    $stdinDead = $false
+    try { $stdinDead = ([Console]::IsInputRedirected -and -not [Environment]::UserInteractive) } catch { $stdinDead = $false }
 
-    if (-not $canRead) {
-        Write-Host ""
-        Write-Host (Ex "  ^16  No interactive input available ^09 running all modules.") -ForegroundColor Yellow
-        Write-Host (Ex "       (use -Auto for headless runs, or -Modules to pick specific ones)") -ForegroundColor DarkGray
+    if ($true) {
         Write-Host ""
         Write-Host "  " -NoNewline
         Write-Host "Select modules to run." -ForegroundColor White -NoNewline
@@ -3106,8 +3107,21 @@ function Show-ModuleMenu {
 
         Write-Host ""
         Write-Host "   > " -ForegroundColor DarkGray -NoNewline
-        $userInput = Read-Host        # plain read; the blood-drip animation lives on the splash screen now
-
+        # Guard the read. On a real console or the S1 shell, Read-Host blocks and returns a string
+        # (empty on a bare Enter). On a genuinely piped/closed stdin it hits end-of-stream and either
+        # throws or yields $null - and, paired with $stdinDead, that is the ONE case we can be sure is
+        # not a person at a keyboard. There we select everything and run rather than drop through to
+        # `return` and collect nothing (the same outcome -Auto gives). A bare Enter is "" not $null,
+        # so this never misfires on a console user pressing Enter to refresh the menu.
+        $userInput = try { Read-Host } catch { $null }
+        if ($null -eq $userInput -and $stdinDead) {
+            Write-Host ""
+            Write-Host (Ex "  ^16  No readable input (piped stdin) ^09 running all modules.") -ForegroundColor Yellow
+            Write-Host (Ex "       (use -Auto for headless runs, or -Modules to pick specific ones)") -ForegroundColor DarkGray
+            foreach ($m in $script:ModuleCatalogue) { $script:SelectedModules[$m.Id] = $true }
+            $script:ProceedWithRun = $true
+            return
+        }
         if ([string]::IsNullOrWhiteSpace($userInput)) { continue }
         $cmd = $userInput.Trim().ToLower()
 
