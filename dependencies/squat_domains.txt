@@ -1,8 +1,10 @@
 06outlook.com
+1-peng-microsoft.com
 1-sheng-microsoft.com
 123outlook.com
 24950outlookdrive.com
 676132-microsoft.com
+85outlook.com
 agencybenefitsoutlook.com
 allsportsoffice365.com
 americanredcross-mysharepoint.com
@@ -19,6 +21,7 @@ capvisag-onmicrosoft.com
 castoutlook.com
 cece1052outlook.com
 cleanoutcrewllcoutlook.com
+com-access-sharepoint.com
 com-microsoft-onedrive.com
 com-onedrive.live
 contacts-microsoft.com
@@ -108,6 +111,7 @@ microsoft365.plus
 microsoft365.se
 microsoft365australia.net
 microsoft365norfolk.co.uk
+microsoft365online.cloud
 microsoft412.pp.ua
 microsoft515.pp.ua
 microsoftaccountslogin.com
@@ -133,6 +137,7 @@ microsoftoffice365live.com
 microsoftonline-sharepoint.online
 microsoftonlinecommonoauth.com
 microsofts.art
+microsofts.biz
 microsofts.cloud
 microsofts.su
 microsoftservicescontroller.com
@@ -260,6 +265,7 @@ suphelp-microsoft.com
 teacherbenefitsoutlook.com
 teams-meeting-microsoft.com
 technelmicrosoft.com
+telemetry-microsoft.com
 tginnovationoutlook.com
 theeduoutlook.com
 theinvestoroutlook.net
