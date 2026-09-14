@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-09-13 12:12:14 UTC
+# Updated: 2026-09-14 13:11:02 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://archivoscrosoft.com/newrem.png,malware_download
@@ -12,13 +12,8 @@ http://endpoint.project0.cc/f/m/.X0-lock_x86_64,malware_download
 http://epsinf.com/yom/app/centos/4.jpg,malware_download
 http://lifeisabouthavingfun448.duckdns.org/Mugen.sh,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
-http://pingu.ltd/ppc64,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
-http://samiksha.com.sg/data/zoom/Windows/download.php,malware_download
-http://trusting-golick.93-152-221-234.plesk.page/i686,malware_download
-http://www.93-152-221-234.plesk.page/arm64,malware_download
-http://www.pingu.surf/main_mips,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://198348.gl/collect,malware_download
 https://87130921-60-20220830152356.webstarterz.com/new/vvv/Alloy%20-%20Parts%20inquiry.js.xz,malware_download
@@ -26,26 +21,27 @@ https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
 https://airtickts.com/,malware_download
 https://alphapicaficagency.com/stego_88zloq9er8.png,malware_download
 https://alphasaling.site/stego_95t70lfg5l.png,malware_download
-https://authshipup.net/get_verify?i=5943&m=1,malware_download
 https://balanced-red-emhnkdfj-dp7g2kvqxx8n.edgeone.dev/,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/blaoso/alOffic.zip,malware_download
-https://cdn.jsdelivr.net/gh/48-689100-172-171440/447477315432/61442229125,malware_download
+https://bunnyview.b-cdn.net/img_093703.png,malware_download
 https://coconutoficial.com.br/img/stego_anepqnd5rj.png,malware_download
 https://coolairesgroup.com/img_170820.png,malware_download
 https://del.sou.pp.ua/install.sh,malware_download
+https://digitalisonesapps.com/savess/downloads.php,malware_download
 https://dinamikakargo.com/.well-known/new/img_onyix.png,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
-https://drive.google.com/uc?export=download&id=11-DFMoy-fXPkERcqxAm3w69-MqdaqhNc,malware_download
+https://drive.google.com/uc?export=download&id=1WIYybnkPqHNqdz55Z2pFr-Tp66L-EfvQ,malware_download
 https://duct-master.com/00/newMSI_PRO.png,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/inve%20new.png?alt=media&token=15e2a054-9211-4b2f-987c-c1225adf4faa,malware_download
 https://gaode11223.oss-ap-southeast-7.aliyuncs.com/111a.zip,malware_download
+https://get.acivated.win/Update.zip,malware_download
+https://get.activatd.win/,malware_download
 https://grantexx.com/Pred.inf,malware_download
 https://hoteljune2026.blogspot.com/atom.xml,malware_download
 https://impectorinternational.com/kaka/stego_jwfhjrnszg.png,malware_download
 https://jenniferloeffler.com/jenniferloeffler.zip,malware_download
 https://jswen.com/weeklyreport/Weekly%20Report%201150902-1-pdf.zip,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
-https://kits.frog.tw/.well-known/acme-challenge/images/thenewweekisblessed.png,malware_download
 https://loop-lumen.com/zxc/app.zip,malware_download
 https://multiplay.at/shaders/Shaders.zip,malware_download
 https://munihuacho.gob.pe/imagenes2/MSI_PRO.png,malware_download
