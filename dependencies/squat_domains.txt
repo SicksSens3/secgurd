@@ -39,6 +39,7 @@ docsign.es
 docsign.store
 docu-sign.ch
 docu-sign.info
+docusign-verify.co
 docusign.fit
 docusign.space
 docusign1.site
@@ -76,6 +77,7 @@ houtlooktegels.nl
 how-to-send-a-fax-via-email-outlook.com
 icefishoutlookcenter.shop
 inbox-outlook.com
+info-microsoft.info
 inkchaindocusign.icu
 invite-office365.co
 krbrightoutlook.net
@@ -88,14 +90,17 @@ loginmicrosoftt.lat
 loginsharepointdocs.com
 lookoutlook.in
 m365-cloud-onedrive.com
+marketplaceofficeroutlook.info
 metzler-onedrive.com
 micnosoft.online
 micosoft.cloud
 micro-soft.store
 micronedrives.com
 microosoft.online
+microsoft-account.be
 microsoft-africa.org
 microsoft-agnew.online
+microsoft-login.be
 microsoft-m365.online
 microsoft-mailbox.com
 microsoft-milan.com
@@ -145,6 +150,7 @@ microsofts.cloud
 microsofts.su
 microsoftservicescontroller.com
 microsoftsevent.com
+microsoftsteam.online
 microsoftsucks.is
 microsoftsupcloud.com
 microsoftteam.us
@@ -199,6 +205,7 @@ onmicrosoftusa.com
 otakuoutlook.org
 ouplook.com
 outfityouroutlook.org
+outiook.co.uk
 outiook.info
 outllok.shop
 outllook.mx
@@ -216,6 +223,7 @@ outlookcommunicate.com
 outlookconstruction.net
 outlookconsulting.net
 outlookdigitalholdings.co
+outlookenterprisesupvc.in
 outlookgospellighthouse.ca
 outlookhotmail.online
 outlookinc.net
@@ -227,6 +235,7 @@ outlookmail.my.id
 outlookmailhub.com
 outlookopsdemo.online
 outlookorange.co
+outlookpr.co.in
 outlookresidential.com
 outlooksapparel.com
 outlooksonline.ai
@@ -260,6 +269,7 @@ sharepoint-my.com.de
 sharepoint-rnicrosoft.us
 sharepoint-sharing.com
 sharepoint-swm.de
+sharepoint.directory
 sharepointanalytics.ai
 sharepointdocument.help
 sharepointhelp.com
@@ -278,6 +288,7 @@ teams-meeting-microsoft.com
 technelmicrosoft.com
 telemetry-microsoft.com
 tginnovationoutlook.com
+thechristianoutlook.com.ng
 theeduoutlook.com
 theinvestoroutlook.net
 themodernoutlook.net
