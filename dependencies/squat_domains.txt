@@ -3,6 +3,7 @@
 1-sheng-microsoft.com
 123outlook.com
 1eu-sharepoint.com
+2-sa-sharepoint.com
 24950outlookdrive.com
 676132-microsoft.com
 85outlook.com
@@ -19,6 +20,7 @@ bitunixdocusign.icu
 bleakoutlook.com
 blockchainoutlook.com
 brickoutlook.com
+camoutlook.com
 capitoloutlook.com
 capvisag-onmicrosoft.com
 castoutlook.com
@@ -70,6 +72,7 @@ en-sharepoint.com
 epoch-test-outlook.com
 filecuserspzacconedrivedesktopsito20webindex.it
 findsportsoffice365.com
+fleetonedrivers.com
 foodsharepoint.com
 forms-microsoft.cloud
 freemicrosoftpoints.cc
@@ -112,6 +115,7 @@ microsoft-m365.online
 microsoft-mailbox.com
 microsoft-milan.com
 microsoft-platform.ru
+microsoft-pro.com
 microsoft-s.com.cn
 microsoft-security-update.online
 microsoft-splashmaps.online
@@ -138,6 +142,8 @@ microsoftazurein.com
 microsoftbi.pl
 microsoftbillings.org
 microsoftbob.fun
+microsoftcareerservices.com
+microsoftcareersgroup.com
 microsoftcareershub.com
 microsoftcloudpartnerassociation.org
 microsoftco.org
@@ -162,6 +168,7 @@ microsoftsevent.com
 microsoftsteam.online
 microsoftsucks.is
 microsoftsupcloud.com
+microsofttalentagency.com
 microsoftteam.us
 microsoftteamss.team
 microsofttechservices.com
@@ -186,6 +193,7 @@ novaoutlook.digital
 offic365.net
 office365-13.de
 office365-jpn.com
+office365-login.be
 office365-security-alert.com
 office365-sync.net
 office365-view-message.online
@@ -255,6 +263,7 @@ outlookthreads.com
 outlookwebap.com
 outlookxl.com
 outtook.pl
+paramountoutlook.com
 powersportsoffice365.com
 primeoutlook.online
 primesportsoffice365.com
@@ -265,6 +274,7 @@ qualifierfundingoutlook.com
 recsa20sharepoint.blog
 reeloutlookuk.com
 refreshingoutlooksc8.cloud
+review-office365.com
 rtsoutlook.com
 secure-portal-microsoft.com
 service-center-microsoft.ru
