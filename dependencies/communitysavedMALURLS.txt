@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-09-18 11:38:08 UTC
+# Updated: 2026-09-19 11:20:47 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://bserail.com/cabin/Diocle.emz,malware_download
