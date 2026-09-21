@@ -47,6 +47,7 @@ docsign.store
 docu-sign.ch
 docu-sign.info
 docusign-verify.co
+docusign.com.bi
 docusign.com.gp
 docusign.fit
 docusign.space
@@ -188,6 +189,7 @@ microsuft.one
 mijn-office365.be
 miraoutlookcompany.com
 miscrosoft.online
+mivcrosoft.com
 moneyballoutlook.com
 mortgagerateoutlook.com
 ms1-microsoft.com
@@ -304,6 +306,7 @@ sharepoint-rnicrosoft.us
 sharepoint-sharing.com
 sharepoint-swm.de
 sharepoint.directory
+sharepoint.wtf
 sharepointanalytics.ai
 sharepointdocument.help
 sharepointhelp.com
