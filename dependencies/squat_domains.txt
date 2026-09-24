@@ -74,6 +74,7 @@ durackoutlookcourts.online
 durackoutlookcourts.site
 earlymarketoutlook.com
 ecofactpolicyoutlook.com
+ecolab-onmicrosoft.com
 elmstonedriveways.co.uk
 emr1111outlook.com
 en-sharepoint.com
@@ -106,6 +107,7 @@ kingoutlook.my.id
 krbrightoutlook.net
 lastdayinmicrosoft.org
 layoutlook.com
+lenovomicrosoftcsp2026.com
 lighttheflameministiesllcoutlook.blog
 lloutlook.com
 login-microsoftonline.cz
@@ -202,6 +204,7 @@ mivcrosoft.com
 moneyballoutlook.com
 mortgagerateoutlook.com
 ms1-microsoft.com
+ms365-onedrive.com
 msonedrive-cdn.info
 my-docusign.de
 my-sharepoint-portal-center-access.us
@@ -232,8 +235,10 @@ offise365.com
 offlcemicrosoftonlinesharing.org
 ofice365.org
 onedrave.com
+onedrive-cn.com.cn
 onedrive-file-share.com
 onedrive-hope-studyabraod.com
+onedrive-mysharepoint.com
 onedrive.biz.id
 onedrive.com.de
 onedrivedownloadsfile.com
@@ -312,6 +317,7 @@ sharedfileoutlook.us
 sharepoint-albacore.com
 sharepoint-bbc-chartering.com
 sharepoint-by-hassan.com
+sharepoint-files-page.com
 sharepoint-my.com.de
 sharepoint-rnicrosoft.us
 sharepoint-sharing.com
