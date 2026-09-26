@@ -34,6 +34,7 @@ com-microsoft-onedrive.com
 com-onedrive.live
 contacts-microsoft.com
 contactsupport-microsoft.com
+coreoutlook.com
 corp-microsoft.com
 crocobet-microsoft.com
 d0cusign.info
@@ -72,6 +73,7 @@ dropbox-docusign.com
 dunnysoutlook.ca
 durackoutlookcourts.online
 durackoutlookcourts.site
+dzonedrivers.in
 earlymarketoutlook.com
 ecofactpolicyoutlook.com
 ecolab-onmicrosoft.com
@@ -80,6 +82,7 @@ elmstonedriveways.co.uk
 emr1111outlook.com
 en-sharepoint.com
 epoch-test-outlook.com
+evenoutlook.com
 filecuserspzacconedrivedesktopsito20webindex.it
 findsportsoffice365.com
 fleetonedrivers.com
@@ -125,6 +128,7 @@ micosoft.cloud
 micro-soft.store
 micronedrives.com
 microosoft.online
+microsaft.store
 microsoft-account.be
 microsoft-africa.org
 microsoft-agnew.online
@@ -355,6 +359,7 @@ tginnovationoutlook.com
 theadvisoryiboutlook.com
 theadvisoryoutlook.com
 thechristianoutlook.com.ng
+theedoutlookmag.com
 theeduoutlook.com
 theinvestoroutlook.net
 themodernoutlook.net
