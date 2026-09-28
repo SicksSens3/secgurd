@@ -33,12 +33,14 @@ com-access-sharepoint.com
 com-microsoft-onedrive.com
 com-onedrive.live
 contacts-microsoft.com
+contactsalesmicrosoft.com
 contactsupport-microsoft.com
 coreoutlook.com
 corp-microsoft.com
 crocobet-microsoft.com
 d0cusign.info
 ddoutlook.com
+dealoutlookdesk.info
 djsharepoint.com
 djsharepoint.net
 dmbllconmicrosoft.agency
@@ -94,6 +96,7 @@ forms-microsoft.com
 freemicrosoftpoints.cc
 ggoutlook.shop
 grandoutlookjhb.co.za
+growthoutlookdesk.info
 growthoutlookzone.info
 grvtdocusignsetup.icu
 helpsecure-microsoft.com
@@ -132,9 +135,11 @@ micronedrives.com
 microosoft.online
 microsaft.store
 microsft.run
+microsofl.com
 microsoft-account.be
 microsoft-africa.org
 microsoft-agnew.online
+microsoft-key.online
 microsoft-login.be
 microsoft-m365.online
 microsoft-mailbox.com
@@ -241,6 +246,7 @@ office365helps.com
 office365helps.de
 office365onlline.com
 office365onllne.com
+office365plus.net
 office365uae.com
 office465.store
 officeroutlook.com
@@ -369,12 +375,14 @@ theedoutlookmag.com
 theeduoutlook.com
 theinvestoroutlook.net
 themodernoutlook.net
+theoutlookperformance.org
 thermalfusionoutlook.com
 thescienceoutlook.com
 thesharepointbaker.co.uk
 tickeroutlook.com
 topmicrosoftpartners.online
 topsportsoffice365.com
+transactionoutlook.info
 transportation-outlook.com
 trilandglobalmetalsoutlook.com
 tv-microsoft.com
