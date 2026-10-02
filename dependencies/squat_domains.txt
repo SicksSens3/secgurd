@@ -50,6 +50,7 @@ djsharepoint.net
 dmbllconmicrosoft.agency
 dmbllconmicrosoft.solutions
 doc-sign.live
+docesign.site
 docsign.es
 docsign.store
 docu-sign.ch
@@ -150,6 +151,7 @@ microsoft-account.be
 microsoft-africa.org
 microsoft-agnew.online
 microsoft-defender.be
+microsoft-en-us-si.com
 microsoft-key.online
 microsoft-login.be
 microsoft-m365.online
@@ -177,6 +179,7 @@ microsoft365.se
 microsoft365australia.net
 microsoft365norfolk.co.uk
 microsoft365online.cloud
+microsoft365toolbox.io
 microsoft412.pp.ua
 microsoft515.pp.ua
 microsoftaccountslogin.com
@@ -307,6 +310,7 @@ outlook.ngo
 outlook10.net
 outlookaanmaken.nl
 outlookahmedabad830.help
+outlookapp.net
 outlookcctv.co.uk
 outlookcommunicate.com
 outlookconstruction.net
@@ -374,6 +378,7 @@ sharepointanalytics.ai
 sharepointdocs.cloud
 sharepointdocument-verification.com
 sharepointdocument.help
+sharepointdocumentviewer.com
 sharepointhelp.com
 sharepointonline.com.de
 sharepointscrippshealth.org
@@ -402,6 +407,7 @@ theinvestoroutlook.net
 themodernoutlook.net
 theoutlookperformance.org
 thermalfusionoutlook.com
+thescandioutlook.com
 thescienceoutlook.com
 thesharepointbaker.co.uk
 tickeroutlook.com
