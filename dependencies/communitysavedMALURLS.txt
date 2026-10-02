@@ -3,11 +3,12 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-10-01 13:44:42 UTC
+# Updated: 2026-10-02 12:59:41 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://Cn.devglobal.biz/bins.sh,malware_download
 http://bserail.com/cabin/Diocle.emz,malware_download
+http://c2.teamzeroday.net/bin/manta.ppc,malware_download
 http://dstats.qzz.io/x64s,malware_download
 http://endpoint.project0.cc/f/m/.X0-lock_x86_64,malware_download
 http://epsinf.com/yom/app/centos/4.jpg,malware_download
@@ -18,13 +19,12 @@ http://mrsweaterltd.com/o85pdfv8yi.png,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://photolivebook.pro/,malware_download
 http://playuno.me/download.php,malware_download
+http://pvphood.cc/eclipse.m68k,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
 http://tradingengineers.in/Troldbundne.thn,malware_download
-http://trusting-golick.93-152-221-234.plesk.page/i686,malware_download
 http://urbanpro.mycpanel.rs/Ringeklokkes.aaf,malware_download
 http://wemqmewkqewq.work.gd/powerpc-440fp,malware_download
-http://www.93-152-221-234.plesk.page/arm64,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://198348.gl/collect,malware_download
 https://6ab746fb57212ca6e1e7b121.imgix.net/img_142142.png,malware_download
@@ -37,22 +37,25 @@ https://baolongwes.oss-ap-southeast-1.aliyuncs.com/blaoso/alOffic.zip,malware_do
 https://bumcoinc.site/binsir/img_sir035737.png,malware_download
 https://coolairesgroup.com/img_170820.png,malware_download
 https://del.sou.pp.ua/install.sh,malware_download
+https://delta-canvas.com/zxc/app.zip,malware_download
 https://dinamikakargo.com/.well-known/new/img_onyix.png,malware_download
 https://download-files.wixmp.com/ugd/09c1d5_535e18f9f54e47a8a4f9587ce3e9a710.txt,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
-https://drive.google.com/uc?export=download&id=1qjzMdGn-w0YYAgdJ6zcD7jCzqDtaokB3,malware_download
-https://elrneba.com/nc_assets/img/TRUE.zip,malware_download
+https://drive.google.com/uc?export=download&id=1jXrdMfxhmKBcp62-YNEfaeBIgdmWw-xr,malware_download
 https://fa-1464303226.cos.ap-guangzhou.myqcloud.com/fa.y,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/slim.png?alt=media&token=c28e3a19-7fb3-443a-88fb-2e3b8a77b454,malware_download
 https://gaode11223.oss-ap-southeast-7.aliyuncs.com/111a.zip,malware_download
+https://ik.imagekit.io/k1gn1jh9t/dIhimbS.txt,malware_download
 https://impectorinternational.com/kaka/stego_jwfhjrnszg.png,malware_download
 https://kenwillzltd.com/kenwillzltd.zip,malware_download
-https://lai-1451610695.cos.ap-guangzhou.myqcloud.com/lai.y,malware_download
 https://loop-lumen.com/zxc/app.zip,malware_download
 https://maple30.com/f/680apd_597afiqvimxvelw/sfjwmrjy,malware_download
 https://munihuacho.gob.pe/imagenes2/MSI_PRO.png,malware_download
 https://obearo.com/img_163520.png,malware_download
 https://plain-wnam-prod-public.komododecks.com/202608/05/kk9ihQ9ebT47mHmrYHEr/image.png,malware_download
+https://polksvo.vercel.app/?download=1,malware_download
+https://pomorutecvo.vercel.app/?download=1,malware_download
+https://prestige-client.live/downloads/PrestigeSetup_pw1337.zip,malware_download
 https://profitable-pink-0y9btnew-dpk6vqe6eheo.edgeone.dev/,malware_download
 https://quillchant14.com/f/680apd_597afiqvimxvelw/sfjwmrjy,malware_download
 https://rabbids.cc/encrypted/1.zip,malware_download
