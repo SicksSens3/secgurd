@@ -39,6 +39,7 @@ com-access-sharepoint.com
 com-microsoft-onedrive.ca
 com-microsoft-onedrive.com
 com-microsoft-onedrive.live
+com-microsoftonline-ondrive.ca
 com-onedrive.live
 contacts-microsoft.com
 contactsalesmicrosoft.com
@@ -163,6 +164,7 @@ microsofl.com
 microsoft-account.be
 microsoft-africa.org
 microsoft-agnew.online
+microsoft-auth.support
 microsoft-defender.be
 microsoft-en-us-si.com
 microsoft-hk.com
@@ -304,6 +306,7 @@ onedrive-hope-studyabraod.com
 onedrive-mysharepoint.com
 onedrive.biz.id
 onedrive.com.de
+onedriveadobe.com
 onedrivedownloadsfile.com
 onedrivefilesecurecent.online
 onedrivenote.online
@@ -438,6 +441,7 @@ theedoutlookmag.com
 theeduoutlook.com
 theinvestoroutlook.net
 themodernoutlook.net
+theoutlook.asia
 theoutlookperformance.org
 thermalfusionoutlook.com
 thescandioutlook.com
