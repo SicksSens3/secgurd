@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-10-09 13:36:36 UTC
+# Updated: 2026-10-10 12:52:48 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://bserail.com/cabin/Diocle.emz,malware_download
@@ -19,7 +19,6 @@ http://photolivebook.pro/,malware_download
 http://project0.cc/f/m/.X0-lock_x86_64,malware_download
 http://reservphotoinstay.one/,malware_download
 http://reservphotoinstaynow.shop/,malware_download
-http://stanarcservice.com/asset/update.dat,malware_download
 http://urbanpro.mycpanel.rs/Ringeklokkes.aaf,malware_download
 http://w5q.eu/eclipse.mips,malware_download
 http://wemqmewkqewq.work.gd/x86_64,malware_download
@@ -27,29 +26,32 @@ http://wp.fujeigroup.com:8888/file/img_154255.png,malware_download
 http://yakult-hk.com/DDOS.zip,malware_download
 https://6ab746fb57212ca6e1e7b121.imgix.net/img_142142.png,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
-https://adcentral.com.mx/administrator/ognltimg_051814.png,malware_download
 https://athuselevadores.com.br/Bleaty.toc,malware_download
 https://balanced-red-emhnkdfj-dp7g2kvqxx8n.edgeone.dev/,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/blaoso/alOffic.zip,malware_download
-https://bergmann-automobile.de/api/cm-token,malware_download
-https://beschaffung-portal.de/api/cm-token,malware_download
+https://briannacorporation.com/cap/Chored.cur,malware_download
 https://bumcoinc.site/binsir/img_sir035737.png,malware_download
 https://cdn.filestackcontent.com/bRJs5fcRFSoaWQvUX9xQ,malware_download
+https://communication-hub.vg/,malware_download
 https://coolairesgroup.com/img_170820.png,malware_download
 https://del.sou.pp.ua/install.sh,malware_download
+https://delta-canvas.com/zxc/app.zip,malware_download
 https://dinamikakargo.com/.well-known/new/img_onyix.png,malware_download
 https://download-files.wixmp.com/ugd/09c1d5_535e18f9f54e47a8a4f9587ce3e9a710.txt,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
-https://drive.google.com/uc?export=download&id=1L_cku7GNkFeUfFiU2VEsvHDZJbSvzJMx,malware_download
-https://evergabe-bund.de/api/cm-token,malware_download
+https://drive.google.com/uc?export=download&id=1_UZcQfkdBH4WncF92tW54H57khybkee4,malware_download
+https://dttjjkkllzbvesjzndtp.vercel.app/?download=1,malware_download
+https://ficus.in/img/img_194218.png,malware_download
 https://firebasestorage.googleapis.com/v0/b/julyendingapama.firebasestorage.app/o/slim.png?alt=media&token=c28e3a19-7fb3-443a-88fb-2e3b8a77b454,malware_download
 https://gaode11223.oss-ap-southeast-7.aliyuncs.com/111a.zip,malware_download
+https://gibddru.vercel.app/?download=1,malware_download
 https://gitlab.com/Devilsprite/xeno-executor/-/raw/main/XenoExecutor.zip,malware_download
 https://gloryhaven.org/bvbhfhdfb/obduktioners.lzh,malware_download
 https://greatwhite.me/tsl/Driftsregnskabets.lzh,malware_download
 https://growgreenhorizons.com/hashmanager.zip,malware_download
 https://impectorinternational.com/kaka/stego_jwfhjrnszg.png,malware_download
 https://lai-1451610695.cos.ap-guangzhou.myqcloud.com/lai.y,malware_download
+https://loop-lumen.com/zxc/app.zip,malware_download
 https://maple30.com/f/680apd_597afiqvimxvelw/sfjwmrjy,malware_download
 https://munihuacho.gob.pe/imagenes2/MSI_PRO.png,malware_download
 https://obearo.com/img_163520.png,malware_download
@@ -61,6 +63,7 @@ https://razao.pt/GMV42B4J,malware_download
 https://romeopirlanta.com/img_003307.png,malware_download
 https://sales.ifree.page/img_131252.png,malware_download
 https://sh.classera.com/Naew8m,malware_download
+https://sogo-download.oss-cn-hongkong.aliyuncs.com/sougouExpiorerr_Setup_x64.zip,malware_download
 https://sugarfreedcup.co.za/img_033922.png,malware_download
 https://tangentwaves.com/moll.psm,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
@@ -71,5 +74,6 @@ https://uu.v2raynapps.com.cn/UU_aNCcWz7.zip,malware_download
 https://windowsdiagnostics.st/api/static/loading,malware_download
 https://www-connect-secure-wellcfargo.sekolahkejarpaket.com/wellsfargo_new_obf_08.07.26.zip,malware_download
 https://www.hqsblog.com/wordpress/wp-content/plugins/zxzxzx/stego_p0ci0zln28.png,malware_download
+https://www.tmcksa.com/phil/pdmjhdk.txt,malware_download
 https://wwwiiisss.oss-ap-northeast-1.aliyuncs.com/SogouExplorer21_windows.zip,malware_download
 https://xiazailianjie.com/WPS_Setup_X64.zip,malware_download
