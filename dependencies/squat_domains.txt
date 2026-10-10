@@ -60,6 +60,7 @@ docsign.es
 docsign.store
 docu-sign.ch
 docu-sign.info
+docusign-acme.com
 docusign-invoices.com
 docusign-verify.co
 docusign.com.bi
@@ -77,6 +78,7 @@ docusignne.shop
 docusignnetwork.net
 docusignnnne.site
 docusignproduct.help
+docusigns-esign.online
 docusigns.fi
 docusigns.info
 docusignsapp.com
@@ -421,6 +423,7 @@ sharepointszu.com
 sharkpoint.uk
 sharpepoint.co
 shmicapalmermontanash001outlook.org
+sincerevastoutlook.com
 skgeodesy-sharepoint.sk
 sms-outlook.com
 smtphroutlook.com
