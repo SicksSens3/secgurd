@@ -60,6 +60,7 @@ djsharepoint.net
 dmbllconmicrosoft.agency
 dmbllconmicrosoft.solutions
 doc-sign.live
+docesign.live
 docesign.site
 docsign.es
 docsign.store
@@ -111,6 +112,7 @@ evenoutlook.com
 everydayvitalityoutlook.com
 everydayvitalityoutlook.site
 filecuserspzacconedrivedesktopsito20webindex.it
+fileindocusign.vu
 findsportsoffice365.com
 flagstonedriveways.co.uk
 fleetonedrivers.com
@@ -327,6 +329,7 @@ onedrive-file-share.com
 onedrive-hope-studyabraod.com
 onedrive-mysharepoint.com
 onedrive-pdfviewer.com
+onedrive-siemens.com
 onedrive.biz.id
 onedrive.com.de
 onedriveadobe.com
@@ -495,6 +498,3 @@ vicrosoft.online
 virin-tradeoutlook.com
 visualstudio-microsoft.com
 vitallivingoutlook.site
-wavelengthoutlook.com
-web-docusign.com
-weboutlook-mail.com
