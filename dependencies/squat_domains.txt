@@ -165,6 +165,7 @@ loginoutlookcom.com
 loginsharepointdocs.com
 lookoutlook.in
 lucifer-outlook.com
+m1crosoft.pl
 m365-cloud-onedrive.com
 marketplaceofficeroutlook.info
 metzler-onedrive.com
@@ -307,6 +308,7 @@ office365-security-alert.com
 office365-sync.net
 office365-view-message.online
 office365.fit
+office365.website
 office365advisors.com
 office365australia.net.au
 office365helps.com
@@ -325,6 +327,7 @@ ofice365.org
 ondrive.pl
 onedrave.com
 onedrive-cn.com.cn
+onedrive-documents.com
 onedrive-file-share.com
 onedrive-hope-studyabraod.com
 onedrive-mysharepoint.com
@@ -444,6 +447,7 @@ sharepointdocs.cloud
 sharepointdocument-verification.com
 sharepointdocument.help
 sharepointdocumentviewer.com
+sharepointfile-pdfshare-efile.com
 sharepointhelp.com
 sharepointonline.com.de
 sharepointscrippshealth.org
@@ -494,7 +498,3 @@ unoutlook.com
 us-docusign.net
 verificationmicrosoft.net
 verificationmicrosoft.us
-vicrosoft.online
-virin-tradeoutlook.com
-visualstudio-microsoft.com
-vitallivingoutlook.site
