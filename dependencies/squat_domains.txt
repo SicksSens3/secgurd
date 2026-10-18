@@ -101,6 +101,7 @@ dzonedrivers.in
 earlymarketoutlook.com
 ecofactpolicyoutlook.com
 ecolab-onmicrosoft.com
+efile-sharepointfile-pdfshare.com
 elevatecleaningco2026outlookcom.com
 elmstonedriveways.co.uk
 emailnotifications-microsoft.com
@@ -203,6 +204,7 @@ microsoft-system.com
 microsoft-team.live
 microsoft-teams-co.in
 microsoft-tech-room.ru
+microsoft-thesamplefactory.net
 microsoft-vault.cc
 microsoft-windowsupdate.com
 microsoft.com.mw
@@ -245,6 +247,7 @@ microsoftfreemsp.com
 microsoftfrontierfirm.com
 microsoftglobal.online
 microsofthttps.icu
+microsofthu.biz.id
 microsoftliftlondongamingstudios.net
 microsoftloyalty.com
 microsoftmeet.com
@@ -253,6 +256,7 @@ microsoftolnine.com
 microsoftonline-sharepoint.online
 microsoftonline.com.lc
 microsoftonlinecommonoauth.com
+microsoftpo.my.id
 microsoftproteams.com
 microsofts.art
 microsofts.biz
@@ -362,6 +366,7 @@ outlook-email-primecaretech.com
 outlook-id.com
 outlook-streetangels.com
 outlook.com.mw
+outlook.edu.kg
 outlook.ngo
 outlook10.net
 outlookaanmaken.nl
@@ -486,15 +491,10 @@ thermalfusionoutlook.com
 thescandioutlook.com
 thescienceoutlook.com
 thesharepointbaker.co.uk
+thesimonsoutlook.com
 tickeroutlook.com
 topmicrosoftpartners.online
 topsportsoffice365.com
 transactionoutlook.info
 transportation-outlook.com
 trilandglobalmetalsoutlook.com
-tv-microsoft.com
-tvmicrosoft.com
-unoutlook.com
-us-docusign.net
-verificationmicrosoft.net
-verificationmicrosoft.us
