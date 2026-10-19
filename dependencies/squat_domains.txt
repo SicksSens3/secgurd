@@ -168,6 +168,7 @@ lookoutlook.in
 lucifer-outlook.com
 m1crosoft.pl
 m365-cloud-onedrive.com
+macrosoft.com.cn
 marketplaceofficeroutlook.info
 metzler-onedrive.com
 micnosoft.online
@@ -200,6 +201,8 @@ microsoft-pro.com
 microsoft-s.com.cn
 microsoft-security-update.online
 microsoft-splashmaps.online
+microsoft-store.co
+microsoft-support.win
 microsoft-system.com
 microsoft-team.live
 microsoft-teams-co.in
@@ -260,7 +263,9 @@ microsoftpo.my.id
 microsoftproteams.com
 microsofts.art
 microsofts.biz
+microsofts.bond
 microsofts.cloud
+microsofts.com.my
 microsofts.su
 microsoftservicescontroller.com
 microsoftsevent.com
@@ -304,6 +309,7 @@ noutlook.store
 novaoutlook.digital
 oakleyoutlook.com
 offic365.net
+office360.ca
 office365-13.de
 office365-cloud-sync-service.tech
 office365-jpn.com
@@ -492,9 +498,3 @@ thescandioutlook.com
 thescienceoutlook.com
 thesharepointbaker.co.uk
 thesimonsoutlook.com
-tickeroutlook.com
-topmicrosoftpartners.online
-topsportsoffice365.com
-transactionoutlook.info
-transportation-outlook.com
-trilandglobalmetalsoutlook.com
