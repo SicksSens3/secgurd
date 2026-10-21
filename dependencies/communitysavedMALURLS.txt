@@ -3,7 +3,7 @@
 # Filtered: drop URLs secgurd already flags by heuristic (direct payload downloads,
 #   raw-IP hosts, GitHub, known C2/file-drop infra, shorteners, high-abuse TLDs,
 #   punycode); keep entries added in the last 90 days; ONE URL per host.
-# Updated: 2026-10-20 11:56:44 UTC
+# Updated: 2026-10-21 12:11:17 UTC
 # Format: <url>,<threat/tags>   (label is comma-free; split URL on the LAST comma)
 #
 http://bserail.com/cabin/Diocle.emz,malware_download
@@ -11,7 +11,6 @@ http://c2.teamzeroday.net/bin/manta.ppc,malware_download
 http://griffcar.com.br/Jordfyldens.toc,malware_download
 http://helpdesk09-26.com/,malware_download
 http://hotelhungry.com/public/winwin/Nivellering.mix,malware_download
-http://nd.tdpqnf.com/sxpl/dbjdfmd.txt,malware_download
 http://nossl.segfault.net/ssh-it-deploy.sh,malware_download
 http://photolivebook.pro/,malware_download
 http://project0.cc/f/m/.X0-lock_x86_64,malware_download
@@ -23,15 +22,16 @@ http://yakult-hk.com/DDOS.zip,malware_download
 https://26usdm.oss-cn-beijing.aliyuncs.com/tad,malware_download
 https://6ab746fb57212ca6e1e7b121.imgix.net/img_142142.png,malware_download
 https://93.105.205.92.host.secureserver.net/g1/6.txt,malware_download
+https://9d0be5e43042be826d3e5e2a880a311d.r2.cloudflarestorage.com/easysend/eabce0e70718a86747be14dcc200989c.png?response-content-type=image%2Fpng&response-content-disposition=attachment%3B%20filename%3D%22img_034350.png%22&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=4e12b9ad60f2f1770125300724e010e8%2F20261021%2Fauto%2Fs3%2Faws4_request&X-Amz-Date=20261021T115054Z&X-Amz-SignedHeaders=host&X-Amz-Expires=900&X-Amz-Signature=6b60048c17f745ba2ff8a5ddcadc2e6afd8af8fcc478058a83522c5314120362,malware_download
 https://adcentral.com.mx/administrator/ognltimg_051814.png,malware_download
 https://autohaus-bender.de/api/poly-token,malware_download
 https://balanced-red-emhnkdfj-dp7g2kvqxx8n.edgeone.dev/,malware_download
 https://baolongwes.oss-ap-southeast-1.aliyuncs.com/blaoso/alOffic.zip,malware_download
+https://beschaffungszentrale.de/api/cm-token,malware_download
 https://briannacorporation.com/manager/Equiradial.xsn,malware_download
 https://bumcoinc.site/binsir/img_sir035737.png,malware_download
 https://bvmatqnam.com.vn/js/tt3.txt,malware_download
 https://chantcompass9.com/f/yhzuuxkyytoc-pr6sqaaqa/lvitjpau,malware_download
-https://cloubflare.net/3600,malware_download
 https://coolairesgroup.com/img_170820.png,malware_download
 https://del.sou.pp.ua/install.sh,malware_download
 https://delta-canvas.com/zxc/app.zip,malware_download
@@ -39,19 +39,18 @@ https://dinamikakargo.com/.well-known/new/img_onyix.png,malware_download
 https://download-files.wixmp.com/ugd/09c1d5_535e18f9f54e47a8a4f9587ce3e9a710.txt,malware_download
 https://download.bt.cn/install/install_panel.sh,malware_download
 https://drive.google.com/uc?export=download&id=1mVI9h_rV6mptfRqbC3cDNiyfurIAq2tQ,malware_download
-https://epstexsecutor.com/getfile/download.zip,malware_download
 https://exo-api.tf/Stb/Retev.php?bl=IrThUp3cp1Vg1SbT9BPRE008.txt,malware_download
 https://fable-shine.com/f/9ksbxnvwoj7pts0uxop4sa/01pemlfd,malware_download
-https://firebasestorage.googleapis.com/v0/b/june-july-dd5c8-91uk3/o/22mondayLincoln.txt?alt=media&token=ce3b0c87-e670-4b32-940c-675bdc4fc8d2,malware_download
 https://frame-kite.com/f/rjcf4ggdrb1wp5syzplnda/5r7r2qc0,malware_download
 https://frame97.com/f/k7e0e3iquhg0jhqinjctaq/r03r7eyj,malware_download
 https://gaode11223.oss-ap-southeast-7.aliyuncs.com/111a.zip,malware_download
 https://greatwhite.me/tsl/Driftsregnskabets.lzh,malware_download
 https://groverudder12.com/f/zpo1fmkdlnwfmgdkv1oi2w/ujdkhkau,malware_download
 https://haven-post.com/f/zh2s2xptaamrnzpdyiq0ng/vj1ury4s,malware_download
-https://impectorinternational.com/kaka/stego_jwfhjrnszg.png,malware_download
+https://impectorinternational.com/harder/binikuku.dat,malware_download
 https://jumalputty.com/473070fa-6f82-5c2a-9dee-3db4be57110f/v8,malware_download
 https://krause-fahrzeuge.de/api/poly-token,malware_download
+https://lai-1451610695.cos.ap-guangzhou.myqcloud.com/lai.y,malware_download
 https://leafdraft18.com/f/vrhqljbnscwhbyhltuwmsq/t2990cmj,malware_download
 https://maple30.com/f/680apd_597afiqvimxvelw/sfjwmrjy,malware_download
 https://multiplay.at/shaders/Shaders.zip,malware_download
@@ -68,12 +67,13 @@ https://sales.ifree.page/img_131252.png,malware_download
 https://samul.elblag.pl/img_190228.png,malware_download
 https://sh.classera.com/Naew8m,malware_download
 https://sugarfreedcup.co.za/img_033922.png,malware_download
-https://tangentwaves.com/moll.psm,malware_download
+https://swiftonyx16.com/f/ujkfbdvkl5i2ezacchx7ia/6b4aghms,malware_download
 https://tdfhdser-1433552157.cos.ap-hongkong.myqcloud.com/20260729213603.zip,malware_download
 https://tenis-team-km.com/tenis-team-km.zip,malware_download
 https://thisisafalsepositive.st/cdn/v2/9f4e7a2c1b8d.png,malware_download
 https://user-iota-lake.vercel.app/adobe_updaters.zip,malware_download
 https://uu.v2raynapps.com.cn/UU_aNCcWz7.zip,malware_download
+https://vergabe-zentrale.de/api/poly-token,malware_download
 https://vine-linen.com/f/rjcf4ggdrb1wp5syzplnda/5r7r2qc0,malware_download
 https://www-connect-secure-wellcfargo.sekolahkejarpaket.com/wellsfargo_new_obf_08.07.26.zip,malware_download
 https://www.hqsblog.com/wordpress/wp-content/plugins/zxzxzx/stego_p0ci0zln28.png,malware_download
