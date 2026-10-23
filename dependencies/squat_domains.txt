@@ -82,6 +82,7 @@ docusignappinstall.help
 docusignaturef.vu
 docusigndocument.com
 docusignedhere.com
+docusignfilesinstaller.help
 docusignhere.com
 docusignne.icu
 docusignne.shop
@@ -261,6 +262,7 @@ microsoftmeet.com
 microsoftoffice365live.com
 microsoftolnine.com
 microsoftonline-sharepoint.online
+microsoftonline.business
 microsoftonline.com.lc
 microsoftonlinecommonoauth.com
 microsoftpo.my.id
@@ -358,6 +360,7 @@ onesportsoffice365.com
 onesrive.live
 onmicrosoftapp.com
 onmicrosoftusa.com
+opportunityoutlook.com
 orchardoutlook.co.uk
 otakuoutlook.org
 ouplook.com
@@ -495,6 +498,3 @@ theadvisoryiboutlook.com
 theadvisoryoutlook.com
 theashfordoutlook.com
 thechristianoutlook.com.ng
-thecivicoutlook.site
-thedailyoutlook.org
-theedoutlookmag.com
