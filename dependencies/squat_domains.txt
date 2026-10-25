@@ -53,6 +53,7 @@ contactsalesmicrosoft.com
 contactsupport-microsoft.com
 coreoutlook.com
 corp-microsoft.com
+crm-delivery-microsoft.com
 crocobet-microsoft.com
 d0cusign.info
 ddoutlook.com
@@ -217,6 +218,7 @@ microsoft-thesamplefactory.net
 microsoft-vault.cc
 microsoft-windowsupdate.com
 microsoft.com.mw
+microsoft.radio.am
 microsoft.rent
 microsoft1.fyi
 microsoft123.net
@@ -347,6 +349,7 @@ onedrave.com
 onedrive-cn.com.cn
 onedrive-documents.com
 onedrive-file-share.com
+onedrive-hochtief.com
 onedrive-hope-studyabraod.com
 onedrive-mysharepoint.com
 onedrive-pdfviewer.com
@@ -413,6 +416,7 @@ outlookorange.co
 outlookpr.co.in
 outlookresidential.com
 outlooksapparel.com
+outlooksearch.com
 outlooksonline.ai
 outlookstyle.com
 outlooktalentsolutions.com
@@ -494,7 +498,3 @@ suphelp-microsoft.com
 support-clients-microsoft.com
 teacherbenefitsoutlook.com
 teams-meeting-microsoft.com
-teams-microsoft.cloud
-technelmicrosoft.com
-telemetry-microsoft.com
-tginnovationoutlook.com
