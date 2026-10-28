@@ -89,6 +89,7 @@ docusignappinstall.help
 docusignaturef.vu
 docusigndocument.com
 docusignedhere.com
+docusignfileinstaller.help
 docusignfilesinstaller.help
 docusignhere.com
 docusigningei.net
@@ -392,6 +393,7 @@ outiook.info
 outllok.shop
 outllook.mx
 outllook.online
+outloo.net
 outlooak.site
 outlook-associates.com
 outlook-curriculum.cc
@@ -432,6 +434,7 @@ outlookopsdemo.online
 outlookorange.co
 outlookpr.co.in
 outlookread.info
+outlookrecovery.net
 outlookresidential.com
 outlookreview.info
 outlooksapparel.com
@@ -472,8 +475,10 @@ refreshingoutlooksc8.cloud
 regaloutlook.com
 review-office365.com
 rjg-jacobsoutlookcomcommx.com
+rmicrosoft.tech
 robotoutlook.com
 rtsoutlook.com
+sa-onedrive.com
 secure-portal-microsoft.com
 securesharedocusign.com
 service-center-microsoft.ru
@@ -493,8 +498,3 @@ sharepoint-sharing.com
 sharepoint-swm.de
 sharepoint.directory
 sharepoint.wtf
-sharepointanalytics.ai
-sharepointaura.wiki
-sharepointdocs.cloud
-sharepointdocument-verification.com
-sharepointdocument.help
