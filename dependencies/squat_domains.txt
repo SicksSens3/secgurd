@@ -71,6 +71,7 @@ coreoutlook.com
 corp-microsoft.com
 crm-delivery-microsoft.com
 crocobet-microsoft.com
+crownstonedriveways.co.uk
 currentoutlook.info
 d0cusign.info
 ddoutlook.com
@@ -80,6 +81,7 @@ djsharepoint.net
 dmbllconmicrosoft.agency
 dmbllconmicrosoft.solutions
 doc-sign.live
+doc-sign.org
 doc0sign.com
 docesign.live
 docesign.site
@@ -221,6 +223,7 @@ microsofl.com
 microsoft-account.be
 microsoft-africa.org
 microsoft-agnew.online
+microsoft-ai-news.com
 microsoft-auth.support
 microsoft-defender.be
 microsoft-en-us-si.com
@@ -321,6 +324,8 @@ microsoftteam.us
 microsoftteamss.team
 microsoftteamupdate.com
 microsofttechservices.com
+microsoftupdate.pro
+microsoftupdate.site
 microsoftwarelab.it
 microsoftwindows.net.cn
 microsoftworldofwarcraft.com
@@ -396,9 +401,11 @@ onedriveadobe.com
 onedrivedownloadsfile.com
 onedrivefilesecurecent.online
 onedrivenote.online
+onedriverdocument.com
 onedrivesi.com
 onesportsoffice365.com
 onesrive.live
+onlinemicrosoftteams.us
 onmicrosoftapp.com
 onmicrosoftusa.com
 opportunityoutlook.com
@@ -450,6 +457,7 @@ outlookk.space
 outlookke.com
 outlookkk.online
 outlookmail.my.id
+outlookmailgmail.com
 outlookmailhub.com
 outlookmediaproductions.com
 outlookopsdemo.online
@@ -490,11 +498,3 @@ primeoutlook.online
 primesportsoffice365.com
 primestonedrivewayspatios.co.uk
 profitsharepoint.com
-projectoutlook.info
-protect-outlook.com
-protectionmicrosoft.com
-provider-microsoft.com
-qualifierfundingoutlook.com
-recsa20sharepoint.blog
-reeloutlookuk.com
-refreshingoutlooksc8.cloud
