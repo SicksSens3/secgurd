@@ -105,6 +105,7 @@ docusign.space
 docusign1.site
 docusignaccess.com
 docusignadmin.help
+docusignapp.online
 docusignappinstall.help
 docusignaturef.vu
 docusigndocument.com
@@ -212,6 +213,7 @@ lucifer-outlook.com
 m1crosoft.pl
 m365-cloud-onedrive.com
 macrosoft.com.cn
+mailsoutlook.com
 maratonamicrosoft365.cloud
 marketplaceofficeroutlook.info
 metzler-onedrive.com
@@ -258,6 +260,7 @@ microsoft-tech-room.ru
 microsoft-thesamplefactory.net
 microsoft-vault.cc
 microsoft-windowsupdate.com
+microsoft-winupdate.com
 microsoft.com.mw
 microsoft.radio.am
 microsoft.rent
@@ -283,6 +286,7 @@ microsoftazurein.com
 microsoftbi.pl
 microsoftbillings.org
 microsoftbob.fun
+microsoftbustour.com
 microsoftcareerservices.com
 microsoftcareersgroup.com
 microsoftcareershub.com
@@ -494,7 +498,3 @@ outlooksonline.ai
 outlookstyle.com
 outlooktalentsolutions.com
 outlooktesting.com
-outlooktesting22.com
-outlooktesting66.com
-outlookthreads.com
-outlookwebap.com
