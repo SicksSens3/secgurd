@@ -214,16 +214,19 @@ lookoutlook.in
 lucifer-outlook.com
 m1crosoft.pl
 m365-cloud-onedrive.com
+m365online-microsoft.cam
 macrosoft.com.cn
 mailsoutlook.com
 maratonamicrosoft365.cloud
 marketplaceofficeroutlook.info
 metzler-onedrive.com
+micmrosoft.com
 micnosoft.cloud
 micnosoft.online
 micosoft.cloud
 micosoft.org
 micro-soft.store
+microjsoft.com
 micromsoft.com
 micronedrives.com
 microosoft.online
@@ -295,6 +298,7 @@ microsoftcareershub.com
 microsoftclipchamp.pro
 microsoftcloudpartnerassociation.org
 microsoftco.org
+microsoftdesktop.com
 microsofteamsinvite.live
 microsoftedge.shop
 microsoftedge1688330.com
@@ -309,6 +313,7 @@ microsoftfrontierfirm.com
 microsoftglobal.online
 microsofthttps.icu
 microsofthu.biz.id
+microsoftindonesia.com
 microsoftliftlondongamingstudios.net
 microsoftloyalty.com
 microsoftmeet.com
@@ -493,8 +498,3 @@ outlookmedia.co.uk
 outlookmediaproductions.com
 outlookopsdemo.online
 outlookorange.co
-outlookportal.co.za
-outlookpr.co.in
-outlookread.info
-outlookrecovery.net
-outlookresidential.com
