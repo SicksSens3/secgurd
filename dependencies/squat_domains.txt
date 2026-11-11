@@ -70,6 +70,7 @@ com-microsoft-onedrive.com
 com-microsoft-onedrive.live
 com-microsoftonline-ondrive.ca
 com-onedrive.live
+communicationdocusign.online
 contacts-microsoft.com
 contactsalesmicrosoft.com
 contactsupport-microsoft.com
@@ -124,6 +125,7 @@ docusignne.icu
 docusignne.shop
 docusignnetwork.net
 docusignnnne.site
+docusignpjud.site
 docusignproduct.help
 docusignreview.com
 docusigns-esign.online
@@ -229,6 +231,7 @@ maratonamicrosoft365.cloud
 marketplaceofficeroutlook.info
 meadowmeridianoutlook.pro
 mediaoutlook.co.kr
+mesaoutlook.biz
 metzler-onedrive.com
 micmrosoft.com
 micnosoft.cloud
@@ -267,10 +270,12 @@ microsoft-s.com.cn
 microsoft-security-update.online
 microsoft-splashmaps.online
 microsoft-store.co
+microsoft-support-training.com
 microsoft-support.win
 microsoft-system.com
 microsoft-team.live
 microsoft-teams-co.in
+microsoft-teans.com
 microsoft-tech-room.ru
 microsoft-thesamplefactory.net
 microsoft-vault.cc
@@ -381,6 +386,7 @@ movisafe-75573-my-sharepoint.com
 ms1-microsoft.com
 ms365-onedrive.com
 msonedrive-cdn.info
+multilingualsharepoint.com
 my-docusign-documents.com
 my-docusign.de
 my-sharepoint-portal-center-access.us
@@ -389,6 +395,7 @@ mymicrosoftapp.com
 myoffice365.nu
 narcoutlook.com
 naturalhealthoutlook.com
+neca-sharepoint.com
 net-microsoft.com
 neweraoutlook.com
 newmicrosoftupdate.store
@@ -421,6 +428,7 @@ office365onlline.com
 office365onllne.com
 office365plus.net
 office365uae.com
+office366.store
 office3v5.online
 office465.store
 officeroutlook.com
@@ -490,11 +498,3 @@ outlookconstruction.net
 outlookconsulting.net
 outlookcove.com
 outlookdigitalholdings.co
-outlookenterprisesupvc.in
-outlookexpress.de
-outlookforward.com
-outlookgospellighthouse.ca
-outlookhotmail.online
-outlookinboxmessage.com
-outlookinc.net
-outlookintelligence.com
