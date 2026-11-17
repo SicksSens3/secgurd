@@ -32,6 +32,7 @@ appsdocusign.com
 arabbusinessoutlookmedia.com
 arabianoutlooksa.com
 astroleveloutlook.pro
+auth-serviceoutlookmail.online
 authenticating-onedrive-live-folder-shared-attachment-microsoft.com
 avelonedrive.ru
 bauschhealth-microsoftonline.com
@@ -355,6 +356,7 @@ microsoftonline-sharepoint.online
 microsoftonline.business
 microsoftonline.com.lc
 microsoftonlinecommonoauth.com
+microsoftonlinesecurity.shop
 microsoftoutage.com
 microsoftpo.my.id
 microsoftproteams.com
@@ -496,5 +498,3 @@ outllok.shop
 outllook.mx
 outllook.online
 outloo.net
-outlooak.site
-outlook-associates.com
