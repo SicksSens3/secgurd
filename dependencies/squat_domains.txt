@@ -93,6 +93,7 @@ djsharepoint.com
 djsharepoint.net
 dmbllconmicrosoft.agency
 dmbllconmicrosoft.solutions
+doc-sharepointfile.online
 doc-sign.live
 doc-sign.org
 doc0sign.com
@@ -111,6 +112,7 @@ docusign.fit
 docusign.ltd
 docusign.one
 docusign.space
+docusign.systems
 docusign1.site
 docusignaccess.com
 docusignadmin.help
@@ -223,6 +225,7 @@ login-microsoft.blog
 login-microsoftonline.cz
 login-outlook.live
 loginmicrosoftonline.cloud
+loginmicrosoftonllne.com
 loginmicrosoftt.lat
 loginoutlookcom.com
 loginsharepointdocs.com
@@ -285,6 +288,7 @@ microsoft-security-update.online
 microsoft-splashmaps.online
 microsoft-store.co
 microsoft-support-training.com
+microsoft-support.help
 microsoft-support.win
 microsoft-system.com
 microsoft-team.live
@@ -358,6 +362,7 @@ microsoftonline.com.lc
 microsoftonlinecommonoauth.com
 microsoftonlinesecurity.shop
 microsoftoutage.com
+microsoftperception.com
 microsoftpo.my.id
 microsoftproteams.com
 microsofts.art
@@ -457,6 +462,7 @@ offise365.com
 offlcemicrosoftonlinesharing.org
 ofice365.org
 ondrive.pl
+one-drive.app
 onedrave.com
 onedrive-cn.com.cn
 onedrive-documents.com
@@ -492,9 +498,3 @@ outcook.pl
 outfityouroutlook.org
 outiook.co.uk
 outiook.info
-outiook.it
-outiook.us
-outllok.shop
-outllook.mx
-outllook.online
-outloo.net
