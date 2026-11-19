@@ -7,6 +7,7 @@
 1eu-sharepoint.com
 2-sa-sharepoint.com
 24950outlookdrive.com
+360behavioralhealth-microsoft.com
 676132-microsoft.com
 85outlook.com
 958004-microsoft.com
@@ -201,6 +202,7 @@ inbox-outlook.com
 info-microsoft.info
 inkchaindocusign.icu
 insidemicrosoftfabric.com
+investoutlook.info
 invite-office365.co
 isoutlooknogstuk.nl
 iterationoutlook.info
@@ -387,6 +389,7 @@ microsofttechservices.com
 microsoftupdate.pro
 microsoftupdate.site
 microsoftwarelab.it
+microsoftwera.com
 microsoftwindows.net.cn
 microsoftworldofwarcraft.com
 microsolt.info
@@ -495,6 +498,3 @@ otakuoutlook.org
 ouplook.com
 outbook.shop
 outcook.pl
-outfityouroutlook.org
-outiook.co.uk
-outiook.info
