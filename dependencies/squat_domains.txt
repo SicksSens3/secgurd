@@ -82,6 +82,7 @@ cooperativeoutlook.info
 coreoutlook.com
 coreoutlook.pro
 corp-microsoft.com
+creativeoutlookmarketing.com
 crm-delivery-microsoft.com
 crocobet-microsoft.com
 crowngiantoutlook.biz
@@ -104,6 +105,7 @@ docsign.es
 docsign.store
 docu-sign.ch
 docu-sign.info
+document-authentication-docusign-admin.com
 docusign-acme.com
 docusign-invoices.com
 docusign-verify.co
@@ -496,5 +498,3 @@ onmicrosoft.ad
 onmicrosoft.app
 onmicrosoftapp.com
 onmicrosoftusa.com
-opportunityoutlook.com
-orchardoutlook.co.uk
