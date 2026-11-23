@@ -146,6 +146,7 @@ docusignsinstallers.help
 docusigny.com
 docusiign.cam
 donewithmicrosoft.com
+download-outlook.com
 dreamoutlooks.com
 dropbox-docusign.com
 dunnysoutlook.ca
@@ -168,6 +169,7 @@ eu2-sharepoint.com
 evenoutlook.com
 everydayvitalityoutlook.com
 everydayvitalityoutlook.site
+familytimesoutlook.com
 filecuserspzacconedrivedesktopsito20webindex.it
 fileindocusign.vu
 financialoutlook.info
@@ -214,6 +216,7 @@ isoutlooknogstuk.nl
 iterationoutlook.info
 jci-onmicrosoft.com
 jewelryoutlook.icu
+jobsoutlook.net
 join-microsoft.com
 justgraceportal-tosharepointdocx.info
 kaiyun-microsoft.com.cn
@@ -495,6 +498,3 @@ onedrivefilesecurecent.online
 onedrivenote.online
 onedriverdocument.com
 onedrivesi.com
-onesportsoffice365.com
-onesrive.live
-onlinemicrosoftteams.us
